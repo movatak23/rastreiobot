@@ -1,10 +1,12 @@
 require('dotenv').config();
+
 const express = require('express');
 const axios   = require('axios');
 const cors    = require('cors');
 const db      = require('./db');
 
 const app = express();
+
 app.use(express.json());
 app.use(cors({ origin: '*' }));
 
@@ -17,6 +19,7 @@ const {
 } = process.env;
 
 // ── Auth middleware ───────────────────────────────────────────────────────────
+
 function auth(req, res, next) {
   if (req.headers['x-secret'] !== EXTENSION_SECRET)
     return res.status(401).json({ error: 'Não autorizado.' });
@@ -24,9 +27,11 @@ function auth(req, res, next) {
 }
 
 // ── Nuvemshop API ─────────────────────────────────────────────────────────────
+
 async function nuvemGet(storeId, path, params = {}) {
   const row = db.getToken(storeId);
   if (!row) throw new Error('Loja não autenticada.');
+
   const res = await axios.get(`https://api.nuvemshop.com.br/v1/${storeId}${path}`, {
     headers: {
       'Authentication': `bearer ${row.access_token}`,
@@ -35,6 +40,7 @@ async function nuvemGet(storeId, path, params = {}) {
     },
     params
   });
+
   return res.data;
 }
 
@@ -62,6 +68,7 @@ function diasUteisDesde(dateStr) {
 }
 
 // ── OAuth ─────────────────────────────────────────────────────────────────────
+
 app.get('/auth/install', (req, res) => {
   const { store_id } = req.query;
   if (!store_id) return res.status(400).send('Informe store_id');
@@ -72,6 +79,7 @@ app.get('/auth/install', (req, res) => {
 app.get('/auth/callback', async (req, res) => {
   const { code, state: storeId } = req.query;
   if (!code) return res.status(400).send('Código OAuth ausente.');
+
   try {
     const { data } = await axios.post('https://www.nuvemshop.com.br/apps/authorize/token', {
       client_id: NUVEM_CLIENT_ID,
@@ -100,6 +108,7 @@ app.get('/auth/callback', async (req, res) => {
 });
 
 // ── Pedidos ───────────────────────────────────────────────────────────────────
+
 app.get('/pedidos/:storeId', auth, async (req, res) => {
   const { storeId } = req.params;
   const prazo = parseInt(req.query.prazo || '3');
@@ -126,7 +135,11 @@ app.get('/pedidos/:storeId', auth, async (req, res) => {
       const diasUteis = diasUteisDesde(o.created_at);
       let statusPrazo = null;
 
-      if (o.shipping_status !== 'shipped') {
+      // Pedido com rastreio = já foi enviado, independente do shipping_status
+      const temRastreio = !!(o.shipping_tracking_number && o.shipping_tracking_number.trim());
+      const foiEnviado  = o.shipping_status === 'shipped' || temRastreio;
+
+      if (!foiEnviado) {
         statusPrazo = diasUteis > prazo ? 'atrasado' : diasUteis === prazo ? 'hoje' : 'ok';
       }
 
@@ -137,7 +150,7 @@ app.get('/pedidos/:storeId', auth, async (req, res) => {
         telefone:      tel,
         rastreio:      o.shipping_tracking_number || '',
         transportadora: o.shipping_option || '',
-        status:        o.shipping_status || 'pending',
+        status:        foiEnviado ? 'shipped' : (o.shipping_status || 'pending'),
         diasUteis,
         statusPrazo,
         ja_notificado: jaEnviado,
@@ -153,6 +166,7 @@ app.get('/pedidos/:storeId', auth, async (req, res) => {
     });
 
     res.json({ success: true, total: resultado.length, pedidos: resultado });
+
   } catch(e) {
     console.error('Erro /pedidos:', e.response?.data || e.message);
     res.status(500).json({ error: e.message });
@@ -160,14 +174,17 @@ app.get('/pedidos/:storeId', auth, async (req, res) => {
 });
 
 // ── Marcar notificado ─────────────────────────────────────────────────────────
+
 app.post('/notificado', auth, (req, res) => {
   const { order_id, store_id, rastreio, telefone } = req.body;
   if (!order_id || !store_id) return res.status(400).json({ error: 'order_id e store_id obrigatórios.' });
+
   db.marcarNotificado(order_id, store_id, rastreio, telefone);
   res.json({ success: true });
 });
 
 // ── Health check ──────────────────────────────────────────────────────────────
+
 app.get('/status', (req, res) => {
   const stores = db.getAllStores();
   res.json({ ok: true, lojas: stores.length, versao: '1.0.0' });
