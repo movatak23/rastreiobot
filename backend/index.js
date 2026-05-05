@@ -219,12 +219,101 @@ cron.schedule('*/30 * * * *', async () => {
     const stores = db.getAllStores();
     for (const store of stores) {
       await verificarPagamentos(store.store_id);
+      await verificarCarrinhosAbandonados(store.store_id);
       await verificarRastreios(store.store_id);
     }
   } catch(e) {
     console.error('[Cron] Erro geral:', e.message);
   }
 });
+
+// ── Mensagens de carrinho abandonado ─────────────────────────────────────────
+function montarMensagemCarrinho(etapa, nome, link) {
+  const msgs = {
+    30: `Olá, ${nome}! 👋
+
+Percebemos que você deixou alguns itens no carrinho da nossa loja.
+
+Ainda está interessado? Finalize sua compra aqui:
+🛒 ${link}
+
+Qualquer dúvida é só chamar! 😊`,
+
+    60: `Oi, ${nome}! Tudo bem? 😊
+
+Notamos que sua compra ainda não foi concluída. Teve algum problema no pagamento?
+
+Estamos aqui para ajudar! Responda essa mensagem ou finalize agora:
+🛒 ${link}`,
+
+    1440: `${nome}, sua sacola ainda está te esperando! 🛍️
+
+⚠️ *Atenção:* Os itens no seu carrinho têm estoque limitado e podem esgotar a qualquer momento.
+
+Não deixe para depois — garanta o seu agora:
+🛒 ${link}`,
+
+    2880: `${nome}, última chance! ⏰
+
+Sua reserva expira em breve e os produtos do seu carrinho voltam para o estoque.
+
+Finalize sua compra antes que acabe:
+🛒 ${link}
+
+_Esta é a última notificação sobre este carrinho._`
+  };
+  return msgs[etapa] || null;
+}
+
+// ── Verificar carrinhos abandonados ──────────────────────────────────────────
+async function verificarCarrinhosAbandonados(storeId) {
+  try {
+    const carrinhos = await nuvemGet(storeId, '/checkouts', {
+      per_page: 50,
+      fields: 'id,contact_name,contact_phone,abandoned_checkout_url,created_at'
+    });
+
+    const agora = Date.now();
+
+    for (const c of carrinhos) {
+      if (!c.contact_phone) continue;
+      const telefone = formatTel(c.contact_phone);
+      if (!telefone) continue;
+
+      const criadoEm = new Date(c.created_at).getTime();
+      const minutos = Math.floor((agora - criadoEm) / 60000);
+      const nome = c.contact_name || 'Cliente';
+      const link = c.abandoned_checkout_url || '';
+      const id   = String(c.id);
+
+      // Define qual etapa deve ser disparada
+      let etapa = null;
+      if (minutos >= 30  && minutos < 90)   etapa = 30;
+      if (minutos >= 60  && minutos < 120)  etapa = 60;
+      if (minutos >= 1440 && minutos < 1500) etapa = 1440;
+      if (minutos >= 2880 && minutos < 2940) etapa = 2880;
+      if (!etapa) continue;
+
+      // Verifica se essa etapa já foi enviada
+      if (db.jaCarrinhoEnviado(id, etapa)) continue;
+
+      const mensagem = montarMensagemCarrinho(etapa, nome, link);
+      if (!mensagem) continue;
+
+      try {
+        await sendWhatsApp(telefone, mensagem, storeId);
+        db.marcarCarrinhoEnviado(id, storeId, etapa);
+        console.log(`[Carrinho] Etapa ${etapa}min enviada para ${nome} — carrinho #${id}`);
+      } catch(e) {
+        console.error(`[Carrinho] Falha etapa ${etapa}min para #${id}:`, e.message);
+      }
+
+      await new Promise(r => setTimeout(r, 500));
+    }
+  } catch(e) {
+    console.error(`[Carrinho] Erro loja ${storeId}:`, e.response?.data || e.message);
+  }
+}
 
 // ── Verificar pagamentos recentes (últimas 2h) ────────────────────────────────
 async function verificarPagamentos(storeId) {
@@ -417,7 +506,43 @@ app.delete('/admin/clientes/:storeId', auth, (req, res) => {
 // ── Health check ──────────────────────────────────────────────────────────────
 app.get('/status', (req, res) => {
   const stores = db.getAllStores();
-  res.json({ ok: true, lojas: stores.length, versao: '1.2.0', cron: 'ativo (30min)' });
+  res.json({ ok: true, lojas: stores.length, versao: '2.5.0', cron: 'ativo (30min)' });
+});
+
+// ── API Dashboard Admin ───────────────────────────────────────────────────────
+app.get('/admin/dashboard', auth, (req, res) => {
+  try {
+    const stats = db.getAdminStats();
+    res.json({ success: true, ...stats });
+  } catch(e) {
+    res.status(500).json({ error: e.message });
+  }
+});
+
+// ── API Dashboard Lojista ─────────────────────────────────────────────────────
+app.get('/dashboard/:storeId', auth, async (req, res) => {
+  const { storeId } = req.params;
+  try {
+    const stats = db.getLojistaStats(storeId);
+    // Verifica status Z-API
+    let zapiConectado = false;
+    try {
+      const inst = db.getInstancia(storeId) || {};
+      const instance = inst.zapi_instance || process.env.ZAPI_INSTANCE;
+      const token    = inst.zapi_token    || process.env.ZAPI_TOKEN;
+      const client   = inst.zapi_client_token || process.env.ZAPI_CLIENT_TOKEN;
+      if (instance && token && client) {
+        const r = await axios.get(
+          `https://api.z-api.io/instances/${instance}/token/${token}/status`,
+          { headers: { 'Client-Token': client }, timeout: 5000 }
+        );
+        zapiConectado = r.data?.connected === true || r.data?.status === 'connected';
+      }
+    } catch(e) { zapiConectado = false; }
+    res.json({ success: true, ...stats, zapiConectado });
+  } catch(e) {
+    res.status(500).json({ error: e.message });
+  }
 });
 
 // ── Enviar WhatsApp ───────────────────────────────────────────────────────────
