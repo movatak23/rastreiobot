@@ -232,6 +232,26 @@ app.post('/enviar-whatsapp', auth, async (req, res) => {
   }
 });
 
+// Rota: cria instância na Evolution API
+app.post('/whatsapp/criar-instancia', auth, async (req, res) => {
+  if (!EVO_URL || !EVO_KEY) return res.status(400).json({ error: 'Evolution API não configurada.' });
+  try {
+    const r = await axios.post(
+      `${EVO_URL.replace(/\/$/,'')}/instance/create`,
+      { instanceName: EVO_INSTANCE, qrcode: true, integration: 'WHATSAPP-BAILEYS' },
+      { headers: { 'apikey': EVO_KEY, 'Content-Type': 'application/json' } }
+    );
+    res.json({ success: true, data: r.data });
+  } catch(e) {
+    const msg = e.response?.data?.message || e.message;
+    // Se instância já existe, retorna sucesso
+    if (e.response?.status === 409 || msg.includes('already')) {
+      return res.json({ success: true, data: { message: 'Instância já existe.' } });
+    }
+    res.status(500).json({ success: false, error: msg });
+  }
+});
+
 // Rota: verifica status da conexão WhatsApp (QR Code)
 app.get('/whatsapp/status', auth, async (req, res) => {
   if (!EVO_URL || !EVO_KEY) return res.json({ conectado: false, erro: 'Evolution API não configurada.' });
