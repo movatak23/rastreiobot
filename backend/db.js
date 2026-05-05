@@ -31,6 +31,15 @@ db.exec(`
     store_id   TEXT,
     created_at TEXT DEFAULT (datetime('now'))
   );
+
+  CREATE TABLE IF NOT EXISTS instancias (
+    store_id          TEXT PRIMARY KEY,
+    zapi_instance     TEXT NOT NULL,
+    zapi_token        TEXT NOT NULL,
+    zapi_client_token TEXT NOT NULL,
+    nome_cliente      TEXT,
+    created_at        TEXT DEFAULT (datetime('now'))
+  );
 `);
 
 function saveToken(storeId, accessToken) {
@@ -46,6 +55,27 @@ function getToken(storeId) {
 
 function getAllStores() {
   return db.prepare('SELECT store_id FROM tokens').all();
+}
+
+// ── Instâncias Z-API por cliente ─────────────────────────────────────────────
+function salvarInstancia(storeId, zapiInstance, zapiToken, zapiClientToken, nomeCliente) {
+  db.prepare(`
+    INSERT INTO instancias (store_id, zapi_instance, zapi_token, zapi_client_token, nome_cliente)
+    VALUES (?, ?, ?, ?, ?)
+    ON CONFLICT(store_id) DO UPDATE SET
+      zapi_instance      = excluded.zapi_instance,
+      zapi_token         = excluded.zapi_token,
+      zapi_client_token  = excluded.zapi_client_token,
+      nome_cliente       = excluded.nome_cliente
+  `).run(storeId, zapiInstance, zapiToken, zapiClientToken, nomeCliente || null);
+}
+
+function getInstancia(storeId) {
+  return db.prepare('SELECT * FROM instancias WHERE store_id = ?').get(storeId);
+}
+
+function listarInstancias() {
+  return db.prepare('SELECT store_id, nome_cliente, zapi_instance, created_at FROM instancias').all();
 }
 
 function marcarNotificado(orderId, storeId, rastreio, telefone) {
@@ -86,5 +116,6 @@ module.exports = {
   saveToken, getToken, getAllStores,
   marcarNotificado, jaNotificado,
   statusRastreio, atualizarStatusRastreio,
-  jaConfirmacaoEnviada, marcarConfirmacaoEnviada
+  jaConfirmacaoEnviada, marcarConfirmacaoEnviada,
+  salvarInstancia, getInstancia, listarInstancias
 };
