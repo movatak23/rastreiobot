@@ -131,15 +131,46 @@ function montarMensagem(template, pedido) {
 }
 
 function montarMensagemRastreio(pedido, evento) {
-  const emoji = evento.entregue ? '✅' : '📦';
-  const status = evento.entregue ? 'Seu pedido foi *entregue*!' : `*${evento.descricao}*`;
+  const nome   = pedido.cliente || 'Cliente';
+  const numero = pedido.numero;
+  const link   = `https://rastreamento.correios.com.br/app/index.php?objeto=${pedido.rastreio}`;
+  const desc   = (evento.descricao || '').toLowerCase();
+  const data   = evento.data || '';
+  const hora   = evento.hora || '';
+
+  // Entregue
+  if (evento.entregue) {
+    return (
+      `✅ ${nome}, seu pedido *#${numero}* foi entregue!\n\n` +
+      `Esperamos que você goste! Qualquer dúvida é só chamar. 😊`
+    );
+  }
+
+  // Saiu para entrega
+  if (desc.includes('saiu para entrega') || desc.includes('saiu para a entrega') || desc.includes('entrega prevista')) {
+    return (
+      `🎉 ${nome}, seu pedido *#${numero}* saiu para entrega hoje!\n\n` +
+      `Fique de olho, o entregador está a caminho! 📦\n` +
+      `🔗 Rastreie: ${link}`
+    );
+  }
+
+  // Postado (primeiro registro)
+  if (desc.includes('postado') || desc.includes('objeto postado') || desc.includes('coletado')) {
+    return (
+      `📮 Olá, ${nome}! Seu pedido *#${numero}* foi postado!\n\n` +
+      `Código de rastreio: *${pedido.rastreio}*\n` +
+      `🔗 Rastreie: ${link}\n\n` +
+      `Em breve chegará até você! 😊`
+    );
+  }
+
+  // Em trânsito (padrão para demais status)
   return (
-    `Olá ${pedido.cliente || 'Cliente'}! 👋\n\n` +
-    `${emoji} Atualização do seu pedido *#${pedido.numero}*:\n\n` +
-    `${status}\n` +
-    `📅 ${evento.data} às ${evento.hora}\n\n` +
-    `🔗 Rastreie: https://rastreamento.correios.com.br/app/index.php?objeto=${pedido.rastreio}\n\n` +
-    `Qualquer dúvida é só chamar! 😊`
+    `🚚 Boa notícia, ${nome}! Seu pedido *#${numero}* está a caminho!\n\n` +
+    `📍 Status: *${evento.descricao}*\n` +
+    `📅 ${data} às ${hora}\n\n` +
+    `🔗 Rastreie: ${link}`
   );
 }
 
