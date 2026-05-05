@@ -143,11 +143,15 @@ function montarMensagemRastreio(pedido, evento) {
   );
 }
 
-const MSG_PAGAMENTO =
-  `👏👏👏 Parabéns!👏👏👏\n` +
-  `Seu pagamento foi confirmado!\n\n` +
-  `Nosso prazo de produção é de 3 dias úteis. Sua estampa entrou na fila de impressão agora e segue a sequência de pedidos.\n\n` +
-  `Lembrando que este prazo está sujeito a alteração devido a necessidade de manutenção emergencial em nosso maquinário.`;
+// MSG_PAGAMENTO montada dinamicamente — ver montarMensagemPagamento()
+function montarMensagemPagamento(nome, numero) {
+  return (
+    `👏👏👏 Parabéns, ${nome}!👏👏👏\n` +
+    `Seu pagamento do pedido *#${numero}* foi confirmado!\n\n` +
+    `Nosso prazo de produção é de 3 dias úteis. Sua estampa entrou na fila de impressão agora e segue a sequência de pedidos.\n\n` +
+    `Lembrando que este prazo está sujeito a alteração devido a necessidade de manutenção emergencial em nosso maquinário.`
+  );
+}
 
 // ── CRON — Roda a cada 30 minutos ─────────────────────────────────────────────
 cron.schedule('*/30 * * * *', async () => {
@@ -182,7 +186,7 @@ async function verificarPagamentos(storeId) {
       if (!telefone) continue;
 
       try {
-        await sendWhatsApp(telefone, MSG_PAGAMENTO);
+        await sendWhatsApp(telefone, montarMensagemPagamento(o.contact_name || 'Cliente', o.number));
         db.marcarConfirmacaoEnviada(String(o.id), storeId);
         console.log(`[Pagamento] WhatsApp enviado para pedido #${o.number}`);
       } catch(e) {
