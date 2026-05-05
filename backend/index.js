@@ -13,7 +13,10 @@ const {
   NUVEM_CLIENT_SECRET,
   APP_URL,
   EXTENSION_SECRET,
-  PORT = 3000
+  PORT = 3000,
+  ZAPI_INSTANCE,
+  ZAPI_TOKEN,
+  ZAPI_CLIENT_TOKEN
 } = process.env;
 
 // ── Auth middleware ───────────────────────────────────────────────────────────
@@ -189,21 +192,19 @@ const EVO_KEY      = process.env.EVOLUTION_KEY;    // API Key da Evolution
 const EVO_INSTANCE = process.env.EVOLUTION_INSTANCE || 'rastreiobot'; // nome da instância
 
 async function sendWhatsApp(telefone, mensagem) {
-  if (!EVO_URL || !EVO_KEY) throw new Error('Evolution API não configurada.');
+  if (!ZAPI_INSTANCE || !ZAPI_TOKEN || !ZAPI_CLIENT_TOKEN)
+    throw new Error('Z-API não configurada. Adicione ZAPI_INSTANCE, ZAPI_TOKEN e ZAPI_CLIENT_TOKEN nas variáveis.');
 
-  // Formata telefone: remove tudo que não é dígito, garante DDI 55
+  // Formata telefone: remove DDI 55 pois Z-API não quer
   let numero = String(telefone).replace(/\D/g, '');
-  if (!numero.startsWith('55')) numero = '55' + numero;
+  if (numero.startsWith('55')) numero = numero.slice(2);
 
   const res = await axios.post(
-    `${EVO_URL.replace(/\/$/,'')}/message/sendText/${EVO_INSTANCE}`,
-    {
-      number: numero,
-      text: mensagem
-    },
+    `https://api.z-api.io/instances/${ZAPI_INSTANCE}/token/${ZAPI_TOKEN}/send-text`,
+    { phone: numero, message: mensagem },
     {
       headers: {
-        'apikey': EVO_KEY,
+        'Client-Token': ZAPI_CLIENT_TOKEN,
         'Content-Type': 'application/json'
       }
     }
@@ -232,51 +233,28 @@ app.post('/enviar-whatsapp', auth, async (req, res) => {
   }
 });
 
-// Rota: cria instância na Evolution API
-app.post('/whatsapp/criar-instancia', auth, async (req, res) => {
-  if (!EVO_URL || !EVO_KEY) return res.status(400).json({ error: 'Evolution API não configurada.' });
-  try {
-    const r = await axios.post(
-      `${EVO_URL.replace(/\/$/,'')}/instance/create`,
-      { instanceName: EVO_INSTANCE, qrcode: true, integration: 'WHATSAPP-BAILEYS' },
-      { headers: { 'apikey': EVO_KEY, 'Content-Type': 'application/json' } }
-    );
-    res.json({ success: true, data: r.data });
-  } catch(e) {
-    const msg = e.response?.data?.message || e.message;
-    // Se instância já existe, retorna sucesso
-    if (e.response?.status === 409 || msg.includes('already')) {
-      return res.json({ success: true, data: { message: 'Instância já existe.' } });
-    }
-    res.status(500).json({ success: false, error: msg });
-  }
-});
-
-// Rota: verifica status da conexão WhatsApp (QR Code)
+// Rota: verifica status Z-API
 app.get('/whatsapp/status', auth, async (req, res) => {
-  if (!EVO_URL || !EVO_KEY) return res.json({ conectado: false, erro: 'Evolution API não configurada.' });
+  if (!ZAPI_INSTANCE || !ZAPI_TOKEN || !ZAPI_CLIENT_TOKEN)
+    return res.json({ conectado: false, erro: 'Z-API não configurada.' });
   try {
     const r = await axios.get(
-      `${EVO_URL.replace(/\/$/,'')}/instance/connectionState/${EVO_INSTANCE}`,
-      { headers: { 'apikey': EVO_KEY } }
+      `https://api.z-api.io/instances/${ZAPI_INSTANCE}/token/${ZAPI_TOKEN}/status`,
+      { headers: { 'Client-Token': ZAPI_CLIENT_TOKEN } }
     );
-    const state = r.data?.instance?.state || r.data?.state || 'unknown';
-    res.json({ conectado: state === 'open', estado: state });
+    const conectado = r.data?.connected === true || r.data?.status === 'connected';
+    res.json({ conectado, estado: r.data?.status || 'unknown', data: r.data });
   } catch(e) {
     res.json({ conectado: false, erro: e.message });
   }
 });
 
-// Rota: gera QR Code para conectar WhatsApp
-app.get('/whatsapp/qrcode', auth, async (req, res) => {
-  if (!EVO_URL || !EVO_KEY) return res.status(400).json({ error: 'Evolution API não configurada.' });
-  try {
-    const r = await axios.get(
-      `${EVO_URL.replace(/\/$/,'')}/instance/connect/${EVO_INSTANCE}`,
-      { headers: { 'apikey': EVO_KEY } }
-    );
-    res.json({ success: true, qrcode: r.data?.base64 || r.data?.qrcode?.base64, data: r.data });
-  } catch(e) {
-    res.status(500).json({ success: false, error: e.message });
-  }
+// Rota: stub para compatibilidade (Z-API não precisa de QR via backend)
+app.get('/whatsapp/qrcode', auth, (req, res) => {
+  res.json({ success: false, error: 'Com Z-API o QR Code é gerado no painel de z-api.io. Escaneie lá e volte aqui.' });
+});
+
+// Rota: stub criar instância (não necessário na Z-API)
+app.post('/whatsapp/criar-instancia', auth, (req, res) => {
+  res.json({ success: true, message: 'Z-API não precisa criar instância via API. Já está configurada.' });
 });
