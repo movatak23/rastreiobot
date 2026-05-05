@@ -32,6 +32,12 @@ db.exec(`
     created_at TEXT DEFAULT (datetime('now'))
   );
 
+  CREATE TABLE IF NOT EXISTS msgs_dia (
+    id         INTEGER PRIMARY KEY AUTOINCREMENT,
+    telefone   TEXT NOT NULL,
+    created_at TEXT DEFAULT (datetime('now'))
+  );
+
   CREATE TABLE IF NOT EXISTS boletos_enviados (
     id          INTEGER PRIMARY KEY AUTOINCREMENT,
     order_id    TEXT NOT NULL,
@@ -76,6 +82,18 @@ function getAllStores() {
 }
 
 // ── Instâncias Z-API por cliente ─────────────────────────────────────────────
+function mensagensHoje(telefone) {
+  const row = db.prepare(`
+    SELECT COUNT(*) as n FROM msgs_dia
+    WHERE telefone = ? AND created_at >= date('now')
+  `).get(telefone);
+  return row?.n || 0;
+}
+
+function registrarMensagem(telefone) {
+  db.prepare('INSERT INTO msgs_dia (telefone) VALUES (?)').run(telefone);
+}
+
 function jaBoletoEnviado(orderId, etapa) {
   return !!db.prepare('SELECT 1 FROM boletos_enviados WHERE order_id = ? AND etapa = ?').get(orderId, etapa);
 }
@@ -205,6 +223,7 @@ module.exports = {
   statusRastreio, atualizarStatusRastreio,
   jaConfirmacaoEnviada, marcarConfirmacaoEnviada,
   salvarInstancia, getInstancia, listarInstancias,
+  mensagensHoje, registrarMensagem,
   jaBoletoEnviado, marcarBoletoEnviado,
   jaCarrinhoEnviado, marcarCarrinhoEnviado,
   getAdminStats, getLojistaStats

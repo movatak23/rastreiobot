@@ -67,6 +67,16 @@ function diasUteisDesde(dateStr) {
   return dias;
 }
 
+// ── Limite diário por número ──────────────────────────────────────────────────
+async function podEnviar(telefone) {
+  const count = db.mensagensHoje(telefone);
+  if (count >= 3) {
+    console.log(`[Limite] ${telefone} já recebeu ${count} mensagens hoje. Bloqueado.`);
+    return false;
+  }
+  return true;
+}
+
 // ── Z-API ─────────────────────────────────────────────────────────────────────
 async function sendWhatsApp(telefone, mensagem, storeId) {
   // Tenta instância do cliente primeiro, fallback para variáveis de ambiente
@@ -337,8 +347,10 @@ async function verificarBoletosPendentes(storeId) {
       if (!mensagem) continue;
 
       try {
+        if (!await podEnviar(telefone)) continue;
         await sendWhatsApp(telefone, mensagem, storeId);
         db.marcarBoletoEnviado(id, storeId, etapa);
+        db.registrarMensagem(telefone);
         console.log(`[Boleto] Etapa ${etapa}min enviada para ${nome} — pedido #${o.number}`);
       } catch(e) {
         console.error(`[Boleto] Falha para #${o.number}:`, e.message);
@@ -387,8 +399,10 @@ async function verificarCarrinhosAbandonados(storeId) {
       if (!mensagem) continue;
 
       try {
+        if (!await podEnviar(telefone)) continue;
         await sendWhatsApp(telefone, mensagem, storeId);
         db.marcarCarrinhoEnviado(id, storeId, etapa);
+        db.registrarMensagem(telefone);
         console.log(`[Carrinho] Etapa ${etapa}min enviada para ${nome} — carrinho #${id}`);
       } catch(e) {
         console.error(`[Carrinho] Falha etapa ${etapa}min para #${id}:`, e.message);
@@ -462,7 +476,9 @@ async function verificarRastreios(storeId) {
         console.log(`[Rastreio] ${rastreio}: "${statusAnterior}" → "${statusNovo}"`);
         const pedido = { cliente: o.contact_name, numero: o.number, rastreio };
         try {
+          if (!await podEnviar(telefone)) continue;
           await sendWhatsApp(telefone, montarMensagemRastreio(pedido, evento), storeId);
+          db.registrarMensagem(telefone);
           console.log(`[Rastreio] WhatsApp enviado para #${o.number}`);
         } catch(e) {
           console.error(`[Rastreio] Falha para #${o.number}:`, e.message);
@@ -886,8 +902,11 @@ app.post('/webhook/zapi', async (req, res) => {
         `\n🔗 Rastreie aqui: ${link}`;
     }
 
-    await sendWhatsApp(telefone, mensagem, storeId);
-    console.log(`[ZAPI] Resposta automática enviada para ${telefone} — pedido #${numero}`);
+    if (await podEnviar(telefone)) {
+      await sendWhatsApp(telefone, mensagem, storeId);
+      db.registrarMensagem(telefone);
+      console.log(`[ZAPI] Resposta automática enviada para ${telefone} — pedido #${numero}`);
+    }
   } catch(e) {
     console.error('[ZAPI] Erro no webhook:', e.message);
   }
