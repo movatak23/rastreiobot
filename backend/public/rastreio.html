@@ -1,0 +1,128 @@
+<!DOCTYPE html>
+<html lang="pt-BR">
+<head>
+<meta charset="UTF-8"/>
+<meta name="viewport" content="width=device-width, initial-scale=1.0"/>
+<title>Rastreio do Pedido</title>
+<link href="https://fonts.googleapis.com/css2?family=Syne:wght@700;800&family=DM+Sans:wght@400;500;600&family=DM+Mono:wght@400;500&display=swap" rel="stylesheet"/>
+<style>
+:root{--bg:#0a0a0e;--bg2:#13131a;--bg3:#1a1a24;--border:#2a2a3a;--border2:#383850;--text:#f0f0f8;--text2:#9090b0;--text3:#55556a;--green:#00e08a;--gd:rgba(0,224,138,.1);--gb:rgba(0,224,138,.25);--blue:#4f8ef7;--yellow:#f5c542;--red:#e05a5a;--mono:'DM Mono',monospace;--sans:'DM Sans',sans-serif;--display:'Syne',sans-serif;}
+*{box-sizing:border-box;margin:0;padding:0;}
+body{font-family:var(--sans);background:var(--bg);color:var(--text);min-height:100vh;display:flex;flex-direction:column;align-items:center;padding:32px 16px;}
+.card{background:var(--bg2);border:1px solid var(--border);border-radius:20px;padding:32px 28px;max-width:480px;width:100%;}
+.logo{font-family:var(--display);font-size:22px;font-weight:800;color:var(--green);margin-bottom:24px;text-align:center;}
+.title{font-size:15px;font-weight:600;color:var(--text2);margin-bottom:6px;}
+.codigo{font-family:var(--mono);font-size:22px;font-weight:500;color:var(--text);margin-bottom:24px;}
+.status-box{background:var(--bg3);border:1px solid var(--border2);border-radius:12px;padding:16px 18px;margin-bottom:20px;}
+.status-label{font-size:11px;color:var(--text3);text-transform:uppercase;letter-spacing:.6px;margin-bottom:6px;}
+.status-val{font-size:16px;font-weight:600;color:var(--green);}
+.status-date{font-size:12px;color:var(--text3);margin-top:4px;font-family:var(--mono);}
+.timeline{display:flex;flex-direction:column;gap:0;}
+.t-item{display:flex;gap:14px;position:relative;}
+.t-item:not(:last-child)::after{content:'';position:absolute;left:11px;top:24px;width:1px;height:100%;background:var(--border2);}
+.t-dot{width:22px;height:22px;border-radius:50%;flex-shrink:0;display:flex;align-items:center;justify-content:center;font-size:10px;margin-top:2px;}
+.t-dot.done{background:var(--gd);border:1px solid var(--gb);color:var(--green);}
+.t-dot.pending{background:var(--bg3);border:1px solid var(--border2);color:var(--text3);}
+.t-content{padding-bottom:20px;}
+.t-label{font-size:13px;font-weight:600;color:var(--text);}
+.t-label.pending{color:var(--text3);}
+.t-date{font-size:11px;color:var(--text3);font-family:var(--mono);margin-top:2px;}
+.btn-correios{display:block;text-align:center;background:var(--gd);border:1px solid var(--gb);color:var(--green);font-family:var(--sans);font-size:13px;font-weight:600;padding:12px;border-radius:10px;text-decoration:none;margin-top:20px;transition:opacity .15s;}
+.btn-correios:hover{opacity:.8;}
+.loading{text-align:center;color:var(--text3);padding:40px;font-size:13px;}
+.spinner{width:20px;height:20px;border:2px solid var(--border2);border-top-color:var(--green);border-radius:50%;animation:spin .7s linear infinite;display:inline-block;margin-bottom:10px;}
+@keyframes spin{to{transform:rotate(360deg)}}
+.erro{background:rgba(224,90,90,.1);border:1px solid rgba(224,90,90,.3);color:var(--red);border-radius:10px;padding:14px;text-align:center;font-size:13px;}
+.powered{font-size:11px;color:var(--text3);margin-top:20px;text-align:center;}
+.powered span{color:var(--green);}
+</style>
+</head>
+<body>
+
+<div class="card" id="card">
+  <div class="logo" id="loja-nome">LoggZap</div>
+  <div class="loading" id="loading">
+    <div class="spinner"></div><br>Buscando rastreio...
+  </div>
+  <div id="content" style="display:none;"></div>
+</div>
+<div class="powered">Rastreio com tecnologia <span>LoggZap</span></div>
+
+<script>
+const params  = new URLSearchParams(window.location.search);
+const codigo  = params.get('codigo') || '';
+const loja    = params.get('loja') || 'Sua Loja';
+const pedido  = params.get('pedido') || '';
+
+document.getElementById('loja-nome').textContent = loja;
+document.title = `Rastreio — ${loja}`;
+
+const ETAPAS = [
+  { key: 'postado',   label: 'Pedido postado',        icon: '📮' },
+  { key: 'transito',  label: 'Em trânsito',            icon: '🚚' },
+  { key: 'saiu',      label: 'Saiu para entrega',      icon: '🎉' },
+  { key: 'entregue',  label: 'Entregue',               icon: '✅' },
+];
+
+function detectarEtapa(descricao) {
+  const d = (descricao || '').toLowerCase();
+  if (d.includes('entregue') || d.includes('objeto entregue')) return 'entregue';
+  if (d.includes('saiu para entrega') || d.includes('entrega prevista')) return 'saiu';
+  if (d.includes('postado') || d.includes('coletado')) return 'postado';
+  return 'transito';
+}
+
+async function buscar() {
+  if (!codigo) { mostrarErro('Código de rastreio não informado.'); return; }
+  try {
+    const res = await fetch(`/rastreio-publico?codigo=${encodeURIComponent(codigo)}`);
+    const data = await res.json();
+    if (!data.success || !data.evento) { mostrarErro('Não foi possível obter o status. Tente novamente mais tarde.'); return; }
+    renderizar(data.evento);
+  } catch(e) {
+    mostrarErro('Erro ao buscar rastreio. Tente novamente.');
+  }
+}
+
+function renderizar(evento) {
+  document.getElementById('loading').style.display = 'none';
+  const etapaAtual = detectarEtapa(evento.descricao);
+  const idxAtual   = ETAPAS.findIndex(e => e.key === etapaAtual);
+
+  const timeline = ETAPAS.map((e, i) => {
+    const done = i <= idxAtual;
+    return `<div class="t-item">
+      <div class="t-dot ${done ? 'done' : 'pending'}">${e.icon}</div>
+      <div class="t-content">
+        <div class="t-label ${done ? '' : 'pending'}">${e.label}</div>
+        ${i === idxAtual ? `<div class="t-date">${evento.data} às ${evento.hora}</div>` : ''}
+      </div>
+    </div>`;
+  }).join('');
+
+  document.getElementById('content').innerHTML = `
+    ${pedido ? `<div class="title">Pedido #${pedido}</div>` : ''}
+    <div class="codigo">${codigo}</div>
+    <div class="status-box">
+      <div class="status-label">Status atual</div>
+      <div class="status-val">${evento.descricao || 'Em processamento'}</div>
+      <div class="status-date">${evento.data} às ${evento.hora}</div>
+    </div>
+    <div class="timeline">${timeline}</div>
+    <a class="btn-correios" href="https://rastreamento.correios.com.br/app/index.php?objeto=${codigo}" target="_blank">
+      Ver detalhes nos Correios →
+    </a>
+  `;
+  document.getElementById('content').style.display = 'block';
+}
+
+function mostrarErro(msg) {
+  document.getElementById('loading').style.display = 'none';
+  document.getElementById('content').innerHTML = `<div class="erro">${msg}</div>`;
+  document.getElementById('content').style.display = 'block';
+}
+
+buscar();
+</script>
+</body>
+</html>

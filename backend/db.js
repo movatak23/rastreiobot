@@ -32,6 +32,12 @@ db.exec(`
     created_at TEXT DEFAULT (datetime('now'))
   );
 
+  CREATE TABLE IF NOT EXISTS satisfacao (
+    order_id   TEXT PRIMARY KEY,
+    store_id   TEXT,
+    created_at TEXT DEFAULT (datetime('now'))
+  );
+
   CREATE TABLE IF NOT EXISTS msgs_dia (
     id         INTEGER PRIMARY KEY AUTOINCREMENT,
     telefone   TEXT NOT NULL,
@@ -82,6 +88,26 @@ function getAllStores() {
 }
 
 // ── Instâncias Z-API por cliente ─────────────────────────────────────────────
+function jaSatisfacaoEnviada(orderId) {
+  return !!db.prepare('SELECT 1 FROM satisfacao WHERE order_id = ?').get(orderId);
+}
+
+function marcarSatisfacaoEnviada(orderId, storeId) {
+  db.prepare('INSERT OR IGNORE INTO satisfacao (order_id, store_id) VALUES (?, ?)').run(orderId, storeId);
+}
+
+function limparRegistrosAntigos() {
+  // msgs_dia: mantém só os últimos 7 dias
+  db.prepare(`DELETE FROM msgs_dia WHERE created_at < datetime('now', '-7 days')`).run();
+  // carrinhos_enviados: mantém só os últimos 60 dias
+  db.prepare(`DELETE FROM carrinhos_enviados WHERE created_at < datetime('now', '-60 days')`).run();
+  // boletos_enviados: mantém só os últimos 60 dias
+  db.prepare(`DELETE FROM boletos_enviados WHERE created_at < datetime('now', '-60 days')`).run();
+  // rastreios entregues há mais de 90 dias
+  db.prepare(`DELETE FROM rastreios WHERE status_atual = 'entregue' AND atualizado_em < datetime('now', '-90 days')`).run();
+  console.log('[DB] Registros antigos removidos.');
+}
+
 function mensagensHoje(telefone) {
   const row = db.prepare(`
     SELECT COUNT(*) as n FROM msgs_dia
@@ -223,6 +249,8 @@ module.exports = {
   statusRastreio, atualizarStatusRastreio,
   jaConfirmacaoEnviada, marcarConfirmacaoEnviada,
   salvarInstancia, getInstancia, listarInstancias,
+  jaSatisfacaoEnviada, marcarSatisfacaoEnviada,
+  limparRegistrosAntigos,
   mensagensHoje, registrarMensagem,
   jaBoletoEnviado, marcarBoletoEnviado,
   jaCarrinhoEnviado, marcarCarrinhoEnviado,

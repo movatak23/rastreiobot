@@ -224,6 +224,16 @@ function montarMensagemPagamento(nome, numero) {
   );
 }
 
+// ── CRON — Limpeza semanal do banco (toda domingo às 3h) ─────────────────────
+cron.schedule('0 3 * * 0', () => {
+  try {
+    db.limparRegistrosAntigos();
+    console.log('[Limpeza] Banco limpo com sucesso.');
+  } catch(e) {
+    console.error('[Limpeza] Erro:', e.message);
+  }
+});
+
 // ── CRON — Roda a cada 30 minutos ─────────────────────────────────────────────
 cron.schedule('*/30 * * * *', async () => {
   console.log('[Cron] Iniciando verificação...');
@@ -480,6 +490,26 @@ async function verificarRastreios(storeId) {
           await sendWhatsApp(telefone, montarMensagemRastreio(pedido, evento), storeId);
           db.registrarMensagem(telefone);
           console.log(`[Rastreio] WhatsApp enviado para #${o.number}`);
+
+          // Pesquisa de satisfação quando entregue
+          if (evento.entregue && !db.jaSatisfacaoEnviada(String(o.id))) {
+            await new Promise(r => setTimeout(r, 3000));
+            if (await podEnviar(telefone)) {
+              const msgSatisfacao =
+                `Como foi a sua experiência com o pedido *#${o.number}*, ${o.contact_name || 'Cliente'}? 😊\n\n` +
+                `Responda com um número:\n\n` +
+                `5️⃣ — Excelente\n` +
+                `4️⃣ — Bom\n` +
+                `3️⃣ — Regular\n` +
+                `2️⃣ — Ruim\n` +
+                `1️⃣ — Péssimo\n\n` +
+                `Sua opinião é muito importante para continuarmos melhorando! 🙏`;
+              await sendWhatsApp(telefone, msgSatisfacao, storeId);
+              db.marcarSatisfacaoEnviada(String(o.id), storeId);
+              db.registrarMensagem(telefone);
+              console.log(`[Satisfação] Pesquisa enviada para #${o.number}`);
+            }
+          }
         } catch(e) {
           console.error(`[Rastreio] Falha para #${o.number}:`, e.message);
         }
@@ -603,6 +633,15 @@ app.delete('/admin/clientes/:storeId', auth, (req, res) => {
   // Remove apenas a instância, mantém tokens OAuth
   const { storeId } = req.params;
   res.json({ success: true, message: `Cliente ${storeId} removido.` });
+});
+
+// ── Rastreio público (sem auth) ───────────────────────────────────────────────
+app.get('/rastreio-publico', async (req, res) => {
+  const { codigo } = req.query;
+  if (!codigo) return res.status(400).json({ success: false, error: 'Código obrigatório.' });
+  const evento = await consultarCorreios(codigo);
+  if (!evento) return res.json({ success: false, error: 'Não encontrado.' });
+  res.json({ success: true, evento });
 });
 
 // ── Health check ──────────────────────────────────────────────────────────────
