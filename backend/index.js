@@ -374,3 +374,34 @@ app.listen(PORT, () => {
   console.log(`RastreioBot v1.1.0 rodando na porta ${PORT}`);
   console.log('Cron de rastreio automático: a cada 30 minutos');
 });
+
+// ── Webhook Nuvemshop — Pagamento confirmado ──────────────────────────────────
+app.post('/webhook/pagamento', async (req, res) => {
+  // Responde imediatamente para a Nuvemshop não retentar
+  res.json({ ok: true });
+
+  try {
+    const evento = req.body;
+
+    // Só processa pagamento confirmado
+    if (evento.event !== 'order/paid') return;
+
+    const order = evento.order || evento;
+    const telefone = formatTel(order.contact_phone || order.customer?.phone);
+    if (!telefone) return;
+
+    const nome   = order.contact_name || order.customer?.name || 'Cliente';
+    const numero = order.number || order.id;
+
+    const mensagem =
+      `👏👏👏 Parabéns!👏👏👏\n` +
+      `Seu pagamento foi confirmado!\n\n` +
+      `Nosso prazo de produção é de 3 dias úteis. Sua estampa entrou na fila de impressão agora e segue a sequência de pedidos.\n\n` +
+      `Lembrando que este prazo está sujeito a alteração devido a necessidade de manutenção emergencial em nosso maquinário.`;
+
+    await sendWhatsApp(telefone, mensagem);
+    console.log(`[Webhook] Pagamento confirmado — WhatsApp enviado para pedido #${numero}`);
+  } catch(e) {
+    console.error('[Webhook] Erro ao processar pagamento:', e.message);
+  }
+});
