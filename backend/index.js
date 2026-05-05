@@ -369,6 +369,8 @@ async function verificarBoletosPendentes(storeId) {
       await new Promise(r => setTimeout(r, 500));
     }
   } catch(e) {
+    const msg = e.response?.data?.description || e.message || '';
+    if (msg.includes('Last page is 0')) return;
     console.error(`[Boleto] Erro loja ${storeId}:`, e.response?.data || e.message);
   }
 }
@@ -421,6 +423,8 @@ async function verificarCarrinhosAbandonados(storeId) {
       await new Promise(r => setTimeout(r, 500));
     }
   } catch(e) {
+    const msg = e.response?.data?.description || e.message || '';
+    if (msg.includes('Last page is 0')) return;
     console.error(`[Carrinho] Erro loja ${storeId}:`, e.response?.data || e.message);
   }
 }
@@ -454,6 +458,8 @@ async function verificarPagamentos(storeId) {
       await new Promise(r => setTimeout(r, 500));
     }
   } catch(e) {
+    const msg = e.response?.data?.description || e.message || '';
+    if (msg.includes('Last page is 0')) return; // sem pedidos — silencioso
     console.error(`[Pagamento] Erro loja ${storeId}:`, e.response?.data || e.message);
   }
 }
@@ -473,7 +479,7 @@ async function verificarRastreios(storeId) {
       if (!rastreio) continue;
       const telefone = formatTel(o.contact_phone);
       if (!telefone) continue;
-      if (!/^[A-Z]{2}\d+[A-Z]{2}$/i.test(rastreio)) continue;
+      if (!/^[A-Z]{2}\d{9}[A-Z]{2}$/i.test(rastreio)) continue;
       if (db.statusRastreio(rastreio) === 'entregue') continue;
 
       const evento = await consultarCorreios(rastreio);
