@@ -53,8 +53,14 @@ const params  = new URLSearchParams(window.location.search);
 const codigo  = params.get('codigo') || '';
 const loja    = params.get('loja') || 'Sua Loja';
 const pedido  = params.get('pedido') || '';
+const logo    = params.get('logo') || '';
 
-document.getElementById('loja-nome').textContent = loja;
+const lojoEl = document.getElementById('loja-nome');
+if (logo) {
+  lojoEl.innerHTML = `<img src="${logo}" style="height:48px;object-fit:contain;" alt="${loja}"/>`;
+} else {
+  lojoEl.textContent = loja;
+}
 document.title = `Rastreio — ${loja}`;
 
 const ETAPAS = [
