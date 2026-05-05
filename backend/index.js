@@ -88,7 +88,6 @@ async function consultarCorreios(codigo) {
       `https://api.linketrack.com/track/json?user=teste&token=1abcd00b2731640afbe0134bcecbe4d1b4c78a60f7d90b06329b0a7c8d5bab&codigo=${codigo}`,
       { timeout: 10000 }
     );
-    // Retorna o último evento
     const eventos = res.data?.eventos || [];
     if (!eventos.length) return null;
     const ultimo = eventos[0];
@@ -106,13 +105,34 @@ async function consultarCorreios(codigo) {
   }
 }
 
-// ── Mensagem de atualização de rastreio ───────────────────────────────────────
+// ── Mensagens ─────────────────────────────────────────────────────────────────
+function montarMensagem(template, pedido) {
+  const TRANSPORTADORAS = {
+    'Correios': { emoji:'📮', url:'https://rastreamento.correios.com.br/app/index.php?objeto={c}' },
+    'Jadlog':   { emoji:'🚚', url:'https://www.jadlog.com.br/siteInstitucional/tracking.jad?cte={c}' },
+    'Loggi':    { emoji:'⚡', url:'https://www.loggi.com/rastreador/?code={c}' },
+  };
+  const t = Object.entries(TRANSPORTADORAS).find(([k]) => (pedido.transportadora||'').toLowerCase().includes(k.toLowerCase()));
+  const transp = t ? t[1] : { emoji:'📦', url:'https://rastreamento.correios.com.br/app/index.php?objeto={c}' };
+  const transpNome = t ? t[0] : (pedido.transportadora || 'Transportadora');
+  const link = pedido.rastreio ? transp.url.replace('{c}', encodeURIComponent(pedido.rastreio)) : '';
+  const padrao =
+    `Olá {nome}! 👋\n\nSeu pedido *#{numero}* foi enviado!\n\n` +
+    `{emoji} *Transportadora:* {transportadora}\n` +
+    `📦 *Código de rastreio:* *{codigo}*\n\n` +
+    `🔗 Rastreie sua entrega:\n{link}\n\nQualquer dúvida é só chamar! 😊`;
+  return (template || padrao)
+    .replace(/{nome}/g,           pedido.cliente || 'Cliente')
+    .replace(/{numero}/g,         pedido.numero  || '')
+    .replace(/{codigo}/g,         pedido.rastreio || '')
+    .replace(/{transportadora}/g, transpNome)
+    .replace(/{emoji}/g,          transp.emoji)
+    .replace(/{link}/g,           link);
+}
+
 function montarMensagemRastreio(pedido, evento) {
   const emoji = evento.entregue ? '✅' : '📦';
-  const status = evento.entregue
-    ? 'Seu pedido foi *entregue*!'
-    : `*${evento.descricao}*`;
-
+  const status = evento.entregue ? 'Seu pedido foi *entregue*!' : `*${evento.descricao}*`;
   return (
     `Olá ${pedido.cliente || 'Cliente'}! 👋\n\n` +
     `${emoji} Atualização do seu pedido *#${pedido.numero}*:\n\n` +
@@ -123,85 +143,101 @@ function montarMensagemRastreio(pedido, evento) {
   );
 }
 
-// ── CRON — Notificação automática por mudança de status ──────────────────────
-// Roda a cada 30 minutos
+const MSG_PAGAMENTO =
+  `👏👏👏 Parabéns!👏👏👏\n` +
+  `Seu pagamento foi confirmado!\n\n` +
+  `Nosso prazo de produção é de 3 dias úteis. Sua estampa entrou na fila de impressão agora e segue a sequência de pedidos.\n\n` +
+  `Lembrando que este prazo está sujeito a alteração devido a necessidade de manutenção emergencial em nosso maquinário.`;
+
+// ── CRON — Roda a cada 30 minutos ─────────────────────────────────────────────
 cron.schedule('*/30 * * * *', async () => {
-  console.log('[Cron] Iniciando verificação de rastreios...');
+  console.log('[Cron] Iniciando verificação...');
   try {
     const stores = db.getAllStores();
     for (const store of stores) {
-      await verificarRastreiosLoja(store.store_id);
+      await verificarPagamentos(store.store_id);
+      await verificarRastreios(store.store_id);
     }
   } catch(e) {
     console.error('[Cron] Erro geral:', e.message);
   }
 });
 
-async function verificarRastreiosLoja(storeId) {
+// ── Verificar pagamentos recentes (últimas 2h) ────────────────────────────────
+async function verificarPagamentos(storeId) {
   try {
-    // Busca pedidos com rastreio que ainda não foram entregues
+    const desde = new Date(Date.now() - 2 * 60 * 60 * 1000).toISOString();
     const orders = await nuvemGet(storeId, '/orders', {
-      per_page: 200,
+      per_page: 50,
       payment_status: 'paid',
-      fields: 'id,number,contact_name,contact_phone,shipping_status,shipping_tracking_number,shipping_option,created_at'
+      created_at_min: desde,
+      fields: 'id,number,contact_name,contact_phone,payment_status,created_at'
     });
 
     for (const o of orders) {
       if (o.status === 'cancelled') continue;
-
-      const rastreio = o.shipping_tracking_number?.trim();
-      if (!rastreio) continue; // Sem rastreio, pula
+      if (db.jaConfirmacaoEnviada(String(o.id))) continue;
 
       const telefone = formatTel(o.contact_phone);
-      if (!telefone) continue; // Sem telefone, pula
+      if (!telefone) continue;
 
-      // Só notifica Correios por enquanto (código começa com letras)
+      try {
+        await sendWhatsApp(telefone, MSG_PAGAMENTO);
+        db.marcarConfirmacaoEnviada(String(o.id), storeId);
+        console.log(`[Pagamento] WhatsApp enviado para pedido #${o.number}`);
+      } catch(e) {
+        console.error(`[Pagamento] Falha para #${o.number}:`, e.message);
+      }
+
+      await new Promise(r => setTimeout(r, 500));
+    }
+  } catch(e) {
+    console.error(`[Pagamento] Erro loja ${storeId}:`, e.response?.data || e.message);
+  }
+}
+
+// ── Verificar mudanças de rastreio ────────────────────────────────────────────
+async function verificarRastreios(storeId) {
+  try {
+    const orders = await nuvemGet(storeId, '/orders', {
+      per_page: 200,
+      payment_status: 'paid',
+      fields: 'id,number,contact_name,contact_phone,shipping_status,shipping_tracking_number,created_at'
+    });
+
+    for (const o of orders) {
+      if (o.status === 'cancelled') continue;
+      const rastreio = o.shipping_tracking_number?.trim();
+      if (!rastreio) continue;
+      const telefone = formatTel(o.contact_phone);
+      if (!telefone) continue;
       if (!/^[A-Z]{2}\d+[A-Z]{2}$/i.test(rastreio)) continue;
+      if (db.statusRastreio(rastreio) === 'entregue') continue;
 
-      // Verifica se já foi entregue (não precisa mais consultar)
-      const jaEntregue = db.statusRastreio(rastreio) === 'entregue';
-      if (jaEntregue) continue;
-
-      // Consulta status atual nos Correios
       const evento = await consultarCorreios(rastreio);
       if (!evento) continue;
 
       const statusAnterior = db.statusRastreio(rastreio);
       const statusNovo = evento.entregue ? 'entregue' : evento.descricao;
 
-      // Se status mudou, notifica o cliente
       if (statusNovo && statusNovo !== statusAnterior) {
-        console.log(`[Cron] Status mudou: ${rastreio} — "${statusAnterior}" → "${statusNovo}"`);
-
-        const pedido = {
-          cliente:  o.contact_name || 'Cliente',
-          numero:   o.number,
-          rastreio: rastreio
-        };
-
-        const mensagem = montarMensagemRastreio(pedido, evento);
-
+        console.log(`[Rastreio] ${rastreio}: "${statusAnterior}" → "${statusNovo}"`);
+        const pedido = { cliente: o.contact_name, numero: o.number, rastreio };
         try {
-          await sendWhatsApp(telefone, mensagem);
-          console.log(`[Cron] WhatsApp enviado para pedido #${o.number}`);
+          await sendWhatsApp(telefone, montarMensagemRastreio(pedido, evento));
+          console.log(`[Rastreio] WhatsApp enviado para #${o.number}`);
         } catch(e) {
-          console.error(`[Cron] Falha ao enviar WhatsApp para #${o.number}:`, e.message);
+          console.error(`[Rastreio] Falha para #${o.number}:`, e.message);
         }
-
-        // Atualiza status no DB independente do envio
         db.atualizarStatusRastreio(rastreio, statusNovo, evento.data + ' ' + evento.hora);
-      } else {
-        // Sem mudança — garante que o registro existe no DB
-        if (!statusAnterior) {
-          db.atualizarStatusRastreio(rastreio, statusNovo || 'postado', evento.data + ' ' + evento.hora);
-        }
+      } else if (!statusAnterior) {
+        db.atualizarStatusRastreio(rastreio, statusNovo || 'postado', evento.data + ' ' + evento.hora);
       }
 
-      // Pequena pausa para não sobrecarregar a API dos Correios
       await new Promise(r => setTimeout(r, 500));
     }
   } catch(e) {
-    console.error(`[Cron] Erro na loja ${storeId}:`, e.response?.data || e.message);
+    console.error(`[Rastreio] Erro loja ${storeId}:`, e.response?.data || e.message);
   }
 }
 
@@ -223,19 +259,14 @@ app.get('/auth/callback', async (req, res) => {
       grant_type: 'authorization_code',
       code
     }, { headers: { 'Content-Type': 'application/json' } });
-
     const sid = String(data.user_id || storeId);
     db.saveToken(sid, data.access_token);
-
     res.send(`<!DOCTYPE html><html><head><meta charset="UTF-8"/>
     <style>*{font-family:sans-serif;text-align:center;}body{background:#0d0d10;color:#fff;padding:3rem;}
     h2{color:#00d084;}code{background:#1e1e25;padding:4px 10px;border-radius:6px;font-size:18px;color:#00d084;}</style></head>
-    <body>
-      <h2>✅ RastreioBot conectado!</h2>
-      <p>Loja autenticada com sucesso.</p>
-      <p style="margin-top:1.5rem;">Seu <strong>Store ID</strong>:</p>
-      <code>${sid}</code>
-      <p style="color:#888;margin-top:1.5rem;">Cole esse ID nas configurações da extensão.</p>
+    <body><h2>✅ RastreioBot conectado!</h2><p>Loja autenticada com sucesso.</p>
+    <p style="margin-top:1.5rem;">Seu <strong>Store ID</strong>:</p><code>${sid}</code>
+    <p style="color:#888;margin-top:1.5rem;">Cole esse ID nas configurações da extensão.</p>
     </body></html>`);
   } catch(e) {
     console.error('OAuth erro:', e.response?.data || e.message);
@@ -248,58 +279,38 @@ app.get('/pedidos/:storeId', auth, async (req, res) => {
   const { storeId } = req.params;
   const prazo = parseInt(req.query.prazo || '3');
   const incluirNotificados = req.query.incluir_notificados === 'true';
-
   try {
     const orders = await nuvemGet(storeId, '/orders', {
       per_page: 200,
       payment_status: 'paid',
       fields: 'id,number,contact_name,contact_phone,shipping_status,shipping_tracking_number,shipping_option,created_at'
     });
-
     const resultado = [];
-
     for (const o of orders) {
       if (o.status === 'cancelled') continue;
-
       const jaEnviado = db.jaNotificado(String(o.id));
       if (jaEnviado && !incluirNotificados) continue;
-
       const tel = formatTel(o.contact_phone);
       const diasUteis = diasUteisDesde(o.created_at);
       let statusPrazo = null;
-
       const temRastreio = !!(o.shipping_tracking_number && o.shipping_tracking_number.trim());
       const foiEnviado  = o.shipping_status === 'shipped' || temRastreio;
-
       if (!foiEnviado) {
         statusPrazo = diasUteis > prazo ? 'atrasado' : diasUteis === prazo ? 'hoje' : 'ok';
       }
-
-      // Inclui status do rastreio automático se existir
       const statusRastreio = temRastreio ? db.statusRastreio(o.shipping_tracking_number.trim()) : null;
-
       resultado.push({
-        order_id:      String(o.id),
-        numero:        o.number,
-        cliente:       o.contact_name || '',
-        telefone:      tel,
-        rastreio:      o.shipping_tracking_number || '',
+        order_id: String(o.id), numero: o.number, cliente: o.contact_name || '',
+        telefone: tel, rastreio: o.shipping_tracking_number || '',
         transportadora: o.shipping_option || '',
-        status:        foiEnviado ? 'shipped' : (o.shipping_status || 'pending'),
-        statusRastreio,
-        diasUteis,
-        statusPrazo,
-        ja_notificado: jaEnviado,
-        created_at:    o.created_at
+        status: foiEnviado ? 'shipped' : (o.shipping_status || 'pending'),
+        statusRastreio, diasUteis, statusPrazo, ja_notificado: jaEnviado, created_at: o.created_at
       });
     }
-
     resultado.sort((a, b) => {
-      const prioA = a.statusPrazo === 'atrasado' ? 0 : a.statusPrazo === 'hoje' ? 1 : a.status === 'shipped' ? 2 : 3;
-      const prioB = b.statusPrazo === 'atrasado' ? 0 : b.statusPrazo === 'hoje' ? 1 : b.status === 'shipped' ? 2 : 3;
-      return prioA - prioB;
+      const p = x => x.statusPrazo === 'atrasado' ? 0 : x.statusPrazo === 'hoje' ? 1 : x.status === 'shipped' ? 2 : 3;
+      return p(a) - p(b);
     });
-
     res.json({ success: true, total: resultado.length, pedidos: resultado });
   } catch(e) {
     console.error('Erro /pedidos:', e.response?.data || e.message);
@@ -315,31 +326,19 @@ app.post('/notificado', auth, (req, res) => {
   res.json({ success: true });
 });
 
-// ── Forçar verificação manual via extensão ────────────────────────────────────
-app.post('/verificar-rastreios', auth, async (req, res) => {
-  const { store_id } = req.body;
-  if (!store_id) return res.status(400).json({ error: 'store_id obrigatório.' });
-  res.json({ success: true, message: 'Verificação iniciada em background.' });
-  // Roda sem bloquear a resposta
-  verificarRastreiosLoja(store_id).catch(e => console.error('[Manual]', e.message));
-});
-
 // ── Health check ──────────────────────────────────────────────────────────────
 app.get('/status', (req, res) => {
   const stores = db.getAllStores();
-  res.json({ ok: true, lojas: stores.length, versao: '1.1.0', cron: 'ativo (30min)' });
+  res.json({ ok: true, lojas: stores.length, versao: '1.2.0', cron: 'ativo (30min)' });
 });
 
 // ── Enviar WhatsApp ───────────────────────────────────────────────────────────
 app.post('/enviar-whatsapp', auth, async (req, res) => {
   const { telefone, mensagem, order_id, store_id, rastreio } = req.body;
   if (!telefone || !mensagem) return res.status(400).json({ error: 'telefone e mensagem obrigatórios.' });
-
   try {
     const result = await sendWhatsApp(telefone, mensagem);
-    if (order_id && store_id) {
-      db.marcarNotificado(order_id, store_id, rastreio, telefone);
-    }
+    if (order_id && store_id) db.marcarNotificado(order_id, store_id, rastreio, telefone);
     res.json({ success: true, result });
   } catch(e) {
     res.status(500).json({ success: false, error: e.response?.data?.message || e.message });
@@ -371,37 +370,6 @@ app.post('/whatsapp/criar-instancia', auth, (req, res) => {
 });
 
 app.listen(PORT, () => {
-  console.log(`RastreioBot v1.1.0 rodando na porta ${PORT}`);
-  console.log('Cron de rastreio automático: a cada 30 minutos');
-});
-
-// ── Webhook Nuvemshop — Pagamento confirmado ──────────────────────────────────
-app.post('/webhook/pagamento', async (req, res) => {
-  // Responde imediatamente para a Nuvemshop não retentar
-  res.json({ ok: true });
-
-  try {
-    const evento = req.body;
-
-    // Só processa pagamento confirmado
-    if (evento.event !== 'order/paid') return;
-
-    const order = evento.order || evento;
-    const telefone = formatTel(order.contact_phone || order.customer?.phone);
-    if (!telefone) return;
-
-    const nome   = order.contact_name || order.customer?.name || 'Cliente';
-    const numero = order.number || order.id;
-
-    const mensagem =
-      `👏👏👏 Parabéns!👏👏👏\n` +
-      `Seu pagamento foi confirmado!\n\n` +
-      `Nosso prazo de produção é de 3 dias úteis. Sua estampa entrou na fila de impressão agora e segue a sequência de pedidos.\n\n` +
-      `Lembrando que este prazo está sujeito a alteração devido a necessidade de manutenção emergencial em nosso maquinário.`;
-
-    await sendWhatsApp(telefone, mensagem);
-    console.log(`[Webhook] Pagamento confirmado — WhatsApp enviado para pedido #${numero}`);
-  } catch(e) {
-    console.error('[Webhook] Erro ao processar pagamento:', e.message);
-  }
+  console.log(`RastreioBot v1.2.0 rodando na porta ${PORT}`);
+  console.log('Cron ativo: verificação a cada 30 minutos');
 });
