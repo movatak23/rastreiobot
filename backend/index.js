@@ -3,11 +3,13 @@ const express = require('express');
 const axios   = require('axios');
 const cors    = require('cors');
 const cron    = require('node-cron');
+const path    = require('path');
 const db      = require('./db');
 
 const app = express();
 app.use(express.json());
 app.use(cors({ origin: '*' }));
+app.use(express.static(path.join(__dirname, 'public')));
 
 const {
   NUVEM_CLIENT_ID,
