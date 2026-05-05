@@ -708,14 +708,14 @@ const GATILHOS = [
   'preciso do código', 'preciso do codigo',
   'meu pedido ainda nao chegou', 'meu pedido não chegou',
   'rastreio', 'rastreamento', 'onde está meu pedido',
-  'onde esta meu pedido', 'meu pedido'
+  'onde esta meu pedido'
 ];
 
 function contemGatilho(texto) {
-  const t = (texto || '').toLowerCase().normalize('NFD').replace(/[\u0300-\u036f]/g, '');
+  const t = (texto || '').trim().toLowerCase().normalize('NFD').replace(/[\u0300-\u036f]/g, '');
   return GATILHOS.some(g => {
     const gn = g.normalize('NFD').replace(/[\u0300-\u036f]/g, '');
-    return t.includes(gn);
+    return t === gn;
   });
 }
 
