@@ -4,7 +4,6 @@ const path = require('path');
 const DB_PATH = process.env.DB_PATH || path.join(__dirname, 'rastreiobot.db');
 const db = new Database(DB_PATH);
 
-// ── Tabelas ───────────────────────────────────────────────────────────────────
 db.exec(`
   CREATE TABLE IF NOT EXISTS tokens (
     store_id     TEXT PRIMARY KEY,
@@ -26,13 +25,17 @@ db.exec(`
     atualizado_em TEXT,
     created_at    TEXT DEFAULT (datetime('now'))
   );
+
+  CREATE TABLE IF NOT EXISTS confirmacoes (
+    order_id   TEXT PRIMARY KEY,
+    store_id   TEXT,
+    created_at TEXT DEFAULT (datetime('now'))
+  );
 `);
 
-// ── Tokens OAuth ──────────────────────────────────────────────────────────────
 function saveToken(storeId, accessToken) {
   db.prepare(`
-    INSERT INTO tokens (store_id, access_token)
-    VALUES (?, ?)
+    INSERT INTO tokens (store_id, access_token) VALUES (?, ?)
     ON CONFLICT(store_id) DO UPDATE SET access_token = excluded.access_token
   `).run(storeId, accessToken);
 }
@@ -45,14 +48,10 @@ function getAllStores() {
   return db.prepare('SELECT store_id FROM tokens').all();
 }
 
-// ── Notificados ───────────────────────────────────────────────────────────────
 function marcarNotificado(orderId, storeId, rastreio, telefone) {
   db.prepare(`
-    INSERT INTO notificados (order_id, store_id, rastreio, telefone)
-    VALUES (?, ?, ?, ?)
-    ON CONFLICT(order_id) DO UPDATE SET
-      rastreio = excluded.rastreio,
-      telefone = excluded.telefone
+    INSERT INTO notificados (order_id, store_id, rastreio, telefone) VALUES (?, ?, ?, ?)
+    ON CONFLICT(order_id) DO UPDATE SET rastreio = excluded.rastreio, telefone = excluded.telefone
   `).run(orderId, storeId, rastreio || null, telefone || null);
 }
 
@@ -60,7 +59,6 @@ function jaNotificado(orderId) {
   return !!db.prepare('SELECT 1 FROM notificados WHERE order_id = ?').get(orderId);
 }
 
-// ── Rastreios automáticos ─────────────────────────────────────────────────────
 function statusRastreio(codigo) {
   const row = db.prepare('SELECT status_atual FROM rastreios WHERE codigo = ?').get(codigo);
   return row ? row.status_atual : null;
@@ -68,20 +66,25 @@ function statusRastreio(codigo) {
 
 function atualizarStatusRastreio(codigo, statusAtual, atualizadoEm) {
   db.prepare(`
-    INSERT INTO rastreios (codigo, status_atual, atualizado_em)
-    VALUES (?, ?, ?)
-    ON CONFLICT(codigo) DO UPDATE SET
-      status_atual  = excluded.status_atual,
-      atualizado_em = excluded.atualizado_em
+    INSERT INTO rastreios (codigo, status_atual, atualizado_em) VALUES (?, ?, ?)
+    ON CONFLICT(codigo) DO UPDATE SET status_atual = excluded.status_atual, atualizado_em = excluded.atualizado_em
   `).run(codigo, statusAtual, atualizadoEm || new Date().toISOString());
 }
 
+function jaConfirmacaoEnviada(orderId) {
+  return !!db.prepare('SELECT 1 FROM confirmacoes WHERE order_id = ?').get(orderId);
+}
+
+function marcarConfirmacaoEnviada(orderId, storeId) {
+  db.prepare(`
+    INSERT INTO confirmacoes (order_id, store_id) VALUES (?, ?)
+    ON CONFLICT(order_id) DO NOTHING
+  `).run(orderId, storeId);
+}
+
 module.exports = {
-  saveToken,
-  getToken,
-  getAllStores,
-  marcarNotificado,
-  jaNotificado,
-  statusRastreio,
-  atualizarStatusRastreio
+  saveToken, getToken, getAllStores,
+  marcarNotificado, jaNotificado,
+  statusRastreio, atualizarStatusRastreio,
+  jaConfirmacaoEnviada, marcarConfirmacaoEnviada
 };
