@@ -32,6 +32,15 @@ db.exec(`
     created_at TEXT DEFAULT (datetime('now'))
   );
 
+  CREATE TABLE IF NOT EXISTS boletos_enviados (
+    id          INTEGER PRIMARY KEY AUTOINCREMENT,
+    order_id    TEXT NOT NULL,
+    store_id    TEXT NOT NULL,
+    etapa       INTEGER NOT NULL,
+    created_at  TEXT DEFAULT (datetime('now')),
+    UNIQUE(order_id, etapa)
+  );
+
   CREATE TABLE IF NOT EXISTS carrinhos_enviados (
     id         INTEGER PRIMARY KEY AUTOINCREMENT,
     checkout_id TEXT NOT NULL,
@@ -67,6 +76,14 @@ function getAllStores() {
 }
 
 // ── Instâncias Z-API por cliente ─────────────────────────────────────────────
+function jaBoletoEnviado(orderId, etapa) {
+  return !!db.prepare('SELECT 1 FROM boletos_enviados WHERE order_id = ? AND etapa = ?').get(orderId, etapa);
+}
+
+function marcarBoletoEnviado(orderId, storeId, etapa) {
+  db.prepare('INSERT OR IGNORE INTO boletos_enviados (order_id, store_id, etapa) VALUES (?, ?, ?)').run(orderId, storeId, etapa);
+}
+
 function jaCarrinhoEnviado(checkoutId, etapa) {
   return !!db.prepare('SELECT 1 FROM carrinhos_enviados WHERE checkout_id = ? AND etapa = ?').get(checkoutId, etapa);
 }
@@ -188,6 +205,7 @@ module.exports = {
   statusRastreio, atualizarStatusRastreio,
   jaConfirmacaoEnviada, marcarConfirmacaoEnviada,
   salvarInstancia, getInstancia, listarInstancias,
+  jaBoletoEnviado, marcarBoletoEnviado,
   jaCarrinhoEnviado, marcarCarrinhoEnviado,
   getAdminStats, getLojistaStats
 };

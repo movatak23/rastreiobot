@@ -221,6 +221,7 @@ cron.schedule('*/30 * * * *', async () => {
     const stores = db.getAllStores();
     for (const store of stores) {
       await verificarPagamentos(store.store_id);
+      await verificarBoletosPendentes(store.store_id);
       await verificarCarrinhosAbandonados(store.store_id);
       await verificarRastreios(store.store_id);
     }
@@ -265,6 +266,89 @@ Finalize sua compra antes que acabe:
 _Esta é a última notificação sobre este carrinho._`
   };
   return msgs[etapa] || null;
+}
+
+// ── Mensagens de recuperação de boleto/Pix não pago ─────────────────────────
+function montarMensagemBoleto(etapa, nome, numero, gateway) {
+  const metodo = (gateway || '').toLowerCase().includes('pix') ? 'PIX' : 'boleto';
+  const msgs = {
+    60: `Olá, ${nome}! 😊
+
+Identificamos que seu pedido *#${numero}* ainda está aguardando pagamento via *${metodo}*.
+
+Finalize seu pagamento para garantir seu pedido!
+
+Qualquer dúvida é só chamar. 💬`,
+
+    1440: `${nome}, seu pedido *#${numero}* ainda está pendente! ⏳
+
+Teve alguma dificuldade com o pagamento via *${metodo}*? Estamos aqui para ajudar!
+
+Responda essa mensagem se precisar de suporte. 😊`,
+
+    2880: `⚠️ ${nome}, *última chance!*
+
+Seu pedido *#${numero}* está prestes a ser cancelado por falta de pagamento.
+
+Finalize agora para não perder sua reserva!
+
+Qualquer problema com o ${metodo}, é só falar. 💬`
+  };
+  return msgs[etapa] || null;
+}
+
+// ── Verificar boletos/Pix não pagos ──────────────────────────────────────────
+async function verificarBoletosPendentes(storeId) {
+  try {
+    const orders = await nuvemGet(storeId, '/orders', {
+      per_page: 100,
+      payment_status: 'pending',
+      fields: 'id,number,contact_name,contact_phone,gateway,created_at,status'
+    });
+
+    const agora = Date.now();
+
+    for (const o of orders) {
+      if (o.status === 'cancelled') continue;
+
+      // Só boleto e pix (não cartão pendente)
+      const gw = (o.gateway || '').toLowerCase();
+      const ehBoletoOuPix = gw.includes('boleto') || gw.includes('pix') ||
+                            gw.includes('ticket') || gw.includes('bank');
+      if (!ehBoletoOuPix && gw !== '') continue; // se gateway desconhecido, processa mesmo assim
+
+      const telefone = formatTel(o.contact_phone);
+      if (!telefone) continue;
+
+      const criadoEm = new Date(o.created_at).getTime();
+      const minutos  = Math.floor((agora - criadoEm) / 60000);
+      const id       = String(o.id);
+      const nome     = o.contact_name || 'Cliente';
+
+      let etapa = null;
+      if (minutos >= 60   && minutos < 120)  etapa = 60;
+      if (minutos >= 1440 && minutos < 1500) etapa = 1440;
+      if (minutos >= 2880 && minutos < 2940) etapa = 2880;
+      if (!etapa) continue;
+
+      if (db.jaBoletoEnviado(id, etapa)) continue;
+
+      const mensagem = montarMensagemBoleto(etapa, nome, o.number, o.gateway);
+      if (!mensagem) continue;
+
+      try {
+        await sendWhatsApp(telefone, mensagem, storeId);
+        db.marcarBoletoEnviado(id, storeId, etapa);
+        console.log(`[Boleto] Etapa ${etapa}min enviada para ${nome} — pedido #${o.number}`);
+      } catch(e) {
+        console.error(`[Boleto] Falha para #${o.number}:`, e.message);
+      }
+
+      await new Promise(r => setTimeout(r, 500));
+    }
+  } catch(e) {
+    console.error(`[Boleto] Erro loja ${storeId}:`, e.response?.data || e.message);
+  }
 }
 
 // ── Verificar carrinhos abandonados ──────────────────────────────────────────
