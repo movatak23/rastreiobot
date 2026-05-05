@@ -404,7 +404,114 @@ app.post('/whatsapp/criar-instancia', auth, (req, res) => {
   res.json({ success: true, message: 'Z-API não precisa criar instância via API.' });
 });
 
+// ── Webhook Z-API — Resposta automática de rastreio ──────────────────────────
+const GATILHOS = [
+  'cadê meu pedido', 'cade meu pedido',
+  'cadê meu código', 'cade meu codigo',
+  'código de rastreio', 'codigo de rastreio',
+  'preciso do código', 'preciso do codigo',
+  'meu pedido ainda nao chegou', 'meu pedido não chegou',
+  'rastreio', 'rastreamento', 'onde está meu pedido',
+  'onde esta meu pedido', 'meu pedido'
+];
+
+function contemGatilho(texto) {
+  const t = (texto || '').toLowerCase().normalize('NFD').replace(/[\u0300-\u036f]/g, '');
+  return GATILHOS.some(g => {
+    const gn = g.normalize('NFD').replace(/[\u0300-\u036f]/g, '');
+    return t.includes(gn);
+  });
+}
+
+app.post('/webhook/zapi', async (req, res) => {
+  res.json({ ok: true }); // Responde imediatamente
+
+  try {
+    const body = req.body;
+
+    // Ignora mensagens enviadas pelo próprio bot
+    if (body.fromMe) return;
+    if (!body.text?.message) return;
+
+    const texto    = body.text.message;
+    const telefone = body.phone; // formato: 5581999999999
+
+    if (!contemGatilho(texto)) return;
+
+    console.log(`[ZAPI] Gatilho detectado de ${telefone}: "${texto}"`);
+
+    // Busca pedido mais recente pelo telefone em todas as lojas
+    const stores = db.getAllStores();
+    let pedidoEncontrado = null;
+
+    for (const store of stores) {
+      try {
+        const orders = await nuvemGet(store.store_id, '/orders', {
+          per_page: 50,
+          payment_status: 'paid',
+          fields: 'id,number,contact_name,contact_phone,shipping_tracking_number,shipping_option,created_at'
+        });
+
+        // Normaliza telefone para comparar
+        const telLimpo = String(telefone).replace(/\D/g, '');
+
+        const pedido = orders
+          .filter(o => o.status !== 'cancelled')
+          .find(o => {
+            const t = formatTel(o.contact_phone);
+            return t && String(t).replace(/\D/g, '').endsWith(telLimpo.slice(-10));
+          });
+
+        if (pedido) {
+          pedidoEncontrado = { ...pedido, store_id: store.store_id };
+          break;
+        }
+      } catch(e) {
+        console.error(`[ZAPI] Erro ao buscar loja ${store.store_id}:`, e.message);
+      }
+    }
+
+    if (!pedidoEncontrado) {
+      await sendWhatsApp(telefone,
+        `Olá! 😊 Não encontrei nenhum pedido vinculado a este número.\n\n` +
+        `Se precisar de ajuda, entre em contato com nossa equipe!`
+      );
+      return;
+    }
+
+    const rastreio = pedidoEncontrado.shipping_tracking_number?.trim();
+    const nome     = pedidoEncontrado.contact_name || 'Cliente';
+    const numero   = pedidoEncontrado.number;
+    const link     = rastreio
+      ? `https://rastreamento.correios.com.br/app/index.php?objeto=${rastreio}`
+      : null;
+
+    // Busca status atual no DB
+    const statusAtual = rastreio ? db.statusRastreio(rastreio) : null;
+
+    let mensagem;
+    if (!rastreio) {
+      mensagem =
+        `Olá, ${nome}! 😊\n\n` +
+        `Seu pedido *#${numero}* ainda está em produção.\n\n` +
+        `Assim que for enviado, você receberá o código de rastreio aqui. 📦`;
+    } else {
+      mensagem =
+        `Olá, ${nome}! 😊\n\n` +
+        `Seu pedido *#${numero}*:\n\n` +
+        `📦 *Código de rastreio:* ${rastreio}\n` +
+        (statusAtual ? `📍 *Status atual:* ${statusAtual}\n` : '') +
+        `\n🔗 Rastreie aqui: ${link}`;
+    }
+
+    await sendWhatsApp(telefone, mensagem);
+    console.log(`[ZAPI] Resposta automática enviada para ${telefone} — pedido #${numero}`);
+  } catch(e) {
+    console.error('[ZAPI] Erro no webhook:', e.message);
+  }
+});
+
 app.listen(PORT, () => {
-  console.log(`RastreioBot v1.2.0 rodando na porta ${PORT}`);
+  console.log(`RastreioBot v1.3.0 rodando na porta ${PORT}`);
   console.log('Cron ativo: verificação a cada 30 minutos');
 });
