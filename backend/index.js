@@ -1,12 +1,10 @@
 require('dotenv').config();
-
 const express = require('express');
 const axios   = require('axios');
 const cors    = require('cors');
 const db      = require('./db');
 
 const app = express();
-
 app.use(express.json());
 app.use(cors({ origin: '*' }));
 
@@ -19,7 +17,6 @@ const {
 } = process.env;
 
 // ── Auth middleware ───────────────────────────────────────────────────────────
-
 function auth(req, res, next) {
   if (req.headers['x-secret'] !== EXTENSION_SECRET)
     return res.status(401).json({ error: 'Não autorizado.' });
@@ -27,11 +24,9 @@ function auth(req, res, next) {
 }
 
 // ── Nuvemshop API ─────────────────────────────────────────────────────────────
-
 async function nuvemGet(storeId, path, params = {}) {
   const row = db.getToken(storeId);
   if (!row) throw new Error('Loja não autenticada.');
-
   const res = await axios.get(`https://api.nuvemshop.com.br/v1/${storeId}${path}`, {
     headers: {
       'Authentication': `bearer ${row.access_token}`,
@@ -40,7 +35,6 @@ async function nuvemGet(storeId, path, params = {}) {
     },
     params
   });
-
   return res.data;
 }
 
@@ -68,7 +62,6 @@ function diasUteisDesde(dateStr) {
 }
 
 // ── OAuth ─────────────────────────────────────────────────────────────────────
-
 app.get('/auth/install', (req, res) => {
   const { store_id } = req.query;
   if (!store_id) return res.status(400).send('Informe store_id');
@@ -79,7 +72,6 @@ app.get('/auth/install', (req, res) => {
 app.get('/auth/callback', async (req, res) => {
   const { code, state: storeId } = req.query;
   if (!code) return res.status(400).send('Código OAuth ausente.');
-
   try {
     const { data } = await axios.post('https://www.nuvemshop.com.br/apps/authorize/token', {
       client_id: NUVEM_CLIENT_ID,
@@ -108,7 +100,6 @@ app.get('/auth/callback', async (req, res) => {
 });
 
 // ── Pedidos ───────────────────────────────────────────────────────────────────
-
 app.get('/pedidos/:storeId', auth, async (req, res) => {
   const { storeId } = req.params;
   const prazo = parseInt(req.query.prazo || '3');
@@ -166,7 +157,6 @@ app.get('/pedidos/:storeId', auth, async (req, res) => {
     });
 
     res.json({ success: true, total: resultado.length, pedidos: resultado });
-
   } catch(e) {
     console.error('Erro /pedidos:', e.response?.data || e.message);
     res.status(500).json({ error: e.message });
@@ -174,17 +164,14 @@ app.get('/pedidos/:storeId', auth, async (req, res) => {
 });
 
 // ── Marcar notificado ─────────────────────────────────────────────────────────
-
 app.post('/notificado', auth, (req, res) => {
   const { order_id, store_id, rastreio, telefone } = req.body;
   if (!order_id || !store_id) return res.status(400).json({ error: 'order_id e store_id obrigatórios.' });
-
   db.marcarNotificado(order_id, store_id, rastreio, telefone);
   res.json({ success: true });
 });
 
 // ── Health check ──────────────────────────────────────────────────────────────
-
 app.get('/status', (req, res) => {
   const stores = db.getAllStores();
   res.json({ ok: true, lojas: stores.length, versao: '1.0.0' });
@@ -192,4 +179,84 @@ app.get('/status', (req, res) => {
 
 app.listen(PORT, () => {
   console.log(`RastreioBot rodando na porta ${PORT}`);
+});
+
+
+// ── Evolution API — Envio de mensagens WhatsApp ───────────────────────────────
+
+const EVO_URL      = process.env.EVOLUTION_URL;    // URL do serviço Evolution no Railway
+const EVO_KEY      = process.env.EVOLUTION_KEY;    // API Key da Evolution
+const EVO_INSTANCE = process.env.EVOLUTION_INSTANCE || 'rastreiobot'; // nome da instância
+
+async function sendWhatsApp(telefone, mensagem) {
+  if (!EVO_URL || !EVO_KEY) throw new Error('Evolution API não configurada.');
+
+  // Formata telefone: remove tudo que não é dígito, garante DDI 55
+  let numero = String(telefone).replace(/\D/g, '');
+  if (!numero.startsWith('55')) numero = '55' + numero;
+
+  const res = await axios.post(
+    `${EVO_URL.replace(/\/$/,'')}/message/sendText/${EVO_INSTANCE}`,
+    {
+      number: numero,
+      text: mensagem
+    },
+    {
+      headers: {
+        'apikey': EVO_KEY,
+        'Content-Type': 'application/json'
+      }
+    }
+  );
+
+  return res.data;
+}
+
+// Rota: envia mensagem via Evolution API
+app.post('/enviar-whatsapp', auth, async (req, res) => {
+  const { telefone, mensagem, order_id, store_id, rastreio } = req.body;
+  if (!telefone || !mensagem) return res.status(400).json({ error: 'telefone e mensagem obrigatórios.' });
+
+  try {
+    const result = await sendWhatsApp(telefone, mensagem);
+
+    // Marca como notificado automaticamente após envio
+    if (order_id && store_id) {
+      db.marcarNotificado(order_id, store_id, rastreio, telefone);
+    }
+
+    res.json({ success: true, result });
+  } catch(e) {
+    const errMsg = e.response?.data?.message || e.message;
+    res.status(500).json({ success: false, error: errMsg });
+  }
+});
+
+// Rota: verifica status da conexão WhatsApp (QR Code)
+app.get('/whatsapp/status', auth, async (req, res) => {
+  if (!EVO_URL || !EVO_KEY) return res.json({ conectado: false, erro: 'Evolution API não configurada.' });
+  try {
+    const r = await axios.get(
+      `${EVO_URL.replace(/\/$/,'')}/instance/connectionState/${EVO_INSTANCE}`,
+      { headers: { 'apikey': EVO_KEY } }
+    );
+    const state = r.data?.instance?.state || r.data?.state || 'unknown';
+    res.json({ conectado: state === 'open', estado: state });
+  } catch(e) {
+    res.json({ conectado: false, erro: e.message });
+  }
+});
+
+// Rota: gera QR Code para conectar WhatsApp
+app.get('/whatsapp/qrcode', auth, async (req, res) => {
+  if (!EVO_URL || !EVO_KEY) return res.status(400).json({ error: 'Evolution API não configurada.' });
+  try {
+    const r = await axios.get(
+      `${EVO_URL.replace(/\/$/,'')}/instance/connect/${EVO_INSTANCE}`,
+      { headers: { 'apikey': EVO_KEY } }
+    );
+    res.json({ success: true, qrcode: r.data?.base64 || r.data?.qrcode?.base64, data: r.data });
+  } catch(e) {
+    res.status(500).json({ success: false, error: e.message });
+  }
 });
