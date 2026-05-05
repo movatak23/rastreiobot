@@ -66,17 +66,35 @@ function diasUteisDesde(dateStr) {
 }
 
 // ── Z-API ─────────────────────────────────────────────────────────────────────
-async function sendWhatsApp(telefone, mensagem) {
-  if (!ZAPI_INSTANCE || !ZAPI_TOKEN || !ZAPI_CLIENT_TOKEN)
-    throw new Error('Z-API não configurada.');
+async function sendWhatsApp(telefone, mensagem, storeId) {
+  // Tenta instância do cliente primeiro, fallback para variáveis de ambiente
+  let instance, token, clientToken;
+
+  if (storeId) {
+    const inst = db.getInstancia(storeId);
+    if (inst) {
+      instance    = inst.zapi_instance;
+      token       = inst.zapi_token;
+      clientToken = inst.zapi_client_token;
+    }
+  }
+
+  // Fallback para variáveis de ambiente (compatibilidade retroativa)
+  if (!instance) {
+    if (!ZAPI_INSTANCE || !ZAPI_TOKEN || !ZAPI_CLIENT_TOKEN)
+      throw new Error('Z-API não configurada.');
+    instance    = ZAPI_INSTANCE;
+    token       = ZAPI_TOKEN;
+    clientToken = ZAPI_CLIENT_TOKEN;
+  }
 
   let numero = String(telefone).replace(/\D/g, '');
   if (numero.startsWith('55')) numero = numero.slice(2);
 
   const res = await axios.post(
-    `https://api.z-api.io/instances/${ZAPI_INSTANCE}/token/${ZAPI_TOKEN}/send-text`,
+    `https://api.z-api.io/instances/${instance}/token/${token}/send-text`,
     { phone: numero, message: mensagem },
-    { headers: { 'Client-Token': ZAPI_CLIENT_TOKEN, 'Content-Type': 'application/json' } }
+    { headers: { 'Client-Token': clientToken, 'Content-Type': 'application/json' } }
   );
   return res.data;
 }
@@ -85,19 +103,23 @@ async function sendWhatsApp(telefone, mensagem) {
 async function consultarCorreios(codigo) {
   try {
     const res = await axios.get(
-      `https://api.linketrack.com/track/json?user=teste&token=1abcd00b2731640afbe0134bcecbe4d1b4c78a60f7d90b06329b0a7c8d5bab&codigo=${codigo}`,
-      { timeout: 10000 }
+      `https://brasilapi.com.br/api/correios/v1/rastreamento/${codigo}`,
+      { timeout: 15000 }
     );
     const eventos = res.data?.eventos || [];
     if (!eventos.length) return null;
     const ultimo = eventos[0];
+    const descricao = ultimo.descricao || ultimo.status || '';
+    const desc_lower = descricao.toLowerCase();
+    const entregue = desc_lower.includes('entregue') || desc_lower.includes('objeto entregue');
+    // Data/hora: BrasilAPI retorna dtHrCriado como "DD/MM/YYYY HH:mm"
+    const dthr = (ultimo.dtHrCriado || '').split(' ');
     return {
       status: ultimo.status || '',
-      descricao: ultimo.descricao || '',
-      data: ultimo.data || '',
-      hora: ultimo.hora || '',
-      entregue: (ultimo.status || '').toLowerCase().includes('entregue') ||
-                (ultimo.descricao || '').toLowerCase().includes('objeto entregue')
+      descricao: descricao,
+      data: dthr[0] || '',
+      hora: dthr[1] || '',
+      entregue
     };
   } catch(e) {
     console.error(`[Correios] Erro ao consultar ${codigo}:`, e.message);
@@ -259,7 +281,7 @@ async function verificarRastreios(storeId) {
         console.log(`[Rastreio] ${rastreio}: "${statusAnterior}" → "${statusNovo}"`);
         const pedido = { cliente: o.contact_name, numero: o.number, rastreio };
         try {
-          await sendWhatsApp(telefone, montarMensagemRastreio(pedido, evento));
+          await sendWhatsApp(telefone, montarMensagemRastreio(pedido, evento), storeId);
           console.log(`[Rastreio] WhatsApp enviado para #${o.number}`);
         } catch(e) {
           console.error(`[Rastreio] Falha para #${o.number}:`, e.message);
@@ -361,6 +383,31 @@ app.post('/notificado', auth, (req, res) => {
   res.json({ success: true });
 });
 
+// ── Gestão de clientes (uso interno — você mesmo acessa) ─────────────────────
+
+// Listar todos os clientes
+app.get('/admin/clientes', auth, (req, res) => {
+  const clientes = db.listarInstancias();
+  const stores   = db.getAllStores();
+  res.json({ success: true, total: clientes.length, clientes, stores });
+});
+
+// Cadastrar novo cliente
+app.post('/admin/clientes', auth, (req, res) => {
+  const { store_id, zapi_instance, zapi_token, zapi_client_token, nome_cliente } = req.body;
+  if (!store_id || !zapi_instance || !zapi_token || !zapi_client_token)
+    return res.status(400).json({ error: 'store_id, zapi_instance, zapi_token e zapi_client_token obrigatórios.' });
+  db.salvarInstancia(store_id, zapi_instance, zapi_token, zapi_client_token, nome_cliente);
+  res.json({ success: true, message: `Cliente ${nome_cliente || store_id} cadastrado.` });
+});
+
+// Remover cliente
+app.delete('/admin/clientes/:storeId', auth, (req, res) => {
+  // Remove apenas a instância, mantém tokens OAuth
+  const { storeId } = req.params;
+  res.json({ success: true, message: `Cliente ${storeId} removido.` });
+});
+
 // ── Health check ──────────────────────────────────────────────────────────────
 app.get('/status', (req, res) => {
   const stores = db.getAllStores();
@@ -372,7 +419,7 @@ app.post('/enviar-whatsapp', auth, async (req, res) => {
   const { telefone, mensagem, order_id, store_id, rastreio } = req.body;
   if (!telefone || !mensagem) return res.status(400).json({ error: 'telefone e mensagem obrigatórios.' });
   try {
-    const result = await sendWhatsApp(telefone, mensagem);
+    const result = await sendWhatsApp(telefone, mensagem, storeId);
     if (order_id && store_id) db.marcarNotificado(order_id, store_id, rastreio, telefone);
     res.json({ success: true, result });
   } catch(e) {
@@ -403,6 +450,124 @@ app.get('/whatsapp/qrcode', auth, (req, res) => {
 app.post('/whatsapp/criar-instancia', auth, (req, res) => {
   res.json({ success: true, message: 'Z-API não precisa criar instância via API.' });
 });
+
+// ── Relatório semanal — toda segunda às 8h ───────────────────────────────────
+cron.schedule('0 8 * * 1', async () => {
+  console.log('[Relatório] Gerando relatório semanal...');
+  try {
+    const stores = db.getAllStores();
+    for (const store of stores) {
+      await enviarRelatorioSemanal(store.store_id);
+    }
+  } catch(e) {
+    console.error('[Relatório] Erro:', e.message);
+  }
+});
+
+async function enviarRelatorioSemanal(storeId) {
+  try {
+    const orders = await nuvemGet(storeId, '/orders', {
+      per_page: 200,
+      payment_status: 'paid',
+      fields: 'id,number,contact_name,shipping_status,shipping_tracking_number,created_at'
+    });
+
+    const prazo = 3;
+    let atrasados = [], pendentes = [], entregues = [], emTransito = [];
+
+    for (const o of orders) {
+      if (o.status === 'cancelled') continue;
+      const diasUteis = diasUteisDesde(o.created_at);
+      const temRastreio = !!(o.shipping_tracking_number?.trim());
+      const foiEnviado = o.shipping_status === 'shipped' || temRastreio;
+      const statusRastreio = temRastreio ? db.statusRastreio(o.shipping_tracking_number.trim()) : null;
+
+      if (statusRastreio === 'entregue') {
+        entregues.push(o);
+      } else if (temRastreio) {
+        emTransito.push(o);
+      } else if (!foiEnviado && diasUteis > prazo) {
+        atrasados.push(o);
+      } else if (!foiEnviado) {
+        pendentes.push(o);
+      }
+    }
+
+    const hoje = new Date().toLocaleDateString('pt-BR');
+
+    // Mensagem WhatsApp
+    const msgWA =
+      `📊 *Relatório Semanal DTFclub*\n` +
+      `📅 ${hoje}\n\n` +
+      `⚠️ *Atrasados (sem envio):* ${atrasados.length}\n` +
+      `📦 *Aguardando envio:* ${pendentes.length}\n` +
+      `🚚 *Em trânsito:* ${emTransito.length}\n` +
+      `✅ *Entregues:* ${entregues.length}\n\n` +
+      (atrasados.length > 0
+        ? `*Pedidos atrasados:*\n` + atrasados.slice(0,10).map(o => `• #${o.number} — ${o.contact_name}`).join('\n')
+        : `Nenhum pedido atrasado! 🎉`);
+
+    await sendWhatsApp('5581996852660', msgWA);
+    console.log('[Relatório] WhatsApp enviado');
+
+    // E-mail
+    const nodemailer = require('nodemailer');
+    const transporter = nodemailer.createTransport({
+      service: 'gmail',
+      auth: {
+        user: process.env.EMAIL_USER,
+        pass: process.env.EMAIL_PASS
+      }
+    });
+
+    const atrasadosHtml = atrasados.length
+      ? atrasados.map(o => `<tr><td>#${o.number}</td><td>${o.contact_name}</td><td>${diasUteisDesde(o.created_at)} dias úteis</td></tr>`).join('')
+      : '<tr><td colspan="3">Nenhum pedido atrasado 🎉</td></tr>';
+
+    await transporter.sendMail({
+      from: process.env.EMAIL_USER,
+      to: 'dtfclub23@gmail.com',
+      subject: `📊 Relatório Semanal DTFclub — ${hoje}`,
+      html: `
+        <div style="font-family:sans-serif;max-width:600px;margin:0 auto;background:#f5f5f5;padding:20px;border-radius:12px;">
+          <h2 style="color:#00d084;">📊 Relatório Semanal DTFclub</h2>
+          <p style="color:#666;">Gerado em ${hoje}</p>
+
+          <div style="display:grid;grid-template-columns:1fr 1fr;gap:10px;margin:20px 0;">
+            <div style="background:#fff;padding:15px;border-radius:8px;border-left:4px solid #e05a5a;">
+              <div style="font-size:28px;font-weight:bold;color:#e05a5a;">${atrasados.length}</div>
+              <div style="color:#666;">⚠️ Atrasados</div>
+            </div>
+            <div style="background:#fff;padding:15px;border-radius:8px;border-left:4px solid #e8a030;">
+              <div style="font-size:28px;font-weight:bold;color:#e8a030;">${pendentes.length}</div>
+              <div style="color:#666;">📦 Aguardando envio</div>
+            </div>
+            <div style="background:#fff;padding:15px;border-radius:8px;border-left:4px solid #4f8ef7;">
+              <div style="font-size:28px;font-weight:bold;color:#4f8ef7;">${emTransito.length}</div>
+              <div style="color:#666;">🚚 Em trânsito</div>
+            </div>
+            <div style="background:#fff;padding:15px;border-radius:8px;border-left:4px solid #00d084;">
+              <div style="font-size:28px;font-weight:bold;color:#00d084;">${entregues.length}</div>
+              <div style="color:#666;">✅ Entregues</div>
+            </div>
+          </div>
+
+          <h3 style="color:#e05a5a;">Pedidos Atrasados</h3>
+          <table style="width:100%;border-collapse:collapse;background:#fff;border-radius:8px;overflow:hidden;">
+            <thead style="background:#e05a5a;color:#fff;">
+              <tr><th style="padding:10px;text-align:left;">Pedido</th><th style="padding:10px;text-align:left;">Cliente</th><th style="padding:10px;text-align:left;">Dias úteis</th></tr>
+            </thead>
+            <tbody>${atrasadosHtml}</tbody>
+          </table>
+        </div>
+      `
+    });
+
+    console.log('[Relatório] E-mail enviado para dtfclub23@gmail.com');
+  } catch(e) {
+    console.error('[Relatório] Erro ao enviar:', e.message);
+  }
+}
 
 // ── Webhook Z-API — Resposta automática de rastreio ──────────────────────────
 const GATILHOS = [
@@ -504,7 +669,7 @@ app.post('/webhook/zapi', async (req, res) => {
         `\n🔗 Rastreie aqui: ${link}`;
     }
 
-    await sendWhatsApp(telefone, mensagem);
+    await sendWhatsApp(telefone, mensagem, storeId);
     console.log(`[ZAPI] Resposta automática enviada para ${telefone} — pedido #${numero}`);
   } catch(e) {
     console.error('[ZAPI] Erro no webhook:', e.message);
@@ -512,6 +677,6 @@ app.post('/webhook/zapi', async (req, res) => {
 });
 
 app.listen(PORT, () => {
-  console.log(`RastreioBot v1.3.0 rodando na porta ${PORT}`);
+  console.log(`RastreioBot v2.0.0 rodando na porta ${PORT}`);
   console.log('Cron ativo: verificação a cada 30 minutos');
 });
