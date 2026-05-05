@@ -101,26 +101,32 @@ async function sendWhatsApp(telefone, mensagem, storeId) {
 
 // ── Correios API ──────────────────────────────────────────────────────────────
 async function consultarCorreios(codigo) {
+  const SEURASTREIO_KEY = process.env.SEURASTREIO_KEY;
+  if (!SEURASTREIO_KEY) {
+    console.error('[Correios] SEURASTREIO_KEY não configurada.');
+    return null;
+  }
   try {
     const res = await axios.get(
-      `https://brasilapi.com.br/api/correios/v1/rastreamento/${codigo}`,
-      { timeout: 15000 }
+      `https://seurastreio.com.br/api/public/rastreio/${codigo}`,
+      {
+        headers: { 'Authorization': `Bearer ${SEURASTREIO_KEY}` },
+        timeout: 15000
+      }
     );
-    const eventos = res.data?.eventos || [];
-    if (!eventos.length) return null;
-    const ultimo = eventos[0];
-    const descricao = ultimo.descricao || ultimo.status || '';
+    const evento = res.data?.eventoMaisRecente;
+    if (!evento) return null;
+    const descricao = evento.descricao || evento.status || '';
     const desc_lower = descricao.toLowerCase();
     const entregue = desc_lower.includes('entregue') || desc_lower.includes('objeto entregue');
-    // Data/hora: BrasilAPI retorna dtHrCriado como "DD/MM/YYYY HH:mm"
-    const dthr = (ultimo.dtHrCriado || '').split(' ');
-    return {
-      status: ultimo.status || '',
-      descricao: descricao,
-      data: dthr[0] || '',
-      hora: dthr[1] || '',
-      entregue
-    };
+    // Data vem em ISO ou "DD/MM/YYYY HH:mm"
+    let data = '', hora = '';
+    if (evento.data) {
+      const partes = String(evento.data).split(' ');
+      data = partes[0] || '';
+      hora = partes[1] || '';
+    }
+    return { status: evento.status || '', descricao, data, hora, entregue };
   } catch(e) {
     console.error(`[Correios] Erro ao consultar ${codigo}:`, e.message);
     return null;
