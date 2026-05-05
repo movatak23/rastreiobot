@@ -1,0 +1,203 @@
+<!DOCTYPE html>
+<html lang="pt-BR">
+<head>
+<meta charset="UTF-8"/>
+<meta name="viewport" content="width=device-width, initial-scale=1.0"/>
+<title>LoggZap — Admin Dashboard</title>
+<link href="https://fonts.googleapis.com/css2?family=Syne:wght@600;700;800&family=DM+Sans:wght@400;500;600&family=DM+Mono:wght@400;500&display=swap" rel="stylesheet"/>
+<style>
+:root{--bg:#0a0a0e;--bg2:#13131a;--bg3:#1a1a24;--bg4:#22222e;--border:#2a2a3a;--border2:#383850;--text:#f0f0f8;--text2:#9090b0;--text3:#55556a;--green:#00e08a;--gd:rgba(0,224,138,.1);--gb:rgba(0,224,138,.25);--blue:#4f8ef7;--bd:rgba(79,142,247,.1);--purple:#a78bfa;--pd:rgba(167,139,250,.1);--red:#e05a5a;--rd:rgba(224,90,90,.1);--yellow:#f5c542;--yd:rgba(245,197,66,.1);--mono:'DM Mono',monospace;--sans:'DM Sans',sans-serif;--display:'Syne',sans-serif;}
+*{box-sizing:border-box;margin:0;padding:0;}
+body{font-family:var(--sans);background:var(--bg);color:var(--text);min-height:100vh;}
+nav{display:flex;align-items:center;justify-content:space-between;padding:16px 28px;border-bottom:1px solid var(--border);background:var(--bg2);}
+.nav-logo{font-family:var(--display);font-size:18px;font-weight:800;color:var(--green);}
+.nav-badge{background:var(--gd);border:1px solid var(--gb);color:var(--green);font-size:11px;font-weight:600;padding:4px 12px;border-radius:20px;font-family:var(--mono);}
+.nav-right{display:flex;align-items:center;gap:10px;}
+.wrap{max-width:1100px;margin:0 auto;padding:28px 20px;}
+
+/* Auth */
+.auth-card{background:var(--bg2);border:1px solid var(--border);border-radius:14px;padding:28px;max-width:560px;margin:60px auto;}
+.auth-title{font-family:var(--display);font-size:20px;font-weight:700;margin-bottom:20px;}
+.field{margin-bottom:12px;}
+.field label{display:block;font-size:11px;color:var(--text3);margin-bottom:5px;font-weight:500;}
+input{width:100%;background:var(--bg3);border:1px solid var(--border);border-radius:8px;color:var(--text);font-family:var(--mono);font-size:13px;padding:10px 12px;outline:none;transition:border-color .15s;}
+input:focus{border-color:var(--blue);}
+input::placeholder{color:var(--text3);}
+.btn{background:var(--green);border:none;color:#000;font-family:var(--sans);font-size:14px;font-weight:700;padding:11px 24px;border-radius:8px;cursor:pointer;transition:opacity .15s;width:100%;margin-top:4px;}
+.btn:hover{opacity:.85;}
+.err{background:var(--rd);border:1px solid rgba(224,90,90,.3);color:var(--red);border-radius:6px;padding:8px 12px;font-size:12px;margin-top:10px;display:none;}
+.err.show{display:block;}
+
+/* Grid métricas */
+.metrics-grid{display:grid;grid-template-columns:repeat(4,1fr);gap:12px;margin-bottom:20px;}
+.metric-card{background:var(--bg2);border:1px solid var(--border);border-radius:14px;padding:20px 16px;}
+.metric-card.green{border-color:rgba(0,224,138,.25);background:rgba(0,224,138,.04);}
+.metric-card.blue{border-color:rgba(79,142,247,.25);background:rgba(79,142,247,.04);}
+.metric-card.purple{border-color:rgba(167,139,250,.25);background:rgba(167,139,250,.04);}
+.metric-card.yellow{border-color:rgba(245,197,66,.25);background:rgba(245,197,66,.04);}
+.metric-icon{font-size:20px;margin-bottom:10px;}
+.metric-val{font-family:var(--display);font-size:32px;font-weight:800;line-height:1;margin-bottom:4px;}
+.metric-card.green .metric-val{color:var(--green);}
+.metric-card.blue .metric-val{color:var(--blue);}
+.metric-card.purple .metric-val{color:var(--purple);}
+.metric-card.yellow .metric-val{color:var(--yellow);}
+.metric-label{font-size:12px;font-weight:600;color:var(--text2);}
+.metric-sub{font-size:11px;color:var(--text3);margin-top:2px;}
+
+/* Seções */
+.section{background:var(--bg2);border:1px solid var(--border);border-radius:14px;padding:20px;margin-bottom:16px;}
+.section-title{font-size:12px;font-weight:600;color:var(--text3);text-transform:uppercase;letter-spacing:.6px;margin-bottom:16px;}
+.msgs-grid{display:grid;grid-template-columns:repeat(3,1fr);gap:10px;}
+.msg-item{background:var(--bg3);border-radius:10px;padding:14px;}
+.msg-val{font-family:var(--mono);font-size:22px;font-weight:500;color:var(--text);margin-bottom:4px;}
+.msg-label{font-size:11px;color:var(--text3);}
+
+/* Tabela clientes */
+.table{width:100%;border-collapse:collapse;}
+.table th{text-align:left;font-size:11px;font-weight:600;color:var(--text3);text-transform:uppercase;letter-spacing:.5px;padding:8px 12px;border-bottom:1px solid var(--border);}
+.table td{padding:10px 12px;border-bottom:1px solid var(--border);font-size:13px;color:var(--text2);}
+.table tr:last-child td{border-bottom:none;}
+.table td:first-child{color:var(--text);font-weight:500;}
+.dot{width:7px;height:7px;border-radius:50%;display:inline-block;margin-right:6px;}
+.dot.green{background:var(--green);}
+.dot.red{background:var(--red);}
+.mono{font-family:var(--mono);font-size:11px;}
+.badge-new{background:var(--gd);border:1px solid var(--gb);color:var(--green);font-size:10px;font-weight:700;padding:2px 8px;border-radius:10px;font-family:var(--mono);}
+
+/* Alerta */
+.alert{background:var(--rd);border:1px solid rgba(224,90,90,.3);color:var(--red);border-radius:8px;padding:10px 14px;font-size:12px;display:flex;align-items:center;gap:8px;margin-bottom:12px;}
+
+/* Spinner */
+.spinner{width:14px;height:14px;border:2px solid var(--border2);border-top-color:var(--green);border-radius:50%;animation:spin .7s linear infinite;display:inline-block;vertical-align:middle;margin-right:6px;}
+@keyframes spin{to{transform:rotate(360deg)}}
+.loading{text-align:center;color:var(--text3);padding:40px;font-size:13px;}
+
+@media(max-width:700px){.metrics-grid{grid-template-columns:1fr 1fr;}.msgs-grid{grid-template-columns:1fr;}}
+</style>
+</head>
+<body>
+
+<nav>
+  <div class="nav-logo">LoggZap</div>
+  <div class="nav-right">
+    <span class="nav-badge" id="nav-badge">Admin</span>
+    <button class="btn" style="width:auto;padding:7px 16px;font-size:12px;" id="btn-logout" onclick="logout()">Sair</button>
+  </div>
+</nav>
+
+<!-- Auth -->
+<div id="auth-section">
+  <div class="auth-card">
+    <div class="auth-title">🔐 Acesso Admin</div>
+    <div class="field"><label>URL do backend</label><input id="a-url" type="text" placeholder="https://rastreiobot-production-e904.up.railway.app"/></div>
+    <div class="field"><label>Chave secreta</label><input id="a-secret" type="password" placeholder="EXTENSION_SECRET"/></div>
+    <button class="btn" id="btn-entrar" onclick="entrar()">Entrar</button>
+    <div class="err" id="auth-err"></div>
+  </div>
+</div>
+
+<!-- Dashboard -->
+<div id="dash-section" style="display:none;">
+  <div class="wrap">
+    <div id="alertas"></div>
+
+    <!-- KPIs principais -->
+    <div class="metrics-grid" id="kpis">
+      <div class="loading" style="grid-column:1/-1"><span class="spinner"></span>Carregando...</div>
+    </div>
+
+    <!-- Mensagens do mês -->
+    <div class="section">
+      <div class="section-title">📨 Mensagens enviadas este mês</div>
+      <div class="msgs-grid" id="msgs-mes"></div>
+    </div>
+
+    <!-- Clientes -->
+    <div class="section">
+      <div class="section-title">👥 Clientes ativos</div>
+      <div id="tabela-clientes"><div class="loading"><span class="spinner"></span>Carregando...</div></div>
+    </div>
+  </div>
+</div>
+
+<script>
+let BASE = '', SECRET = '';
+
+function entrar() {
+  BASE   = document.getElementById('a-url').value.trim().replace(/\/$/,'');
+  SECRET = document.getElementById('a-secret').value.trim();
+  if (!BASE || !SECRET) return showErr('Preencha todos os campos.');
+  const btn = document.getElementById('btn-entrar');
+  btn.innerHTML = '<span class="spinner"></span>Verificando...'; btn.disabled = true;
+  api('/status').then(r => {
+    btn.innerHTML = 'Entrar'; btn.disabled = false;
+    localStorage.setItem('lz_url', BASE); localStorage.setItem('lz_secret', SECRET);
+    document.getElementById('auth-section').style.display = 'none';
+    document.getElementById('dash-section').style.display = 'block';
+    loadDash();
+  }).catch(e => { btn.innerHTML = 'Entrar'; btn.disabled = false; showErr(e.message); });
+}
+
+function logout() {
+  localStorage.removeItem('lz_url'); localStorage.removeItem('lz_secret');
+  location.reload();
+}
+
+async function loadDash() {
+  const d = await api('/admin/dashboard');
+
+  // MRR
+  document.getElementById('kpis').innerHTML = `
+    <div class="metric-card green"><div class="metric-icon">💰</div><div class="metric-val">R$${fmt(d.mrr)}</div><div class="metric-label">MRR</div><div class="metric-sub">receita mensal recorrente</div></div>
+    <div class="metric-card blue"><div class="metric-icon">🏪</div><div class="metric-val">${d.totalClientes}</div><div class="metric-label">Clientes ativos</div><div class="metric-sub">${d.clientesNovos} novos este mês</div></div>
+    <div class="metric-card purple"><div class="metric-icon">📨</div><div class="metric-val">${fmt(d.mensagens.total)}</div><div class="metric-label">Msgs enviadas</div><div class="metric-sub">total acumulado</div></div>
+    <div class="metric-card yellow"><div class="metric-icon">📊</div><div class="metric-val">${fmt(d.mensagensMes.total)}</div><div class="metric-label">Msgs este mês</div><div class="metric-sub">últimos 30 dias</div></div>
+  `;
+
+  // Mensagens por tipo
+  document.getElementById('msgs-mes').innerHTML = `
+    <div class="msg-item"><div class="msg-val">${d.mensagensMes.pagamento}</div><div class="msg-label">👏 Confirmações de pagamento</div></div>
+    <div class="msg-item"><div class="msg-val">${d.mensagensMes.rastreio}</div><div class="msg-label">📦 Atualizações de rastreio</div></div>
+    <div class="msg-item"><div class="msg-val">${d.mensagensMes.carrinho}</div><div class="msg-label">🛒 Recuperação de carrinho</div></div>
+  `;
+
+  // Tabela clientes
+  const isNovo = dt => new Date(dt) > new Date(Date.now() - 30*24*60*60*1000);
+  const rows = d.clientes.map(c => `
+    <tr>
+      <td>${esc(c.nome_cliente || '—')}</td>
+      <td><span class="mono">${esc(c.store_id)}</span></td>
+      <td><span class="mono">${esc(c.zapi_instance?.slice(0,16)+'...' || '—')}</span></td>
+      <td>${new Date(c.created_at).toLocaleDateString('pt-BR')}</td>
+      <td>${isNovo(c.created_at) ? '<span class="badge-new">NOVO</span>' : ''}</td>
+    </tr>
+  `).join('');
+  document.getElementById('tabela-clientes').innerHTML = `
+    <table class="table">
+      <thead><tr><th>Cliente</th><th>Store ID</th><th>Instância Z-API</th><th>Desde</th><th></th></tr></thead>
+      <tbody>${rows || '<tr><td colspan="5" style="text-align:center;color:var(--text3)">Nenhum cliente cadastrado</td></tr>'}</tbody>
+    </table>`;
+}
+
+async function api(path, method='GET', body=null) {
+  const opts = { method, headers: { 'x-secret': SECRET, 'Content-Type': 'application/json' } };
+  if (body) opts.body = JSON.stringify(body);
+  const res = await fetch(BASE + path, opts);
+  const data = await res.json();
+  if (!res.ok) throw new Error(data.error || `Erro ${res.status}`);
+  return data;
+}
+
+function showErr(msg) { const e = document.getElementById('auth-err'); e.textContent = msg; e.classList.add('show'); setTimeout(() => e.classList.remove('show'), 5000); }
+function fmt(n) { return Number(n||0).toLocaleString('pt-BR'); }
+function esc(s) { return String(s||'').replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;'); }
+
+window.addEventListener('DOMContentLoaded', () => {
+  const url = localStorage.getItem('lz_url'), sec = localStorage.getItem('lz_secret');
+  if (url) document.getElementById('a-url').value = url;
+  if (sec) document.getElementById('a-secret').value = sec;
+  if (url && sec) { BASE = url; SECRET = sec; document.getElementById('auth-section').style.display='none'; document.getElementById('dash-section').style.display='block'; loadDash(); }
+});
+</script>
+</body>
+</html>

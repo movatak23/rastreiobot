@@ -1,0 +1,226 @@
+<!DOCTYPE html>
+<html lang="pt-BR">
+<head>
+<meta charset="UTF-8"/>
+<meta name="viewport" content="width=device-width, initial-scale=1.0"/>
+<title>LoggZap — Painel da Loja</title>
+<link href="https://fonts.googleapis.com/css2?family=Syne:wght@600;700;800&family=DM+Sans:wght@400;500;600&family=DM+Mono:wght@400;500&display=swap" rel="stylesheet"/>
+<style>
+:root{--bg:#0a0a0e;--bg2:#13131a;--bg3:#1a1a24;--border:#2a2a3a;--border2:#383850;--text:#f0f0f8;--text2:#9090b0;--text3:#55556a;--green:#00e08a;--gd:rgba(0,224,138,.1);--gb:rgba(0,224,138,.25);--blue:#4f8ef7;--bd:rgba(79,142,247,.1);--purple:#a78bfa;--pd:rgba(167,139,250,.1);--red:#e05a5a;--rd:rgba(224,90,90,.1);--yellow:#f5c542;--yd:rgba(245,197,66,.1);--mono:'DM Mono',monospace;--sans:'DM Sans',sans-serif;--display:'Syne',sans-serif;}
+*{box-sizing:border-box;margin:0;padding:0;}
+body{font-family:var(--sans);background:var(--bg);color:var(--text);min-height:100vh;}
+nav{display:flex;align-items:center;justify-content:space-between;padding:16px 28px;border-bottom:1px solid var(--border);background:var(--bg2);}
+.nav-logo{font-family:var(--display);font-size:18px;font-weight:800;color:var(--green);}
+.nav-sub{font-size:12px;color:var(--text3);margin-top:2px;}
+.wrap{max-width:980px;margin:0 auto;padding:28px 20px;}
+
+/* Auth */
+.auth-card{background:var(--bg2);border:1px solid var(--border);border-radius:14px;padding:28px;max-width:520px;margin:60px auto;}
+.auth-title{font-family:var(--display);font-size:20px;font-weight:700;margin-bottom:6px;}
+.auth-sub{font-size:13px;color:var(--text3);margin-bottom:20px;}
+.field{margin-bottom:12px;}
+.field label{display:block;font-size:11px;color:var(--text3);margin-bottom:5px;font-weight:500;}
+input{width:100%;background:var(--bg3);border:1px solid var(--border);border-radius:8px;color:var(--text);font-family:var(--mono);font-size:13px;padding:10px 12px;outline:none;transition:border-color .15s;}
+input:focus{border-color:var(--blue);}
+input::placeholder{color:var(--text3);}
+.btn{background:var(--green);border:none;color:#000;font-family:var(--sans);font-size:14px;font-weight:700;padding:11px 24px;border-radius:8px;cursor:pointer;transition:opacity .15s;width:100%;margin-top:4px;}
+.btn:hover{opacity:.85;}
+.err{background:var(--rd);border:1px solid rgba(224,90,90,.3);color:var(--red);border-radius:6px;padding:8px 12px;font-size:12px;margin-top:10px;display:none;}
+.err.show{display:block;}
+
+/* Status WhatsApp */
+.wa-bar{display:flex;align-items:center;gap:10px;background:var(--bg2);border:1px solid var(--border);border-radius:10px;padding:12px 16px;margin-bottom:20px;}
+.wa-dot{width:9px;height:9px;border-radius:50%;flex-shrink:0;}
+.wa-dot.on{background:var(--green);box-shadow:0 0 6px var(--green);}
+.wa-dot.off{background:var(--red);}
+.wa-label{font-size:13px;font-weight:600;}
+.wa-sub{font-size:11px;color:var(--text3);margin-left:auto;}
+
+/* Métricas */
+.metrics-grid{display:grid;grid-template-columns:repeat(3,1fr);gap:12px;margin-bottom:16px;}
+.metric-card{background:var(--bg2);border:1px solid var(--border);border-radius:14px;padding:20px 16px;}
+.metric-card.green{border-color:rgba(0,224,138,.25);background:rgba(0,224,138,.04);}
+.metric-card.blue{border-color:rgba(79,142,247,.25);background:rgba(79,142,247,.04);}
+.metric-card.purple{border-color:rgba(167,139,250,.25);background:rgba(167,139,250,.04);}
+.metric-card.yellow{border-color:rgba(245,197,66,.25);background:rgba(245,197,66,.04);}
+.metric-card.red{border-color:rgba(224,90,90,.25);background:rgba(224,90,90,.04);}
+.metric-icon{font-size:20px;margin-bottom:10px;}
+.metric-val{font-family:var(--display);font-size:36px;font-weight:800;line-height:1;margin-bottom:4px;}
+.metric-card.green .metric-val{color:var(--green);}
+.metric-card.blue .metric-val{color:var(--blue);}
+.metric-card.purple .metric-val{color:var(--purple);}
+.metric-card.yellow .metric-val{color:var(--yellow);}
+.metric-card.red .metric-val{color:var(--red);}
+.metric-label{font-size:12px;font-weight:600;color:var(--text2);}
+.metric-sub{font-size:11px;color:var(--text3);margin-top:2px;}
+
+/* Seção msgs */
+.section{background:var(--bg2);border:1px solid var(--border);border-radius:14px;padding:20px;margin-bottom:16px;}
+.section-title{font-size:12px;font-weight:600;color:var(--text3);text-transform:uppercase;letter-spacing:.6px;margin-bottom:16px;}
+.msgs-row{display:grid;grid-template-columns:repeat(3,1fr);gap:10px;}
+.msg-item{background:var(--bg3);border-radius:10px;padding:14px;}
+.msg-val{font-family:var(--mono);font-size:22px;font-weight:500;color:var(--text);margin-bottom:4px;}
+.msg-label{font-size:11px;color:var(--text3);}
+
+/* Barra de progresso */
+.prog-wrap{margin-top:8px;}
+.prog-label{display:flex;justify-content:space-between;font-size:11px;color:var(--text3);margin-bottom:5px;}
+.prog-bar{height:6px;background:var(--bg3);border-radius:3px;overflow:hidden;}
+.prog-fill{height:100%;border-radius:3px;background:var(--green);transition:width .5s ease;}
+
+.spinner{width:14px;height:14px;border:2px solid var(--border2);border-top-color:var(--green);border-radius:50%;animation:spin .7s linear infinite;display:inline-block;vertical-align:middle;margin-right:6px;}
+@keyframes spin{to{transform:rotate(360deg)}}
+.loading{text-align:center;color:var(--text3);padding:40px;font-size:13px;}
+.updated{font-size:11px;color:var(--text3);text-align:right;margin-top:12px;}
+@media(max-width:640px){.metrics-grid{grid-template-columns:1fr 1fr;}.msgs-row{grid-template-columns:1fr;}}
+</style>
+</head>
+<body>
+
+<nav>
+  <div>
+    <div class="nav-logo">LoggZap</div>
+    <div class="nav-sub">Painel da sua loja</div>
+  </div>
+  <button class="btn" style="width:auto;padding:7px 16px;font-size:12px;" onclick="logout()">Sair</button>
+</nav>
+
+<!-- Auth -->
+<div id="auth-section">
+  <div class="auth-card">
+    <div class="auth-title">📊 Painel da Loja</div>
+    <div class="auth-sub">Acompanhe suas notificações e automações em tempo real.</div>
+    <div class="field"><label>URL do backend</label><input id="a-url" type="text" placeholder="https://rastreiobot-production-e904.up.railway.app"/></div>
+    <div class="field"><label>Store ID (Nuvemshop)</label><input id="a-store" type="text" placeholder="123456"/></div>
+    <div class="field"><label>Chave de acesso</label><input id="a-secret" type="password" placeholder="Fornecida pela LoggZap"/></div>
+    <button class="btn" id="btn-entrar" onclick="entrar()">Ver meu painel</button>
+    <div class="err" id="auth-err"></div>
+  </div>
+</div>
+
+<!-- Dashboard -->
+<div id="dash-section" style="display:none;">
+  <div class="wrap">
+    <!-- Status WhatsApp -->
+    <div class="wa-bar" id="wa-bar">
+      <div class="wa-dot" id="wa-dot"></div>
+      <div>
+        <div class="wa-label" id="wa-label">Verificando WhatsApp...</div>
+      </div>
+      <div class="wa-sub" id="wa-sub"></div>
+    </div>
+
+    <!-- KPIs -->
+    <div class="metrics-grid" id="kpis">
+      <div class="loading" style="grid-column:1/-1"><span class="spinner"></span>Carregando...</div>
+    </div>
+
+    <!-- Mensagens do mês -->
+    <div class="section">
+      <div class="section-title">📨 Mensagens enviadas este mês</div>
+      <div class="msgs-row" id="msgs-mes"></div>
+      <div class="prog-wrap" id="prog-wrap"></div>
+    </div>
+
+    <div class="updated" id="updated"></div>
+  </div>
+</div>
+
+<script>
+let BASE = '', SECRET = '', STORE = '';
+
+function entrar() {
+  BASE   = document.getElementById('a-url').value.trim().replace(/\/$/,'');
+  SECRET = document.getElementById('a-secret').value.trim();
+  STORE  = document.getElementById('a-store').value.trim();
+  if (!BASE || !SECRET || !STORE) return showErr('Preencha todos os campos.');
+  const btn = document.getElementById('btn-entrar');
+  btn.innerHTML = '<span class="spinner"></span>Carregando...'; btn.disabled = true;
+  loadDash().then(() => {
+    btn.innerHTML = 'Ver meu painel'; btn.disabled = false;
+    localStorage.setItem('lz_url', BASE); localStorage.setItem('lz_secret', SECRET); localStorage.setItem('lz_store', STORE);
+    document.getElementById('auth-section').style.display = 'none';
+    document.getElementById('dash-section').style.display = 'block';
+  }).catch(e => { btn.innerHTML = 'Ver meu painel'; btn.disabled = false; showErr(e.message); });
+}
+
+function logout() {
+  ['lz_url','lz_secret','lz_store'].forEach(k => localStorage.removeItem(k));
+  location.reload();
+}
+
+async function loadDash() {
+  const d = await api(`/dashboard/${STORE}`);
+
+  // WhatsApp status
+  const dot = document.getElementById('wa-dot');
+  const lbl = document.getElementById('wa-label');
+  const sub = document.getElementById('wa-sub');
+  if (d.zapiConectado) {
+    dot.className = 'wa-dot on';
+    lbl.textContent = 'WhatsApp conectado';
+    lbl.style.color = 'var(--green)';
+    sub.textContent = 'Mensagens sendo enviadas normalmente';
+  } else {
+    dot.className = 'wa-dot off';
+    lbl.textContent = 'WhatsApp desconectado';
+    lbl.style.color = 'var(--red)';
+    sub.textContent = 'Entre em contato com o suporte LoggZap';
+  }
+
+  // KPIs
+  document.getElementById('kpis').innerHTML = `
+    <div class="metric-card green"><div class="metric-icon">📲</div><div class="metric-val">${d.notificados.hoje}</div><div class="metric-label">Notificados hoje</div><div class="metric-sub">${d.notificados.mes} este mês</div></div>
+    <div class="metric-card blue"><div class="metric-icon">🚚</div><div class="metric-val">${d.rastreios.ativos}</div><div class="metric-label">Rastreios ativos</div><div class="metric-sub">${d.rastreios.entregues} entregues</div></div>
+    <div class="metric-card purple"><div class="metric-icon">🛒</div><div class="metric-val">${d.carrinhos.mes}</div><div class="metric-label">Carrinhos abordados</div><div class="metric-sub">este mês</div></div>
+    <div class="metric-card yellow"><div class="metric-icon">👏</div><div class="metric-val">${d.pagamentos.mes}</div><div class="metric-label">Pagamentos confirmados</div><div class="metric-sub">este mês</div></div>
+    <div class="metric-card green"><div class="metric-icon">📊</div><div class="metric-val">${d.mensagensMes}</div><div class="metric-label">Total de msgs/mês</div><div class="metric-sub">todos os tipos</div></div>
+    <div class="metric-card blue"><div class="metric-icon">✅</div><div class="metric-val">${d.notificados.total}</div><div class="metric-label">Notificados total</div><div class="metric-sub">desde o início</div></div>
+  `;
+
+  // Msgs por tipo
+  document.getElementById('msgs-mes').innerHTML = `
+    <div class="msg-item"><div class="msg-val">${d.pagamentos.mes}</div><div class="msg-label">👏 Confirmações de pagamento</div></div>
+    <div class="msg-item"><div class="msg-val">${d.notificados.mes}</div><div class="msg-label">📦 Atualizações de rastreio</div></div>
+    <div class="msg-item"><div class="msg-val">${d.carrinhos.mes}</div><div class="msg-label">🛒 Recuperação de carrinho</div></div>
+  `;
+
+  // Progresso rastreios
+  const total = d.rastreios.ativos + d.rastreios.entregues;
+  const pct = total > 0 ? Math.round((d.rastreios.entregues / total) * 100) : 0;
+  document.getElementById('prog-wrap').innerHTML = `
+    <div style="margin-top:16px;padding-top:16px;border-top:1px solid var(--border);">
+      <div class="prog-label"><span>Rastreios entregues</span><span>${pct}%</span></div>
+      <div class="prog-bar"><div class="prog-fill" style="width:${pct}%"></div></div>
+    </div>`;
+
+  document.getElementById('updated').textContent = `Atualizado em ${new Date().toLocaleTimeString('pt-BR')}`;
+}
+
+async function api(path) {
+  const res = await fetch(BASE + path, { headers: { 'x-secret': SECRET, 'Content-Type': 'application/json' } });
+  const data = await res.json();
+  if (!res.ok) throw new Error(data.error || `Erro ${res.status}`);
+  return data;
+}
+
+function showErr(msg) { const e = document.getElementById('auth-err'); e.textContent = msg; e.classList.add('show'); setTimeout(() => e.classList.remove('show'), 5000); }
+
+window.addEventListener('DOMContentLoaded', () => {
+  const url = localStorage.getItem('lz_url'), sec = localStorage.getItem('lz_secret'), store = localStorage.getItem('lz_store');
+  if (url) document.getElementById('a-url').value = url;
+  if (sec) document.getElementById('a-secret').value = sec;
+  if (store) document.getElementById('a-store').value = store;
+  if (url && sec && store) {
+    BASE = url; SECRET = sec; STORE = store;
+    document.getElementById('auth-section').style.display = 'none';
+    document.getElementById('dash-section').style.display = 'block';
+    loadDash();
+  }
+});
+
+// Auto-refresh a cada 5 minutos
+setInterval(() => { if (BASE && SECRET && STORE) loadDash(); }, 5 * 60 * 1000);
+</script>
+</body>
+</html>
