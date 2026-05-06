@@ -2,6 +2,7 @@
 <html lang="pt-BR">
 <head>
 <meta charset="UTF-8"/>
+<link rel="icon" href="data:,"/>
 <meta name="viewport" content="width=device-width, initial-scale=1.0"/>
 <title>Rastreio do Pedido</title>
 <link href="https://fonts.googleapis.com/css2?family=Syne:wght@700;800&family=DM+Sans:wght@400;500;600&family=DM+Mono:wght@400;500&display=swap" rel="stylesheet"/>
@@ -40,7 +41,7 @@ body{font-family:var(--sans);background:var(--bg);color:var(--text);min-height:1
 <body>
 
 <div class="card" id="card">
-  <img src="URL_DO_LOGO" style="height:48px;margin-bottom:24px;" alt="Logo"/>
+  <div class="logo" id="loja-nome">LoggZap</div>
   <div class="loading" id="loading">
     <div class="spinner"></div><br>Buscando rastreio...
   </div>
@@ -56,11 +57,13 @@ const pedido  = params.get('pedido') || '';
 const logo    = params.get('logo') || '';
 
 const lojoEl = document.getElementById('loja-nome');
-if (logo) {
-  lojoEl.innerHTML = `<img src="${logo}" style="height:48px;object-fit:contain;" alt="${loja}"/>`;
-} else {
-  lojoEl.textContent = loja;
-}
+const logoSrc = logo || '/logo.png';
+const img = document.createElement('img');
+img.src = logoSrc;
+img.style.cssText = 'height:48px;object-fit:contain;';
+img.alt = loja;
+img.onerror = () => { lojoEl.textContent = loja; };
+lojoEl.appendChild(img);
 document.title = `Rastreio — ${loja}`;
 
 const ETAPAS = [
