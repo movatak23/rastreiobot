@@ -705,6 +705,43 @@ app.get('/dashboard/:storeId', auth, async (req, res) => {
   }
 });
 
+// ── API Frete ─────────────────────────────────────────────────────────────────
+app.get('/frete/:storeId', auth, async (req, res) => {
+  const { storeId } = req.params;
+  try {
+    const orders = await nuvemGet(storeId, '/orders', {
+      per_page: 200,
+      payment_status: 'paid',
+      fields: 'id,number,shipping_cost_customer,created_at'
+    });
+
+    const agora  = new Date();
+    const hoje   = new Date(agora); hoje.setHours(0,0,0,0);
+    const semana = new Date(agora); semana.setDate(semana.getDate() - 7); semana.setHours(0,0,0,0);
+    const mes    = new Date(agora); mes.setDate(mes.getDate() - 30);      mes.setHours(0,0,0,0);
+
+    function calcPeriod(desde) {
+      const period   = orders.filter(o => new Date(o.created_at) >= desde);
+      const comFrete = period.filter(o => parseFloat(o.shipping_cost_customer || 0) > 0);
+      const total    = comFrete.reduce((acc, o) => acc + parseFloat(o.shipping_cost_customer || 0), 0);
+      return {
+        total: Math.round(total * 100) / 100,
+        pedidos: comFrete.length,
+        pedidosTotal: period.length
+      };
+    }
+
+    res.json({
+      success: true,
+      hoje:   calcPeriod(hoje),
+      semana: calcPeriod(semana),
+      mes:    calcPeriod(mes)
+    });
+  } catch(e) {
+    res.status(500).json({ error: e.message });
+  }
+});
+
 // ── Stats de carrinho ────────────────────────────────────────────────────────
 app.get('/carrinho-stats/:storeId', auth, async (req, res) => {
   try {
