@@ -253,37 +253,25 @@ cron.schedule('*/30 * * * *', async () => {
 // ── Mensagens de carrinho abandonado ─────────────────────────────────────────
 function montarMensagemCarrinho(etapa, nome, link) {
   const msgs = {
-    30: `Olá, ${nome}! 👋
+    15: `Olá, ${nome}! 👋
 
-Percebemos que você deixou alguns itens no carrinho da nossa loja.
+Seu pedido permanece aguardando pagamento. Finalize seu pedido o quanto antes para que possamos agilizar sua impressão.
 
-Ainda está interessado? Finalize sua compra aqui:
-🛒 ${link}
-
-Qualquer dúvida é só chamar! 😊`,
-
-    60: `Oi, ${nome}! Tudo bem? 😊
-
-Notamos que sua compra ainda não foi concluída. Teve algum problema no pagamento?
-
-Estamos aqui para ajudar! Responda essa mensagem ou finalize agora:
 🛒 ${link}`,
 
-    1440: `${nome}, sua sacola ainda está te esperando! 🛍️
+    60: `Oi, ${nome}! Estou passando para saber se você conseguiu realizar o pagamento. Ficou alguma dúvida que eu possa te ajudar?
 
-⚠️ *Atenção:* Os itens no seu carrinho têm estoque limitado e podem esgotar a qualquer momento.
-
-Não deixe para depois — garanta o seu agora:
 🛒 ${link}`,
 
-    2880: `${nome}, última chance! ⏰
+    1440: `Olá, ${nome}! Tudo bem? Verificamos que seu pedido segue em aberto. Consegui manter o seu pedido com a mesma condição para pagamento nos próximos 30min. Consegui também um encaixe para que sua estampa seja impressa nas próximas 24h. Vamos aproveitar essa condição?
 
-Sua reserva expira em breve e os produtos do seu carrinho voltam para o estoque.
+🛒 ${link}`,
 
-Finalize sua compra antes que acabe:
-🛒 ${link}
+    2880: `Olá, ${nome}! Estamos entrando em contato para informar que seu pedido não foi finalizado e que as condições de pagamento e impressão expiraram. Se ainda tiver interesse, posso tentar resgatar o seu pedido e reativar seu link de pagamento para os próximos 30min.
 
-_Esta é a última notificação sobre este carrinho._`
+🛒 ${link}`,
+
+    7200: `Olá, ${nome}! Estamos passando para agradecer o seu contato e informar que estamos com uma condição ainda mais interessante. Se ainda tiver interesse, digite *CONDIÇÃO* e um dos meus colegas vai falar com você.`
   };
   return msgs[etapa] || null;
 }
@@ -396,12 +384,13 @@ async function verificarCarrinhosAbandonados(storeId) {
       const link = c.abandoned_checkout_url || '';
       const id   = String(c.id);
 
-      // Define qual etapa deve ser disparada
+      // Define qual etapa deve ser disparada (sem sobreposição)
       let etapa = null;
-      if (minutos >= 30  && minutos < 90)   etapa = 30;
-      if (minutos >= 60  && minutos < 120)  etapa = 60;
-      if (minutos >= 1440 && minutos < 1500) etapa = 1440;
-      if (minutos >= 2880 && minutos < 2940) etapa = 2880;
+      if      (minutos >= 15   && minutos < 60)   etapa = 15;
+      else if (minutos >= 60   && minutos < 1440)  etapa = 60;
+      else if (minutos >= 1440 && minutos < 2880)  etapa = 1440;
+      else if (minutos >= 2880 && minutos < 7200)  etapa = 2880;
+      else if (minutos >= 7200 && minutos < 7260)  etapa = 7200;
       if (!etapa) continue;
 
       // Verifica se essa etapa já foi enviada
