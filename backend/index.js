@@ -253,25 +253,37 @@ cron.schedule('*/30 * * * *', async () => {
 // ── Mensagens de carrinho abandonado ─────────────────────────────────────────
 function montarMensagemCarrinho(etapa, nome, link) {
   const msgs = {
-    15: `Olá, ${nome}! 👋
+    30: `Olá, ${nome}! 👋
 
-Seu pedido permanece aguardando pagamento. Finalize seu pedido o quanto antes para que possamos agilizar sua impressão.
+Percebemos que você deixou alguns itens no carrinho da nossa loja.
 
+Ainda está interessado? Finalize sua compra aqui:
+🛒 ${link}
+
+Qualquer dúvida é só chamar! 😊`,
+
+    60: `Oi, ${nome}! Tudo bem? 😊
+
+Notamos que sua compra ainda não foi concluída. Teve algum problema no pagamento?
+
+Estamos aqui para ajudar! Responda essa mensagem ou finalize agora:
 🛒 ${link}`,
 
-    60: `Oi, ${nome}! Estou passando para saber se você conseguiu realizar o pagamento. Ficou alguma dúvida que eu possa te ajudar?
+    1440: `${nome}, sua sacola ainda está te esperando! 🛍️
 
+⚠️ *Atenção:* Os itens no seu carrinho têm estoque limitado e podem esgotar a qualquer momento.
+
+Não deixe para depois — garanta o seu agora:
 🛒 ${link}`,
 
-    1440: `Olá, ${nome}! Tudo bem? Verificamos que seu pedido segue em aberto. Consegui manter o seu pedido com a mesma condição para pagamento nos próximos 30min. Consegui também um encaixe para que sua estampa seja impressa nas próximas 24h. Vamos aproveitar essa condição?
+    2880: `${nome}, última chance! ⏰
 
-🛒 ${link}`,
+Sua reserva expira em breve e os produtos do seu carrinho voltam para o estoque.
 
-    2880: `Olá, ${nome}! Estamos entrando em contato para informar que seu pedido não foi finalizado e que as condições de pagamento e impressão expiraram. Se ainda tiver interesse, posso tentar resgatar o seu pedido e reativar seu link de pagamento para os próximos 30min.
+Finalize sua compra antes que acabe:
+🛒 ${link}
 
-🛒 ${link}`,
-
-    7200: `Olá, ${nome}! Estamos passando para agradecer o seu contato e informar que estamos com uma condição ainda mais interessante. Se ainda tiver interesse, digite *CONDIÇÃO* e um dos meus colegas vai falar com você.`
+_Esta é a última notificação sobre este carrinho._`
   };
   return msgs[etapa] || null;
 }
@@ -384,13 +396,12 @@ async function verificarCarrinhosAbandonados(storeId) {
       const link = c.abandoned_checkout_url || '';
       const id   = String(c.id);
 
-      // Define qual etapa deve ser disparada (sem sobreposição)
+      // Define qual etapa deve ser disparada
       let etapa = null;
-      if      (minutos >= 15   && minutos < 60)   etapa = 15;
-      else if (minutos >= 60   && minutos < 1440)  etapa = 60;
-      else if (minutos >= 1440 && minutos < 2880)  etapa = 1440;
-      else if (minutos >= 2880 && minutos < 7200)  etapa = 2880;
-      else if (minutos >= 7200 && minutos < 7260)  etapa = 7200;
+      if (minutos >= 30  && minutos < 90)   etapa = 30;
+      if (minutos >= 60  && minutos < 120)  etapa = 60;
+      if (minutos >= 1440 && minutos < 1500) etapa = 1440;
+      if (minutos >= 2880 && minutos < 2940) etapa = 2880;
       if (!etapa) continue;
 
       // Verifica se essa etapa já foi enviada
@@ -402,7 +413,7 @@ async function verificarCarrinhosAbandonados(storeId) {
       try {
         if (!await podEnviar(telefone)) continue;
         await sendWhatsApp(telefone, mensagem, storeId);
-        db.marcarCarrinhoEnviado(id, storeId, etapa);
+        db.marcarCarrinhoEnviado(id, storeId, etapa, telefone);
         db.registrarMensagem(telefone);
         console.log(`[Carrinho] Etapa ${etapa}min enviada para ${nome} — carrinho #${id}`);
       } catch(e) {
@@ -411,6 +422,19 @@ async function verificarCarrinhosAbandonados(storeId) {
 
       await new Promise(r => setTimeout(r, 500));
     }
+    // Cruzar carrinhos com pedidos pagos para marcar recuperados
+    try {
+      const pedidosPagos = await nuvemGet(storeId, '/orders', {
+        per_page: 100,
+        payment_status: 'paid',
+        fields: 'id,contact_phone,created_at'
+      });
+      for (const o of pedidosPagos) {
+        const tel = formatTel(o.contact_phone);
+        if (tel) db.marcarCarrinhoRecuperado(tel, storeId);
+      }
+    } catch(e) { /* silencioso — não bloqueia o fluxo principal */ }
+
   } catch(e) {
     const msg = e.response?.data?.description || e.message || '';
     if (msg.includes('Last page is 0')) return;
@@ -681,38 +705,11 @@ app.get('/dashboard/:storeId', auth, async (req, res) => {
   }
 });
 
-// ── API Frete ─────────────────────────────────────────────────────────────────
-app.get('/frete/:storeId', auth, async (req, res) => {
-  const { storeId } = req.params;
+// ── Stats de carrinho ────────────────────────────────────────────────────────
+app.get('/carrinho-stats/:storeId', auth, async (req, res) => {
   try {
-    const orders = await nuvemGet(storeId, '/orders', {
-      per_page: 200,
-      payment_status: 'paid',
-      fields: 'id,number,shipping_cost_customer,created_at'
-    });
-
-    const agora  = new Date();
-    const hoje   = new Date(agora); hoje.setHours(0,0,0,0);
-    const semana = new Date(agora); semana.setDate(semana.getDate() - 7); semana.setHours(0,0,0,0);
-    const mes    = new Date(agora); mes.setDate(mes.getDate() - 30);      mes.setHours(0,0,0,0);
-
-    function calcPeriod(desde) {
-      const period    = orders.filter(o => new Date(o.created_at) >= desde);
-      const comFrete  = period.filter(o => parseFloat(o.shipping_cost_customer || 0) > 0);
-      const total     = comFrete.reduce((acc, o) => acc + parseFloat(o.shipping_cost_customer || 0), 0);
-      return {
-        total: Math.round(total * 100) / 100,
-        pedidos: comFrete.length,
-        pedidosTotal: period.length
-      };
-    }
-
-    res.json({
-      success: true,
-      hoje:   calcPeriod(hoje),
-      semana: calcPeriod(semana),
-      mes:    calcPeriod(mes)
-    });
+    const stats = db.getCarrinhoStats(req.params.storeId);
+    res.json({ success: true, ...stats });
   } catch(e) {
     res.status(500).json({ error: e.message });
   }

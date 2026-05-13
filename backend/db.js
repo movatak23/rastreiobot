@@ -54,11 +54,13 @@ db.exec(`
   );
 
   CREATE TABLE IF NOT EXISTS carrinhos_enviados (
-    id         INTEGER PRIMARY KEY AUTOINCREMENT,
+    id          INTEGER PRIMARY KEY AUTOINCREMENT,
     checkout_id TEXT NOT NULL,
-    store_id   TEXT NOT NULL,
-    etapa      INTEGER NOT NULL,
-    created_at TEXT DEFAULT (datetime('now')),
+    store_id    TEXT NOT NULL,
+    etapa       INTEGER NOT NULL,
+    telefone    TEXT,
+    recuperado  INTEGER DEFAULT 0,
+    created_at  TEXT DEFAULT (datetime('now')),
     UNIQUE(checkout_id, etapa)
   );
 
@@ -132,10 +134,57 @@ function jaCarrinhoEnviado(checkoutId, etapa) {
   return !!db.prepare('SELECT 1 FROM carrinhos_enviados WHERE checkout_id = ? AND etapa = ?').get(checkoutId, etapa);
 }
 
-function marcarCarrinhoEnviado(checkoutId, storeId, etapa) {
+function marcarCarrinhoEnviado(checkoutId, storeId, etapa, telefone) {
   db.prepare(`
-    INSERT OR IGNORE INTO carrinhos_enviados (checkout_id, store_id, etapa) VALUES (?, ?, ?)
-  `).run(checkoutId, storeId, etapa);
+    INSERT OR IGNORE INTO carrinhos_enviados (checkout_id, store_id, etapa, telefone) VALUES (?, ?, ?, ?)
+  `).run(checkoutId, storeId, etapa, telefone || null);
+}
+
+function marcarCarrinhoRecuperado(telefone, storeId) {
+  db.prepare(`
+    UPDATE carrinhos_enviados SET recuperado = 1
+    WHERE store_id = ? AND telefone = ? AND recuperado = 0
+  `).run(storeId, telefone);
+}
+
+function getCarrinhoStats(storeId) {
+  const total      = db.prepare('SELECT COUNT(DISTINCT checkout_id) as n FROM carrinhos_enviados WHERE store_id = ?').get(storeId)?.n || 0;
+  const recuperados = db.prepare('SELECT COUNT(DISTINCT checkout_id) as n FROM carrinhos_enviados WHERE store_id = ? AND recuperado = 1').get(storeId)?.n || 0;
+  const mes        = db.prepare(`SELECT COUNT(DISTINCT checkout_id) as n FROM carrinhos_enviados WHERE store_id = ? AND created_at >= datetime('now','-30 days')`).get(storeId)?.n || 0;
+  const recMes     = db.prepare(`SELECT COUNT(DISTINCT checkout_id) as n FROM carrinhos_enviados WHERE store_id = ? AND recuperado = 1 AND created_at >= datetime('now','-30 days')`).get(storeId)?.n || 0;
+
+  // Por etapa
+  const etapas = db.prepare(`
+    SELECT etapa,
+      COUNT(DISTINCT checkout_id) as enviados,
+      SUM(recuperado) as recuperados
+    FROM carrinhos_enviados WHERE store_id = ?
+    GROUP BY etapa ORDER BY etapa
+  `).all(storeId);
+
+  // Melhor etapa (maior taxa de recuperação)
+  let melhorEtapa = null, melhorTaxa = 0;
+  for (const e of etapas) {
+    const taxa = e.enviados > 0 ? e.recuperados / e.enviados : 0;
+    if (taxa > melhorTaxa) { melhorTaxa = taxa; melhorEtapa = e.etapa; }
+  }
+
+  // Ativos por etapa (último envio de cada checkout, sem recuperação)
+  const ativosEtapa = db.prepare(`
+    SELECT etapa, COUNT(DISTINCT checkout_id) as n
+    FROM carrinhos_enviados
+    WHERE store_id = ? AND recuperado = 0
+    AND created_at >= datetime('now','-7 days')
+    GROUP BY etapa ORDER BY etapa
+  `).all(storeId);
+
+  return {
+    total, recuperados, mes, recMes,
+    taxaGeral: total > 0 ? Math.round((recuperados / total) * 100) : 0,
+    taxaMes:   mes   > 0 ? Math.round((recMes / mes) * 100) : 0,
+    etapas, melhorEtapa, melhorTaxa: Math.round(melhorTaxa * 100),
+    ativosEtapa
+  };
 }
 
 function salvarInstancia(storeId, zapiInstance, zapiToken, zapiClientToken, nomeCliente) {
@@ -253,6 +302,6 @@ module.exports = {
   limparRegistrosAntigos,
   mensagensHoje, registrarMensagem,
   jaBoletoEnviado, marcarBoletoEnviado,
-  jaCarrinhoEnviado, marcarCarrinhoEnviado,
+  jaCarrinhoEnviado, marcarCarrinhoEnviado, marcarCarrinhoRecuperado, getCarrinhoStats,
   getAdminStats, getLojistaStats
 };
