@@ -244,6 +244,8 @@ cron.schedule('*/30 * * * *', async () => {
       await verificarBoletosPendentes(store.store_id);
       await verificarCarrinhosAbandonados(store.store_id);
       await verificarRastreios(store.store_id);
+      await verificarPosEntrega(store.store_id);
+      await verificarPedidosParados(store.store_id);
     }
   } catch(e) {
     console.error('[Cron] Erro geral:', e.message);
@@ -357,7 +359,7 @@ async function verificarBoletosPendentes(storeId) {
       if (!mensagem) continue;
 
       try {
-        if (!await podEnviar(telefone)) continue;
+        if (!await podEnviar(telefone, storeId)) continue;
         await sendWhatsApp(telefone, mensagem, storeId);
         db.marcarBoletoEnviado(id, storeId, etapa);
         db.registrarMensagem(telefone);
@@ -411,7 +413,7 @@ async function verificarCarrinhosAbandonados(storeId) {
       if (!mensagem) continue;
 
       try {
-        if (!await podEnviar(telefone)) continue;
+        if (!await podEnviar(telefone, storeId)) continue;
         await sendWhatsApp(telefone, mensagem, storeId);
         db.marcarCarrinhoEnviado(id, storeId, etapa, telefone);
         db.registrarMensagem(telefone);
@@ -505,7 +507,7 @@ async function verificarRastreios(storeId) {
         console.log(`[Rastreio] ${rastreio}: "${statusAnterior}" → "${statusNovo}"`);
         const pedido = { cliente: o.contact_name, numero: o.number, rastreio };
         try {
-          if (!await podEnviar(telefone)) continue;
+          if (!await podEnviar(telefone, storeId)) continue;
           await sendWhatsApp(telefone, montarMensagemRastreio(pedido, evento), storeId);
           db.registrarMensagem(telefone);
           console.log(`[Rastreio] WhatsApp enviado para #${o.number}`);
@@ -705,6 +707,36 @@ app.get('/dashboard/:storeId', auth, async (req, res) => {
   }
 });
 
+// ── Configurações por loja ────────────────────────────────────────────────────
+app.get('/config/:storeId', auth, (req, res) => {
+  try {
+    res.json({ success: true, config: db.getConfig(req.params.storeId) });
+  } catch(e) { res.status(500).json({ error: e.message }); }
+});
+
+app.post('/config/:storeId', auth, (req, res) => {
+  try {
+    db.salvarConfig(req.params.storeId, req.body);
+    res.json({ success: true });
+  } catch(e) { res.status(500).json({ error: e.message }); }
+});
+
+// ── Opt-out manual ────────────────────────────────────────────────────────────
+app.post('/optout', auth, (req, res) => {
+  const { telefone, storeId, acao } = req.body;
+  if (!telefone) return res.status(400).json({ error: 'telefone obrigatório' });
+  if (acao === 'remover') db.removerOptOut(telefone);
+  else db.marcarOptOut(telefone, storeId);
+  res.json({ success: true });
+});
+
+app.get('/optout-lista/:storeId', auth, (req, res) => {
+  try {
+    const lista = db.listarOptOuts(req.params.storeId);
+    res.json({ success: true, lista });
+  } catch(e) { res.status(500).json({ error: e.message }); }
+});
+
 // ── API Frete ─────────────────────────────────────────────────────────────────
 app.get('/frete/:storeId', auth, async (req, res) => {
   const { storeId } = req.params;
@@ -790,6 +822,92 @@ app.post('/whatsapp/criar-instancia', auth, (req, res) => {
 });
 
 // ── Relatório semanal — toda segunda às 8h ───────────────────────────────────
+// ── Pós-entrega ───────────────────────────────────────────────────────────────
+async function verificarPosEntrega(storeId) {
+  try {
+    const orders = await nuvemGet(storeId, '/orders', {
+      per_page: 100,
+      payment_status: 'paid',
+      fields: 'id,number,contact_name,contact_phone,shipping_status,created_at'
+    });
+    const cfg = db.getConfig(storeId);
+    const templatePadrao = `Olá, {nome}! 🎉\n\nSeu pedido *#{numero}* foi entregue! Esperamos que você tenha adorado.\n\nConta pra gente o que achou? Sua opinião é muito importante para nós! 😊`;
+    const template = cfg.template_pos_entrega || templatePadrao;
+
+    for (const o of orders) {
+      if (o.status === 'cancelled') continue;
+      if (o.shipping_status !== 'delivered') continue;
+      if (db.jaPosEntregaEnviado(String(o.id))) continue;
+      const telefone = formatTel(o.contact_phone);
+      if (!telefone) continue;
+      const nome = o.contact_name || 'Cliente';
+      const mensagem = template.replace('{nome}', nome).replace('{numero}', o.number);
+      try {
+        if (!await podEnviar(telefone, storeId)) continue;
+        await sendWhatsApp(telefone, mensagem, storeId);
+        db.marcarPosEntregaEnviado(String(o.id), storeId);
+        db.registrarMensagem(telefone);
+        console.log(`[PósEntrega] Enviado para ${nome} — pedido #${o.number}`);
+      } catch(e) {
+        console.error(`[PósEntrega] Falha #${o.number}:`, e.message);
+      }
+      await new Promise(r => setTimeout(r, 500));
+    }
+  } catch(e) {
+    const msg = e.response?.data?.description || e.message || '';
+    if (msg.includes('Last page is 0')) return;
+    console.error(`[PósEntrega] Erro loja ${storeId}:`, e.message);
+  }
+}
+
+// ── Alerta pedido parado ──────────────────────────────────────────────────────
+async function verificarPedidosParados(storeId) {
+  try {
+    const cfg = db.getConfig(storeId);
+    const diasLimite = cfg.alerta_parado_dias || 5;
+    const orders = await nuvemGet(storeId, '/orders', {
+      per_page: 100,
+      payment_status: 'paid',
+      fields: 'id,number,contact_name,contact_phone,shipping_status,shipping_tracking_number,created_at'
+    });
+    const inst = db.getInstancia(storeId);
+    if (!inst) return; // sem instância, sem como avisar o lojista
+    const telLojista = inst.zapi_instance ? null : null; // aviso vai para o lojista via número configurado
+
+    for (const o of orders) {
+      if (o.status === 'cancelled') continue;
+      if (o.shipping_status === 'shipped' || o.shipping_status === 'delivered') continue;
+      if (o.shipping_tracking_number?.trim()) continue; // já tem rastreio
+      if (db.jaAlertaParadoEnviado(String(o.id))) continue;
+      const diasUteis = diasUteisDesde(o.created_at);
+      if (diasUteis < diasLimite) continue;
+
+      const telefoneCliente = formatTel(o.contact_phone);
+      const nome = o.contact_name || 'Cliente';
+
+      // Avisa o LOJISTA (número configurado no env)
+      const telLojistaMsg = process.env.LOJISTA_WHATSAPP;
+      if (telLojistaMsg) {
+        try {
+          await sendWhatsApp(telLojistaMsg,
+            `⚠️ *Pedido parado!*\n\nO pedido *#${o.number}* de *${nome}* está há *${diasUteis} dias úteis* sem envio.\n\nVerifique e atualize o rastreio para evitar reclamações.`,
+            storeId
+          );
+          db.marcarAlertaParadoEnviado(String(o.id), storeId);
+          console.log(`[Parado] Alerta enviado ao lojista — pedido #${o.number}`);
+        } catch(e) {
+          console.error(`[Parado] Falha ao alertar lojista #${o.number}:`, e.message);
+        }
+      }
+      await new Promise(r => setTimeout(r, 500));
+    }
+  } catch(e) {
+    const msg = e.response?.data?.description || e.message || '';
+    if (msg.includes('Last page is 0')) return;
+    console.error(`[Parado] Erro loja ${storeId}:`, e.message);
+  }
+}
+
 cron.schedule('0 8 * * 1', async () => {
   console.log('[Relatório] Gerando relatório semanal...');
   try {
@@ -972,6 +1090,17 @@ app.post('/webhook/zapi', async (req, res) => {
       } catch(e) {
         console.error(`[ZAPI] Erro ao buscar loja ${store.store_id}:`, e.message);
       }
+    }
+
+    // Opt-out por palavra-chave
+    const palavrasOptOut = ['parar', 'sair', 'stop', 'não quero', 'nao quero', 'cancelar', 'descadastrar'];
+    if (palavrasOptOut.some(p => texto.toLowerCase().includes(p))) {
+      db.marcarOptOut(telefone, pedidoEncontrado?.store_id);
+      await sendWhatsApp(telefone,
+        `Tudo bem! Você não receberá mais mensagens automáticas. 😊\n\nSe precisar de ajuda, fale conosco diretamente.`
+      );
+      console.log(`[OptOut] ${telefone} optou por sair.`);
+      return res.sendStatus(200);
     }
 
     if (!pedidoEncontrado) {

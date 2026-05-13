@@ -72,6 +72,37 @@ db.exec(`
     nome_cliente      TEXT,
     created_at        TEXT DEFAULT (datetime('now'))
   );
+
+  CREATE TABLE IF NOT EXISTS opt_out (
+    telefone   TEXT PRIMARY KEY,
+    store_id   TEXT,
+    created_at TEXT DEFAULT (datetime('now'))
+  );
+
+  CREATE TABLE IF NOT EXISTS configuracoes (
+    store_id          TEXT PRIMARY KEY,
+    silencio_inicio   INTEGER DEFAULT 22,
+    silencio_fim      INTEGER DEFAULT 8,
+    relatorio_ativo   INTEGER DEFAULT 1,
+    alerta_parado_dias INTEGER DEFAULT 5,
+    template_carrinho TEXT,
+    template_boleto   TEXT,
+    template_confirmacao TEXT,
+    template_pos_entrega TEXT,
+    created_at        TEXT DEFAULT (datetime('now'))
+  );
+
+  CREATE TABLE IF NOT EXISTS pos_entrega_enviados (
+    order_id   TEXT PRIMARY KEY,
+    store_id   TEXT,
+    created_at TEXT DEFAULT (datetime('now'))
+  );
+
+  CREATE TABLE IF NOT EXISTS alerta_parado_enviados (
+    order_id   TEXT PRIMARY KEY,
+    store_id   TEXT,
+    created_at TEXT DEFAULT (datetime('now'))
+  );
 `);
 
 function saveToken(storeId, accessToken) {
@@ -241,6 +272,83 @@ function marcarConfirmacaoEnviada(orderId, storeId) {
   `).run(orderId, storeId);
 }
 
+// ── Opt-out ───────────────────────────────────────────────────────────────────
+function isOptOut(telefone) {
+  return !!db.prepare('SELECT 1 FROM opt_out WHERE telefone = ?').get(telefone);
+}
+
+function marcarOptOut(telefone, storeId) {
+  db.prepare('INSERT OR IGNORE INTO opt_out (telefone, store_id) VALUES (?, ?)').run(telefone, storeId || null);
+}
+
+function removerOptOut(telefone) {
+  db.prepare('DELETE FROM opt_out WHERE telefone = ?').run(telefone);
+}
+
+function listarOptOuts(storeId) {
+  if (storeId) {
+    return db.prepare('SELECT telefone, created_at FROM opt_out WHERE store_id = ? ORDER BY created_at DESC').all(storeId);
+  }
+  return db.prepare('SELECT telefone, store_id, created_at FROM opt_out ORDER BY created_at DESC').all();
+}
+
+// ── Configurações por loja ────────────────────────────────────────────────────
+function getConfig(storeId) {
+  return db.prepare('SELECT * FROM configuracoes WHERE store_id = ?').get(storeId) || {
+    store_id: storeId,
+    silencio_inicio: 22,
+    silencio_fim: 8,
+    relatorio_ativo: 1,
+    alerta_parado_dias: 5,
+    template_carrinho: null,
+    template_boleto: null,
+    template_confirmacao: null,
+    template_pos_entrega: null
+  };
+}
+
+function salvarConfig(storeId, dados) {
+  const cfg = getConfig(storeId);
+  const merged = { ...cfg, ...dados, store_id: storeId };
+  db.prepare(`
+    INSERT INTO configuracoes (store_id, silencio_inicio, silencio_fim, relatorio_ativo,
+      alerta_parado_dias, template_carrinho, template_boleto, template_confirmacao, template_pos_entrega)
+    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+    ON CONFLICT(store_id) DO UPDATE SET
+      silencio_inicio      = excluded.silencio_inicio,
+      silencio_fim         = excluded.silencio_fim,
+      relatorio_ativo      = excluded.relatorio_ativo,
+      alerta_parado_dias   = excluded.alerta_parado_dias,
+      template_carrinho    = excluded.template_carrinho,
+      template_boleto      = excluded.template_boleto,
+      template_confirmacao = excluded.template_confirmacao,
+      template_pos_entrega = excluded.template_pos_entrega
+  `).run(
+    storeId,
+    merged.silencio_inicio, merged.silencio_fim, merged.relatorio_ativo,
+    merged.alerta_parado_dias, merged.template_carrinho, merged.template_boleto,
+    merged.template_confirmacao, merged.template_pos_entrega
+  );
+}
+
+// ── Pós-entrega ───────────────────────────────────────────────────────────────
+function jaPosEntregaEnviado(orderId) {
+  return !!db.prepare('SELECT 1 FROM pos_entrega_enviados WHERE order_id = ?').get(orderId);
+}
+
+function marcarPosEntregaEnviado(orderId, storeId) {
+  db.prepare('INSERT OR IGNORE INTO pos_entrega_enviados (order_id, store_id) VALUES (?, ?)').run(orderId, storeId);
+}
+
+// ── Alerta pedido parado ──────────────────────────────────────────────────────
+function jaAlertaParadoEnviado(orderId) {
+  return !!db.prepare('SELECT 1 FROM alerta_parado_enviados WHERE order_id = ?').get(orderId);
+}
+
+function marcarAlertaParadoEnviado(orderId, storeId) {
+  db.prepare('INSERT OR IGNORE INTO alerta_parado_enviados (order_id, store_id) VALUES (?, ?)').run(orderId, storeId);
+}
+
 // ── Stats para dashboards ─────────────────────────────────────────────────────
 function getAdminStats() {
   const totalClientes = db.prepare('SELECT COUNT(*) as n FROM instancias').get()?.n || 0;
@@ -303,5 +411,9 @@ module.exports = {
   mensagensHoje, registrarMensagem,
   jaBoletoEnviado, marcarBoletoEnviado,
   jaCarrinhoEnviado, marcarCarrinhoEnviado, marcarCarrinhoRecuperado, getCarrinhoStats,
+  isOptOut, marcarOptOut, removerOptOut, listarOptOuts,
+  getConfig, salvarConfig,
+  jaPosEntregaEnviado, marcarPosEntregaEnviado,
+  jaAlertaParadoEnviado, marcarAlertaParadoEnviado,
   getAdminStats, getLojistaStats
 };
