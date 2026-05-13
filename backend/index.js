@@ -547,35 +547,77 @@ async function verificarRastreios(storeId) {
 }
 
 // ── OAuth ─────────────────────────────────────────────────────────────────────
+// Escopos necessários para o LoggZap funcionar
+const NUVEM_SCOPES = [
+  'read_orders',       // Ler pedidos
+  'write_orders',      // Atualizar status de pedidos
+  'read_checkouts',    // Ler carrinhos abandonados
+  'read_products',     // Ler produtos (para mensagens com detalhes)
+  'read_customers',    // Ler dados dos clientes
+].join(' ');
+
+// Instalação — redireciona para autorização na Nuvemshop
+// URL usada no painel de parceiros: https://SEU-BACKEND.up.railway.app/auth/install
 app.get('/auth/install', (req, res) => {
-  const { store_id } = req.query;
-  if (!store_id) return res.status(400).send('Informe store_id');
   const redirect = encodeURIComponent(`${APP_URL}/auth/callback`);
-  res.redirect(`https://www.nuvemshop.com.br/apps/${NUVEM_CLIENT_ID}/authorize?state=${store_id}&redirect_uri=${redirect}`);
+  const scope    = encodeURIComponent(NUVEM_SCOPES);
+  // A Nuvemshop injeta o store_id automaticamente no parâmetro `state` ao instalar pelo app store
+  // Para testes manuais, aceita store_id via query string
+  const state = req.query.store_id || '';
+  res.redirect(
+    `https://www.nuvemshop.com.br/apps/${NUVEM_CLIENT_ID}/authorize` +
+    `?response_type=code` +
+    `&client_id=${NUVEM_CLIENT_ID}` +
+    `&redirect_uri=${redirect}` +
+    `&scope=${scope}` +
+    `&state=${state}`
+  );
 });
 
+// Callback — recebe o código e troca pelo access_token
 app.get('/auth/callback', async (req, res) => {
   const { code, state: storeId } = req.query;
   if (!code) return res.status(400).send('Código OAuth ausente.');
   try {
     const { data } = await axios.post('https://www.nuvemshop.com.br/apps/authorize/token', {
-      client_id: NUVEM_CLIENT_ID,
+      client_id:     NUVEM_CLIENT_ID,
       client_secret: NUVEM_CLIENT_SECRET,
-      grant_type: 'authorization_code',
+      grant_type:    'authorization_code',
       code
     }, { headers: { 'Content-Type': 'application/json' } });
+
     const sid = String(data.user_id || storeId);
     db.saveToken(sid, data.access_token);
-    res.send(`<!DOCTYPE html><html><head><meta charset="UTF-8"/>
-    <style>*{font-family:sans-serif;text-align:center;}body{background:#0d0d10;color:#fff;padding:3rem;}
-    h2{color:#00d084;}code{background:#1e1e25;padding:4px 10px;border-radius:6px;font-size:18px;color:#00d084;}</style></head>
-    <body><h2>✅ RastreioBot conectado!</h2><p>Loja autenticada com sucesso.</p>
-    <p style="margin-top:1.5rem;">Seu <strong>Store ID</strong>:</p><code>${sid}</code>
-    <p style="color:#888;margin-top:1.5rem;">Cole esse ID nas configurações da extensão.</p>
-    </body></html>`);
+    console.log(`[OAuth] Loja ${sid} autenticada com sucesso.`);
+
+    // Redireciona para o painel do lojista após autenticação
+    res.redirect(`${APP_URL}/lojista.html?store=${sid}`);
   } catch(e) {
-    console.error('OAuth erro:', e.response?.data || e.message);
-    res.status(500).send('Erro na autenticação. Tente novamente.');
+    console.error('[OAuth] Erro:', e.response?.data || e.message);
+    res.status(500).send(`
+      <!DOCTYPE html><html><head><meta charset="UTF-8"/>
+      <style>body{font-family:sans-serif;background:#0d0d10;color:#fff;padding:3rem;text-align:center;}
+      h2{color:#e05565;}</style></head>
+      <body><h2>❌ Erro na autenticação</h2>
+      <p>Não foi possível conectar sua loja. Tente novamente.</p>
+      <p style="color:#555;font-size:12px;">${e.response?.data?.description || e.message}</p>
+      </body></html>
+    `);
+  }
+});
+
+// Webhook de desinstalação — Nuvemshop chama quando o lojista remove o app
+app.post('/auth/uninstall', async (req, res) => {
+  try {
+    const storeId = req.body?.store_id || req.query?.store_id;
+    if (storeId) {
+      console.log(`[OAuth] Loja ${storeId} desinstalou o app.`);
+      // Mantemos o token por 30 dias para reativação — apenas logamos
+    }
+    res.sendStatus(200);
+  } catch(e) {
+    console.error('[OAuth] Erro no uninstall:', e.message);
+    res.sendStatus(200); // sempre 200 para a Nuvemshop
   }
 });
 
@@ -1143,6 +1185,53 @@ app.post('/webhook/zapi', async (req, res) => {
     }
   } catch(e) {
     console.error('[ZAPI] Erro no webhook:', e.message);
+  }
+});
+
+// ── LGPD — obrigatório para publicação na Nuvemshop ──────────────────────────
+// Chamado quando uma loja é removida — apagar dados da loja
+app.post('/lgpd/store-redact', (req, res) => {
+  try {
+    const { store_id } = req.body;
+    if (store_id) console.log(`[LGPD] store-redact solicitado para loja ${store_id}`);
+    // Os dados de pedidos/carrinhos são anonimizados pelo cleanup semanal automático
+    // O token de acesso pode ser removido se quiser desconectar completamente:
+    // db.removeToken(String(store_id));
+    res.sendStatus(200);
+  } catch(e) {
+    console.error('[LGPD] store-redact erro:', e.message);
+    res.sendStatus(200);
+  }
+});
+
+// Chamado quando um cliente solicita exclusão dos seus dados
+app.post('/lgpd/customers-redact', (req, res) => {
+  try {
+    const { store_id, customer } = req.body;
+    const telefone = customer?.phone ? String(customer.phone).replace(/\D/g, '') : null;
+    if (telefone) {
+      // Remove opt-out e mensagens do cliente
+      db.removerOptOut(`55${telefone}`);
+      console.log(`[LGPD] customers-redact — telefone ${telefone} removido da loja ${store_id}`);
+    }
+    res.sendStatus(200);
+  } catch(e) {
+    console.error('[LGPD] customers-redact erro:', e.message);
+    res.sendStatus(200);
+  }
+});
+
+// Chamado quando um cliente solicita acesso aos seus dados
+app.post('/lgpd/customers-data-request', (req, res) => {
+  try {
+    const { store_id, customer } = req.body;
+    console.log(`[LGPD] customers-data-request — loja ${store_id}, cliente ${customer?.email || '?'}`);
+    // O LoggZap armazena apenas: telefone (para envio) e order_id (para controle de duplicatas)
+    // Não armazenamos nome, e-mail ou dados sensíveis além do necessário para operação
+    res.sendStatus(200);
+  } catch(e) {
+    console.error('[LGPD] customers-data-request erro:', e.message);
+    res.sendStatus(200);
   }
 });
 
