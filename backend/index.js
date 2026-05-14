@@ -6,6 +6,16 @@ const cron    = require('node-cron');
 const path    = require('path');
 const db      = require('./db');
 
+// Migração: garantir tabela auth_sessions existe
+try {
+  db.prepare(`CREATE TABLE IF NOT EXISTS auth_sessions (
+    code       TEXT PRIMARY KEY,
+    store_id   TEXT,
+    status     TEXT DEFAULT 'pending',
+    created_at TEXT DEFAULT (datetime('now'))
+  )`).run();
+} catch(e) { console.log('[DB] auth_sessions já existe.'); }
+
 const app = express();
 app.use(express.json());
 app.use(cors({ origin: '*' }));
