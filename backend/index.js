@@ -321,6 +321,7 @@ Qualquer problema com o ${metodo}, é só falar. 💬`
 
 // ── Verificar boletos/Pix não pagos ──────────────────────────────────────────
 async function verificarBoletosPendentes(storeId) {
+  if (!db.temFuncionalidade(storeId, 'boleto')) return;
   try {
     const orders = await nuvemGet(storeId, '/orders', {
       per_page: 100,
@@ -379,6 +380,7 @@ async function verificarBoletosPendentes(storeId) {
 
 // ── Verificar carrinhos abandonados ──────────────────────────────────────────
 async function verificarCarrinhosAbandonados(storeId) {
+  if (!db.temFuncionalidade(storeId, 'carrinho')) return;
   try {
     const carrinhos = await nuvemGet(storeId, '/checkouts', {
       per_page: 50,
@@ -446,6 +448,7 @@ async function verificarCarrinhosAbandonados(storeId) {
 
 // ── Verificar pagamentos recentes (últimas 2h) ────────────────────────────────
 async function verificarPagamentos(storeId) {
+  if (!db.temFuncionalidade(storeId, 'pagamento')) return;
   try {
     const desde = new Date(Date.now() - 2 * 60 * 60 * 1000).toISOString();
     const orders = await nuvemGet(storeId, '/orders', {
@@ -481,6 +484,7 @@ async function verificarPagamentos(storeId) {
 
 // ── Verificar mudanças de rastreio ────────────────────────────────────────────
 async function verificarRastreios(storeId) {
+  if (!db.temFuncionalidade(storeId, 'rastreio')) return;
   try {
     const orders = await nuvemGet(storeId, '/orders', {
       per_page: 200,
@@ -779,6 +783,22 @@ app.get('/optout-lista/:storeId', auth, (req, res) => {
   } catch(e) { res.status(500).json({ error: e.message }); }
 });
 
+// ── Planos ────────────────────────────────────────────────────────────────────
+app.get('/plano/:storeId', auth, (req, res) => {
+  try {
+    res.json({ success: true, ...db.getPlanoDados(req.params.storeId) });
+  } catch(e) { res.status(500).json({ error: e.message }); }
+});
+
+app.post('/plano/:storeId', auth, (req, res) => {
+  try {
+    const { plano, trial_fim } = req.body;
+    if (!['basico','pro'].includes(plano)) return res.status(400).json({ error: 'Plano inválido. Use: basico ou pro' });
+    db.definirPlano(req.params.storeId, plano, trial_fim || null);
+    res.json({ success: true, plano, dados: db.getPlanoDados(req.params.storeId) });
+  } catch(e) { res.status(500).json({ error: e.message }); }
+});
+
 // ── API Frete ─────────────────────────────────────────────────────────────────
 app.get('/frete/:storeId', auth, async (req, res) => {
   const { storeId } = req.params;
@@ -866,6 +886,7 @@ app.post('/whatsapp/criar-instancia', auth, (req, res) => {
 // ── Relatório semanal — toda segunda às 8h ───────────────────────────────────
 // ── Pós-entrega ───────────────────────────────────────────────────────────────
 async function verificarPosEntrega(storeId) {
+  if (!db.temFuncionalidade(storeId, 'pos_entrega')) return;
   try {
     const orders = await nuvemGet(storeId, '/orders', {
       per_page: 100,
@@ -904,6 +925,7 @@ async function verificarPosEntrega(storeId) {
 
 // ── Alerta pedido parado ──────────────────────────────────────────────────────
 async function verificarPedidosParados(storeId) {
+  if (!db.temFuncionalidade(storeId, 'alerta_parado')) return;
   try {
     const cfg = db.getConfig(storeId);
     const diasLimite = cfg.alerta_parado_dias || 5;
@@ -963,6 +985,7 @@ cron.schedule('0 8 * * 1', async () => {
 });
 
 async function enviarRelatorioSemanal(storeId) {
+  if (!db.temFuncionalidade(storeId, 'relatorio')) return;
   try {
     const orders = await nuvemGet(storeId, '/orders', {
       per_page: 200,
