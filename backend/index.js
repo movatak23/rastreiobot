@@ -815,6 +815,40 @@ app.get('/dashboard-nuvem/:storeId', auth, async (req, res) => {
   }
 });
 
+
+// ── Diagnóstico Nuvemshop ─────────────────────────────────────────────────────
+app.get('/diagnostico/:storeId', auth, async (req, res) => {
+  const { storeId } = req.params;
+  try {
+    const row = db.getToken(storeId);
+    if (!row) return res.json({ erro: 'Token nao encontrado no banco', storeId });
+    const token = row.access_token;
+    const tokenPreview = token ? token.substring(0, 10) + '...' : 'VAZIO';
+    
+    let nuvemRes = null;
+    let nuvemErro = null;
+    try {
+      const r = await axios.get(
+        `https://api.nuvemshop.com.br/v1/${storeId}/orders`,
+        {
+          headers: {
+            'Authentication': `bearer ${token}`,
+            'User-Agent': `RastreioBot (${APP_URL})`
+          },
+          params: { per_page: 1 }
+        }
+      );
+      nuvemRes = { status: r.status, total: Array.isArray(r.data) ? r.data.length : 'nao array' };
+    } catch(e) {
+      nuvemErro = { status: e.response?.status, msg: e.response?.data || e.message };
+    }
+    
+    res.json({ storeId, tokenPreview, nuvemRes, nuvemErro });
+  } catch(e) {
+    res.status(500).json({ erro: e.message });
+  }
+});
+
 // ── Ativar plano via chave ────────────────────────────────────────────────────
 app.post('/ativar', auth, (req, res) => {
   const { chave, store_id } = req.body;
