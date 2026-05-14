@@ -712,10 +712,12 @@ app.get('/dashboard-nuvem/:storeId', auth, async (req, res) => {
   const { storeId } = req.params;
   try {
     const hoje = new Date();
-    const inicioDia    = new Date(hoje.getFullYear(), hoje.getMonth(), hoje.getDate()).toISOString();
-    const inicioOntem  = new Date(hoje.getFullYear(), hoje.getMonth(), hoje.getDate() - 1).toISOString();
-    const inicioSemana = new Date(hoje.getFullYear(), hoje.getMonth(), hoje.getDate() - hoje.getDay()).toISOString();
-    const inicioMes    = new Date(hoje.getFullYear(), hoje.getMonth(), 1).toISOString();
+    const pad = n => String(n).padStart(2,'0');
+    const fmtData = d => `${d.getFullYear()}-${pad(d.getMonth()+1)}-${pad(d.getDate())}T00:00:00-03:00`;
+    const inicioDia    = fmtData(new Date(hoje.getFullYear(), hoje.getMonth(), hoje.getDate()));
+    const inicioOntem  = fmtData(new Date(hoje.getFullYear(), hoje.getMonth(), hoje.getDate() - 1));
+    const inicioSemana = fmtData(new Date(hoje.getFullYear(), hoje.getMonth(), hoje.getDate() - hoje.getDay()));
+    const inicioMes    = fmtData(new Date(hoje.getFullYear(), hoje.getMonth(), 1));
 
     const [pedidosHoje, pedidosOntem, pedidosSemana, pedidosMes] = await Promise.all([
       nuvemGet(storeId, '/orders', { created_at_min: inicioDia, per_page: 200 }),
