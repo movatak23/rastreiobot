@@ -98,6 +98,13 @@ db.exec(`
     created_at TEXT DEFAULT (datetime('now'))
   );
 
+  CREATE TABLE IF NOT EXISTS auth_sessions (
+    code       TEXT PRIMARY KEY,
+    store_id   TEXT,
+    status     TEXT DEFAULT 'pending',
+    created_at TEXT DEFAULT (datetime('now'))
+  );
+
   CREATE TABLE IF NOT EXISTS alerta_parado_enviados (
     order_id   TEXT PRIMARY KEY,
     store_id   TEXT,
@@ -393,6 +400,23 @@ function getLojistaStats(storeId) {
   };
 }
 
+// ── Auth Sessions ─────────────────────────────────────────────────────────────
+function upsertAuthSession(code, status) {
+  db.prepare('INSERT OR REPLACE INTO auth_sessions (code, status) VALUES (?, ?)').run(code, status);
+}
+
+function getAuthSession(code) {
+  return db.prepare('SELECT * FROM auth_sessions WHERE code = ?').get(code);
+}
+
+function completeAuthSession(code, storeId) {
+  db.prepare('UPDATE auth_sessions SET store_id = ?, status = ? WHERE code = ?').run(storeId, 'done', code);
+}
+
+function deleteAuthSession(code) {
+  db.prepare('DELETE FROM auth_sessions WHERE code = ?').run(code);
+}
+
 module.exports = {
   saveToken, getToken, getAllStores,
   marcarNotificado, jaNotificado,
@@ -408,5 +432,6 @@ module.exports = {
   getConfig, salvarConfig,
   jaPosEntregaEnviado, marcarPosEntregaEnviado,
   jaAlertaParadoEnviado, marcarAlertaParadoEnviado,
-  getAdminStats, getLojistaStats
+  getAdminStats, getLojistaStats,
+  upsertAuthSession, getAuthSession, completeAuthSession, deleteAuthSession
 };

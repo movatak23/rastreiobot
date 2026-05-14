@@ -561,7 +561,7 @@ app.get('/auth/install', (req, res) => {
   const { store_id, session_code } = req.query;
   const state = session_code ? `ext_${session_code}` : (store_id || 'manual');
   if (session_code) {
-    db.prepare('INSERT OR REPLACE INTO auth_sessions (code, status) VALUES (?, ?)').run(session_code, 'pending');
+    try { db.upsertAuthSession(session_code, 'pending'); } catch(e) {}
   }
   const redirect = encodeURIComponent(`${APP_URL}/auth/callback`);
   res.redirect(`https://www.nuvemshop.com.br/apps/${NUVEM_CLIENT_ID}/authorize?state=${state}&redirect_uri=${redirect}`);
@@ -584,7 +584,7 @@ app.get('/auth/callback', async (req, res) => {
     if (sessionCode) {
       const realSid = String(data.user_id || sid);
       if (realSid) db.saveToken(realSid, data.access_token);
-      db.prepare('UPDATE auth_sessions SET store_id = ?, status = ? WHERE code = ?').run(realSid, 'done', sessionCode);
+      try { db.completeAuthSession(sessionCode, realSid); } catch(e) {}
     }
     const isExt = !!sessionCode;
     res.send(`<!DOCTYPE html><html><head><meta charset="UTF-8"/>
@@ -847,13 +847,17 @@ app.get('/dashboard-nuvem/:storeId', auth, async (req, res) => {
 app.get('/auth/status', (req, res) => {
   const { code } = req.query;
   if (!code) return res.status(400).json({ error: 'code obrigatorio' });
-  const row = db.prepare('SELECT * FROM auth_sessions WHERE code = ?').get(code);
-  if (!row) return res.json({ status: 'pending' });
-  if (row.status === 'done') {
-    db.prepare('DELETE FROM auth_sessions WHERE code = ?').run(code);
-    return res.json({ status: 'done', store_id: row.store_id });
+  try {
+    const row = db.getAuthSession(code);
+    if (!row) return res.json({ status: 'pending' });
+    if (row.status === 'done') {
+      db.deleteAuthSession(code);
+      return res.json({ status: 'done', store_id: row.store_id });
+    }
+    res.json({ status: row.status });
+  } catch(e) {
+    res.json({ status: 'pending' });
   }
-  res.json({ status: row.status });
 });
 
 // ── Diagnóstico Nuvemshop ─────────────────────────────────────────────────────
