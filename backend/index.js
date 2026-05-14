@@ -548,10 +548,13 @@ async function verificarRastreios(storeId) {
 
 // ── OAuth ─────────────────────────────────────────────────────────────────────
 app.get('/auth/install', (req, res) => {
-  const { store_id } = req.query;
-  if (!store_id) return res.status(400).send('Informe store_id');
+  const { store_id, session_code } = req.query;
+  const state = session_code ? `ext_${session_code}` : (store_id || 'manual');
+  if (session_code) {
+    db.prepare('INSERT OR REPLACE INTO auth_sessions (code, status) VALUES (?, ?)').run(session_code, 'pending');
+  }
   const redirect = encodeURIComponent(`${APP_URL}/auth/callback`);
-  res.redirect(`https://www.nuvemshop.com.br/apps/${NUVEM_CLIENT_ID}/authorize?state=${store_id}&redirect_uri=${redirect}`);
+  res.redirect(`https://www.nuvemshop.com.br/apps/${NUVEM_CLIENT_ID}/authorize?state=${state}&redirect_uri=${redirect}`);
 });
 
 app.get('/auth/callback', async (req, res) => {
@@ -564,14 +567,22 @@ app.get('/auth/callback', async (req, res) => {
       grant_type: 'authorization_code',
       code
     }, { headers: { 'Content-Type': 'application/json' } });
-    const sid = String(data.user_id || storeId);
-    db.saveToken(sid, data.access_token);
+    const rawState = String(storeId || '');
+    const sessionCode = rawState.startsWith('ext_') ? rawState.slice(4) : null;
+    const sid = String(data.user_id || (sessionCode ? '' : storeId));
+    if (sid) db.saveToken(sid, data.access_token);
+    if (sessionCode) {
+      const realSid = String(data.user_id || sid);
+      if (realSid) db.saveToken(realSid, data.access_token);
+      db.prepare('UPDATE auth_sessions SET store_id = ?, status = ? WHERE code = ?').run(realSid, 'done', sessionCode);
+    }
+    const isExt = !!sessionCode;
     res.send(`<!DOCTYPE html><html><head><meta charset="UTF-8"/>
     <style>*{font-family:sans-serif;text-align:center;}body{background:#0d0d10;color:#fff;padding:3rem;}
     h2{color:#00d084;}code{background:#1e1e25;padding:4px 10px;border-radius:6px;font-size:18px;color:#00d084;}</style></head>
     <body><h2>✅ RastreioBot conectado!</h2><p>Loja autenticada com sucesso.</p>
     <p style="margin-top:1.5rem;">Seu <strong>Store ID</strong>:</p><code>${sid}</code>
-    <p style="color:#888;margin-top:1.5rem;">Cole esse ID nas configurações da extensão.</p>
+    ${isExt ? '<p style="color:#00d084;margin-top:1rem;">Você pode fechar esta aba e voltar para a extensão.</p>' : '<p style="color:#888;margin-top:1.5rem;">Cole esse ID nas configurações da extensão.</p>'}
     </body></html>`);
   } catch(e) {
     console.error('OAuth erro:', e.response?.data || e.message);
@@ -820,6 +831,20 @@ app.get('/dashboard-nuvem/:storeId', auth, async (req, res) => {
   }
 });
 
+
+
+// ── Auth status (polling da extensão) ────────────────────────────────────────
+app.get('/auth/status', (req, res) => {
+  const { code } = req.query;
+  if (!code) return res.status(400).json({ error: 'code obrigatorio' });
+  const row = db.prepare('SELECT * FROM auth_sessions WHERE code = ?').get(code);
+  if (!row) return res.json({ status: 'pending' });
+  if (row.status === 'done') {
+    db.prepare('DELETE FROM auth_sessions WHERE code = ?').run(code);
+    return res.json({ status: 'done', store_id: row.store_id });
+  }
+  res.json({ status: row.status });
+});
 
 // ── Diagnóstico Nuvemshop ─────────────────────────────────────────────────────
 app.get('/diagnostico/:storeId', auth, async (req, res) => {
