@@ -718,10 +718,10 @@ app.get('/dashboard-nuvem/:storeId', auth, async (req, res) => {
     const inicioMes    = new Date(hoje.getFullYear(), hoje.getMonth(), 1).toISOString();
 
     const [pedidosHoje, pedidosOntem, pedidosSemana, pedidosMes] = await Promise.all([
-      nuvemGet(storeId, '/orders', { created_at_min: inicioDia, per_page: 200, fields: 'id,number,total,status,payment_status,shipping_status,shipping_cost_owner,products,created_at,customer' }),
-      nuvemGet(storeId, '/orders', { created_at_min: inicioOntem, created_at_max: inicioDia, per_page: 200, fields: 'id,number,total,payment_status,shipping_cost_owner,created_at' }),
-      nuvemGet(storeId, '/orders', { created_at_min: inicioSemana, per_page: 200, fields: 'id,total,payment_status,shipping_cost_owner' }),
-      nuvemGet(storeId, '/orders', { created_at_min: inicioMes, per_page: 200, fields: 'id,total,payment_status,shipping_cost_owner,created_at' })
+      nuvemGet(storeId, '/orders', { created_at_min: inicioDia, per_page: 200 }),
+      nuvemGet(storeId, '/orders', { created_at_min: inicioOntem, created_at_max: inicioDia, per_page: 200 }),
+      nuvemGet(storeId, '/orders', { created_at_min: inicioSemana, per_page: 200 }),
+      nuvemGet(storeId, '/orders', { created_at_min: inicioMes, per_page: 200 })
     ]);
 
     // Filtra pedidos pagos (exclui cancelados e pendentes)
