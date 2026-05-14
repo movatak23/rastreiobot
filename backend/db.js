@@ -400,6 +400,49 @@ function getLojistaStats(storeId) {
   };
 }
 
+// ── Licenças ──────────────────────────────────────────────────────────────────
+// Tabela criada via migração no index.js
+
+function criarLicenca(chave, plano, storeId, meses) {
+  const expira = new Date();
+  expira.setMonth(expira.getMonth() + meses);
+  db.prepare(`
+    INSERT INTO licencas (chave, plano, store_id, expira_em, status)
+    VALUES (?, ?, ?, ?, 'ativa')
+    ON CONFLICT(chave) DO NOTHING
+  `).run(chave, plano, storeId || null, expira.toISOString());
+}
+
+function getLicenca(chave) {
+  return db.prepare('SELECT * FROM licencas WHERE chave = ?').get(chave);
+}
+
+function getLicencaPorStore(storeId) {
+  return db.prepare('SELECT * FROM licencas WHERE store_id = ? AND status = ? ORDER BY expira_em DESC LIMIT 1').get(storeId, 'ativa');
+}
+
+function vincularLicenca(chave, storeId) {
+  db.prepare('UPDATE licencas SET store_id = ? WHERE chave = ?').run(storeId, chave);
+}
+
+function validarLicenca(chave, storeId) {
+  const lic = db.prepare('SELECT * FROM licencas WHERE chave = ?').get(chave);
+  if (!lic) return { valida: false, motivo: 'Chave não encontrada.' };
+  if (lic.status !== 'ativa') return { valida: false, motivo: 'Licença inativa.' };
+  if (lic.store_id && lic.store_id !== String(storeId)) return { valida: false, motivo: 'Chave vinculada a outra loja.' };
+  if (new Date(lic.expira_em) < new Date()) return { valida: false, motivo: 'Licença expirada.' };
+  if (!lic.store_id) db.prepare('UPDATE licencas SET store_id = ? WHERE chave = ?').run(String(storeId), chave);
+  return { valida: true, plano: lic.plano, expira_em: lic.expira_em };
+}
+
+function getLicencasPorPayment(paymentId) {
+  return db.prepare('SELECT * FROM licencas WHERE payment_id = ?').get(paymentId);
+}
+
+function salvarPaymentId(chave, paymentId) {
+  db.prepare('UPDATE licencas SET payment_id = ? WHERE chave = ?').run(paymentId, chave);
+}
+
 // ── Auth Sessions ─────────────────────────────────────────────────────────────
 function upsertAuthSession(code, status) {
   db.prepare('INSERT OR REPLACE INTO auth_sessions (code, status) VALUES (?, ?)').run(code, status);
@@ -433,5 +476,7 @@ module.exports = {
   jaPosEntregaEnviado, marcarPosEntregaEnviado,
   jaAlertaParadoEnviado, marcarAlertaParadoEnviado,
   getAdminStats, getLojistaStats,
-  upsertAuthSession, getAuthSession, completeAuthSession, deleteAuthSession
+  upsertAuthSession, getAuthSession, completeAuthSession, deleteAuthSession,
+  criarLicenca, getLicenca, getLicencaPorStore, vincularLicenca, validarLicenca,
+  getLicencasPorPayment, salvarPaymentId
 };

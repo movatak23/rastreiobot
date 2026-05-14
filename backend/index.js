@@ -1,10 +1,25 @@
 require('dotenv').config();
+const nodemailer = require('nodemailer');
+const crypto     = require('crypto');
 const express = require('express');
 const axios   = require('axios');
 const cors    = require('cors');
 const cron    = require('node-cron');
 const path    = require('path');
 const db      = require('./db');
+
+// Migração: tabelas de licenças e auth_sessions
+try {
+  db.prepare(`CREATE TABLE IF NOT EXISTS licencas (
+    chave      TEXT PRIMARY KEY,
+    plano      TEXT NOT NULL,
+    store_id   TEXT,
+    payment_id TEXT,
+    status     TEXT DEFAULT 'ativa',
+    expira_em  TEXT NOT NULL,
+    created_at TEXT DEFAULT (datetime('now'))
+  )`).run();
+} catch(e) {}
 
 // Migração: garantir tabela auth_sessions existe
 try {
@@ -27,6 +42,11 @@ const {
   APP_URL,
   EXTENSION_SECRET,
   PORT = 3000,
+  MP_ACCESS_TOKEN,
+  SMTP_HOST,
+  SMTP_PORT,
+  SMTP_USER,
+  SMTP_PASS,
   ZAPI_INSTANCE,
   ZAPI_TOKEN,
   ZAPI_CLIENT_TOKEN
@@ -858,6 +878,132 @@ app.get('/auth/status', (req, res) => {
   } catch(e) {
     res.json({ status: 'pending' });
   }
+});
+
+
+// ── Email ─────────────────────────────────────────────────────────────────────
+function criarTransporter() {
+  return nodemailer.createTransport({
+    host: SMTP_HOST || 'smtp.gmail.com',
+    port: parseInt(SMTP_PORT || '587'),
+    secure: false,
+    auth: { user: SMTP_USER, pass: SMTP_PASS }
+  });
+}
+
+async function enviarChavePorEmail(email, chave, plano, expiraEm) {
+  const transporter = criarTransporter();
+  const expira = new Date(expiraEm).toLocaleDateString('pt-BR');
+  await transporter.sendMail({
+    from: '"LoggZap" <' + SMTP_USER + '>',
+    to: email,
+    subject: 'Sua chave de ativacao LoggZap',
+    html: '<div style="font-family:sans-serif;max-width:500px;margin:0 auto;background:#0d0d10;color:#ededf2;padding:32px;border-radius:12px">' +
+      '<h2 style="color:#4f8ef7">LoggZap Dashboard</h2>' +
+      '<p>Seu pagamento foi confirmado! Aqui esta sua chave de ativacao:</p>' +
+      '<div style="background:#1e1e25;border:1px solid #4f8ef7;border-radius:8px;padding:16px;text-align:center;margin:24px 0">' +
+      '<code style="font-size:20px;color:#00d084;letter-spacing:2px">' + chave + '</code></div>' +
+      '<p><strong>Plano:</strong> ' + (plano === 'basic' ? 'Basic' : 'Premium') + '</p>' +
+      '<p><strong>Valido ate:</strong> ' + expira + '</p>' +
+      '<p style="margin-top:24px">Para ativar: abra a extensao → Configuracoes → Cole a chave → Ativar chave.</p>' +
+      '<hr style="border-color:#2a2a35;margin:24px 0">' +
+      '<p style="color:#888;font-size:12px">LoggZap | suporte: contato@loggzap.com.br</p></div>'
+  });
+}
+
+function gerarChave(plano) {
+  const crypto = require('crypto');
+  const prefixo = plano === 'premium' ? 'LZP' : 'LZB';
+  const rand = crypto.randomBytes(6).toString('hex').toUpperCase();
+  return prefixo + '-' + rand.slice(0,4) + '-' + rand.slice(4,8) + '-' + rand.slice(8);
+}
+
+// ── Checkout Mercado Pago ─────────────────────────────────────────────────────
+app.post('/checkout/criar', async (req, res) => {
+  const { plano, email } = req.body;
+  if (!plano || !email) return res.status(400).json({ error: 'plano e email obrigatorios' });
+  if (!MP_ACCESS_TOKEN) return res.status(500).json({ error: 'MP_ACCESS_TOKEN nao configurado' });
+  const precos = { basic: 29, premium: 397 };
+  const nomes  = { basic: 'LoggZap Basic', premium: 'LoggZap Premium' };
+  if (!precos[plano]) return res.status(400).json({ error: 'plano invalido' });
+  try {
+    const { data } = await axios.post(
+      'https://api.mercadopago.com/checkout/preferences',
+      {
+        items: [{ title: nomes[plano], quantity: 1, unit_price: precos[plano], currency_id: 'BRL' }],
+        payer: { email },
+        back_urls: {
+          success: APP_URL + '/checkout/sucesso',
+          failure: APP_URL + '/checkout/erro',
+          pending: APP_URL + '/checkout/pendente'
+        },
+        auto_return: 'approved',
+        external_reference: JSON.stringify({ plano, email, meses: 1 }),
+        notification_url: APP_URL + '/webhook/mp'
+      },
+      { headers: { 'Authorization': 'Bearer ' + MP_ACCESS_TOKEN, 'Content-Type': 'application/json' } }
+    );
+    res.json({ success: true, url: data.init_point, id: data.id });
+  } catch(e) {
+    console.error('[Checkout MP]', e.response?.data || e.message);
+    res.status(500).json({ error: e.message });
+  }
+});
+
+// ── Webhook Mercado Pago ──────────────────────────────────────────────────────
+app.post('/webhook/mp', async (req, res) => {
+  res.sendStatus(200);
+  const { type, data } = req.body;
+  if (type !== 'payment') return;
+  try {
+    const { data: pagamento } = await axios.get(
+      'https://api.mercadopago.com/v1/payments/' + data.id,
+      { headers: { 'Authorization': 'Bearer ' + MP_ACCESS_TOKEN } }
+    );
+    if (pagamento.status !== 'approved') return;
+    const ref = JSON.parse(pagamento.external_reference || '{}');
+    const { plano, email, meses = 1 } = ref;
+    if (!plano || !email) return;
+    const jaProcessado = db.getLicencasPorPayment(String(data.id));
+    if (jaProcessado) return;
+    const chave = gerarChave(plano);
+    db.criarLicenca(chave, plano, null, meses);
+    db.salvarPaymentId(chave, String(data.id));
+    await enviarChavePorEmail(email, chave, plano,
+      new Date(Date.now() + meses * 30 * 24 * 60 * 60 * 1000).toISOString()
+    );
+    console.log('[MP] Licenca ' + chave + ' gerada para ' + email + ' — plano ' + plano);
+  } catch(e) {
+    console.error('[Webhook MP]', e.message);
+  }
+});
+
+// ── Validar licenca (extensao) ────────────────────────────────────────────────
+app.post('/licenca/validar', auth, (req, res) => {
+  const { chave, store_id } = req.body;
+  if (!chave || !store_id) return res.status(400).json({ error: 'chave e store_id obrigatorios' });
+  const resultado = db.validarLicenca(chave, store_id);
+  res.json(resultado);
+});
+
+app.get('/licenca/status/:storeId', auth, (req, res) => {
+  const lic = db.getLicencaPorStore(req.params.storeId);
+  if (!lic) return res.json({ plano: 'trial', valida: false });
+  if (new Date(lic.expira_em) < new Date()) return res.json({ plano: 'trial', valida: false, motivo: 'expirada' });
+  res.json({ plano: lic.plano, valida: true, expira_em: lic.expira_em });
+});
+
+// ── Paginas de retorno do checkout ───────────────────────────────────────────
+app.get('/checkout/sucesso', (req, res) => {
+  res.send('<!DOCTYPE html><html><head><meta charset="UTF-8"><style>*{font-family:sans-serif;text-align:center;}body{background:#0d0d10;color:#fff;padding:3rem;}</style></head><body><h2 style="color:#00d084">Pagamento aprovado!</h2><p>Sua chave sera enviada para o seu email em instantes.</p><p style="color:#888;margin-top:1rem">Verifique tambem a pasta de spam.</p></body></html>');
+});
+
+app.get('/checkout/erro', (req, res) => {
+  res.send('<!DOCTYPE html><html><head><meta charset="UTF-8"><style>*{font-family:sans-serif;text-align:center;}body{background:#0d0d10;color:#fff;padding:3rem;}</style></head><body><h2 style="color:#e05a5a">Pagamento nao aprovado</h2><p>Tente novamente ou entre em contato: contato@loggzap.com.br</p></body></html>');
+});
+
+app.get('/checkout/pendente', (req, res) => {
+  res.send('<!DOCTYPE html><html><head><meta charset="UTF-8"><style>*{font-family:sans-serif;text-align:center;}body{background:#0d0d10;color:#fff;padding:3rem;}</style></head><body><h2 style="color:#e8a030">Pagamento em processamento</h2><p>Voce recebera a chave por email assim que o pagamento for confirmado.</p></body></html>');
 });
 
 // ── Diagnóstico Nuvemshop ─────────────────────────────────────────────────────
