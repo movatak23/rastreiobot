@@ -1006,6 +1006,23 @@ app.get('/checkout/pendente', (req, res) => {
   res.send('<!DOCTYPE html><html><head><meta charset="UTF-8"><style>*{font-family:sans-serif;text-align:center;}body{background:#0d0d10;color:#fff;padding:3rem;}</style></head><body><h2 style="color:#e8a030">Pagamento em processamento</h2><p>Voce recebera a chave por email assim que o pagamento for confirmado.</p></body></html>');
 });
 
+
+// ── Rota de teste de email (remover em producao) ──────────────────────────────
+app.post('/teste/email', auth, async (req, res) => {
+  const { email, plano = 'basic' } = req.body;
+  if (!email) return res.status(400).json({ error: 'email obrigatorio' });
+  try {
+    const chave = gerarChave(plano);
+    const expiraEm = new Date(Date.now() + 30 * 24 * 60 * 60 * 1000).toISOString();
+    db.criarLicenca(chave, plano, null, 1);
+    await enviarChavePorEmail(email, chave, plano, expiraEm);
+    res.json({ success: true, chave, mensagem: 'Email enviado com sucesso.' });
+  } catch(e) {
+    console.error('[Teste Email]', e.message);
+    res.status(500).json({ success: false, error: e.message });
+  }
+});
+
 // ── Diagnóstico Nuvemshop ─────────────────────────────────────────────────────
 app.get('/diagnostico/:storeId', auth, async (req, res) => {
   const { storeId } = req.params;
