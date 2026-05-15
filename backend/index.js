@@ -733,18 +733,11 @@ app.get('/dashboard/:storeId', auth, async (req, res) => {
 app.get('/dashboard-nuvem/:storeId', auth, async (req, res) => {
   const { storeId } = req.params;
   try {
-    // Datas: meia-noite BRT = 03:00 UTC — Nuvemshop aceita ISO UTC
-    const agora = new Date();
-    const brt = new Date(agora.getTime() - 3 * 60 * 60 * 1000);
-    const ano = brt.getUTCFullYear();
-    const mes = brt.getUTCMonth();
-    const dia = brt.getUTCDate();
-    const diaSemana = brt.getUTCDay();
-    const meiaNiuteBRT = (y, m, d) => new Date(Date.UTC(y, m, d, 3, 0, 0)).toISOString();
-    const inicioDia    = meiaNiuteBRT(ano, mes, dia);
-    const inicioOntem  = meiaNiuteBRT(ano, mes, dia - 1);
-    const inicioSemana = meiaNiuteBRT(ano, mes, dia - diaSemana);
-    const inicioMes    = meiaNiuteBRT(ano, mes, 1);
+    const hoje = new Date();
+    const inicioDia    = new Date(hoje.getFullYear(), hoje.getMonth(), hoje.getDate()).toISOString();
+    const inicioOntem  = new Date(hoje.getFullYear(), hoje.getMonth(), hoje.getDate() - 1).toISOString();
+    const inicioSemana = new Date(hoje.getFullYear(), hoje.getMonth(), hoje.getDate() - hoje.getDay()).toISOString();
+    const inicioMes    = new Date(hoje.getFullYear(), hoje.getMonth(), 1).toISOString();
 
     const nuvemSafe = async (path, params) => {
       try { return await nuvemGet(storeId, path, params); }
@@ -755,12 +748,12 @@ app.get('/dashboard-nuvem/:storeId', auth, async (req, res) => {
       }
     };
 
-    const camposBase = 'id,number,total,payment_status,shipping_status,shipping_cost_owner,products,created_at,customer';
-    let pedidosHoje = [], pedidosOntem = [], pedidosSemana = [], pedidosMes = [];
-    pedidosHoje   = await nuvemSafe('/orders', { payment_status: 'paid', created_at_min: inicioDia,    per_page: 200, fields: camposBase });
-    pedidosOntem  = await nuvemSafe('/orders', { payment_status: 'paid', created_at_min: inicioOntem,  created_at_max: inicioDia, per_page: 200, fields: camposBase });
-    pedidosSemana = await nuvemSafe('/orders', { payment_status: 'paid', created_at_min: inicioSemana, per_page: 200, fields: camposBase });
-    pedidosMes    = await nuvemSafe('/orders', { payment_status: 'paid', created_at_min: inicioMes,    per_page: 200, fields: camposBase });
+    const [pedidosHoje, pedidosOntem, pedidosSemana, pedidosMes] = await Promise.all([
+      nuvemSafe('/orders', { created_at_min: inicioDia,   per_page: 200, fields: 'id,number,total,payment_status,shipping_status,shipping_cost_owner,products,created_at,customer' }),
+      nuvemSafe('/orders', { created_at_min: inicioOntem, created_at_max: inicioDia, per_page: 200, fields: 'id,number,total,payment_status,shipping_cost_owner,created_at' }),
+      nuvemSafe('/orders', { created_at_min: inicioSemana, per_page: 200, fields: 'id,total,payment_status,shipping_cost_owner' }),
+      nuvemSafe('/orders', { created_at_min: inicioMes,   per_page: 200, fields: 'id,total,payment_status,shipping_cost_owner,created_at' })
+    ]);
 
     // Filtra pedidos pagos (exclui cancelados e pendentes)
     const pagosHoje   = pedidosHoje.filter(p => p.payment_status === 'paid');
