@@ -1019,6 +1019,25 @@ app.post('/teste/email', auth, async (req, res) => {
 });
 
 // ── Diagnóstico Nuvemshop ─────────────────────────────────────────────────────
+app.get('/debug-query/:storeId', async (req, res) => {
+  const { storeId } = req.params;
+  try {
+    const row = db.getToken(storeId);
+    if (!row) return res.json({ erro: 'Token nao encontrado' });
+    const agora = new Date();
+    const brt = new Date(agora.getTime() - 3 * 60 * 60 * 1000);
+    const ano = brt.getUTCFullYear(), mes = brt.getUTCMonth(), dia = brt.getUTCDate();
+    const inicioDia = new Date(Date.UTC(ano, mes, dia, 3, 0, 0)).toISOString();
+    const r = await axios.get(`https://api.nuvemshop.com.br/v1/${storeId}/orders`, {
+      headers: { 'Authentication': `bearer ${row.access_token}`, 'User-Agent': `RastreioBot (${APP_URL})` },
+      params: { created_at_min: inicioDia, per_page: 5, fields: 'id,number,payment_status,created_at' }
+    });
+    res.json({ inicioDia, agora: agora.toISOString(), total: r.data.length, pedidos: r.data });
+  } catch(e) {
+    res.json({ erro: e.response?.data || e.message });
+  }
+});
+
 app.get('/diagnostico/:storeId', async (req, res) => {
   const { storeId } = req.params;
   try {
