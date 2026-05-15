@@ -904,6 +904,29 @@ function gerarChave(plano) {
   return prefixo + '-' + rand.slice(0,4) + '-' + rand.slice(4,8) + '-' + rand.slice(8);
 }
 
+// ── Rota de teste de email ────────────────────────────────────────────────────
+app.get('/teste/email', async (req, res) => {
+  const email = req.query.email;
+  if (!email) return res.status(400).json({ error: 'Informe ?email=seu@email.com' });
+  try {
+    const resend = new Resend(process.env.RESEND_API_KEY);
+    await resend.emails.send({
+      from: 'LoggZap <contato@loggzap.com.br>',
+      to: email,
+      subject: '✅ Teste de email LoggZap',
+      html: '<div style="font-family:sans-serif;max-width:500px;margin:0 auto;background:#0d0d10;color:#ededf2;padding:32px;border-radius:12px">' +
+        '<h2 style="color:#00d084">✅ Email funcionando!</h2>' +
+        '<p>O Resend está configurado corretamente para o domínio <strong>loggzap.com.br</strong>.</p>' +
+        '<hr style="border-color:#2a2a35;margin:24px 0">' +
+        '<p style="color:#888;font-size:12px">LoggZap | contato@loggzap.com.br</p></div>'
+    });
+    res.json({ success: true, enviado_para: email });
+  } catch(e) {
+    console.error('[Teste Email]', e.message);
+    res.status(500).json({ error: e.message });
+  }
+});
+
 // ── Checkout Mercado Pago ─────────────────────────────────────────────────────
 app.post('/checkout/criar', async (req, res) => {
   const { plano, email } = req.body;
