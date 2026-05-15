@@ -733,15 +733,11 @@ app.get('/dashboard/:storeId', auth, async (req, res) => {
 app.get('/dashboard-nuvem/:storeId', auth, async (req, res) => {
   const { storeId } = req.params;
   try {
-    // Railway roda em UTC — calcula meia-noite BRT (UTC-3 = +3h em UTC)
-    const agora = new Date();
-    const brt = new Date(agora.getTime() - 3 * 60 * 60 * 1000);
-    const ano = brt.getUTCFullYear(), mes = brt.getUTCMonth(), dia = brt.getUTCDate();
-    const meiaNBRT = (y, m, d) => new Date(Date.UTC(y, m, d, 3, 0, 0)).toISOString();
-    const inicioDia    = meiaNBRT(ano, mes, dia);
-    const inicioOntem  = meiaNBRT(ano, mes, dia - 1);
-    const inicioSemana = meiaNBRT(ano, mes, dia - brt.getUTCDay());
-    const inicioMes    = meiaNBRT(ano, mes, 1);
+    const hoje = new Date();
+    const inicioDia    = new Date(hoje.getFullYear(), hoje.getMonth(), hoje.getDate()).toISOString();
+    const inicioOntem  = new Date(hoje.getFullYear(), hoje.getMonth(), hoje.getDate() - 1).toISOString();
+    const inicioSemana = new Date(hoje.getFullYear(), hoje.getMonth(), hoje.getDate() - hoje.getDay()).toISOString();
+    const inicioMes    = new Date(hoje.getFullYear(), hoje.getMonth(), 1).toISOString();
 
     const nuvemSafe = async (path, params) => {
       try { return await nuvemGet(storeId, path, params); }
@@ -752,6 +748,7 @@ app.get('/dashboard-nuvem/:storeId', auth, async (req, res) => {
       }
     };
 
+    console.log('[Dashboard] inicioDia:', inicioDia, 'inicioMes:', inicioMes);
     const [pedidosHoje, pedidosOntem, pedidosSemana, pedidosMes] = await Promise.all([
       nuvemSafe('/orders', { created_at_min: inicioDia,   per_page: 200, fields: 'id,number,total,payment_status,shipping_status,shipping_cost_owner,products,created_at,customer' }),
       nuvemSafe('/orders', { created_at_min: inicioOntem, created_at_max: inicioDia, per_page: 200, fields: 'id,number,total,payment_status,shipping_cost_owner,created_at' }),
