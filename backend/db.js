@@ -98,6 +98,16 @@ db.exec(`
     created_at TEXT DEFAULT (datetime('now'))
   );
 
+  CREATE TABLE IF NOT EXISTS licencas (
+    chave      TEXT PRIMARY KEY,
+    plano      TEXT NOT NULL,
+    store_id   TEXT,
+    payment_id TEXT,
+    status     TEXT DEFAULT 'ativa',
+    expira_em  TEXT NOT NULL,
+    created_at TEXT DEFAULT (datetime('now'))
+  );
+
   CREATE TABLE IF NOT EXISTS auth_sessions (
     code       TEXT PRIMARY KEY,
     store_id   TEXT,
