@@ -986,6 +986,8 @@ app.post('/cadastro', async (req, res) => {
 
   try {
     const resend = new Resend(process.env.RESEND_API_KEY);
+    const nomeFormatado = nome.split(' ').map(p => p.charAt(0).toUpperCase() + p.slice(1).toLowerCase()).join(' ');
+    const isPremium = (plano === 'premium');
 
     // Email com extensão + manual
     await resend.emails.send({
@@ -1002,12 +1004,20 @@ app.post('/cadastro', async (req, res) => {
               <span style="font-size:32px;font-weight:800">Logg<span style="color:#00d084">Zap</span></span>
             </div>
             <div style="background:#0c0f16;border:1px solid rgba(255,255,255,0.07);border-radius:14px;padding:32px">
-              <h1 style="font-size:22px;font-weight:700;margin:0 0 12px">Olá, ${nome}! 👋</h1>
+              <h1 style="font-size:22px;font-weight:700;margin:0 0 12px">Olá, ${nomeFormatado}! 👋</h1>
               <p style="color:#8b93a8;font-size:15px;line-height:1.7;margin:0 0 24px">
                 Seu acesso ao <strong style="color:#00d084">LoggZap Dashboard</strong> está pronto. 
                 Siga os passos abaixo para instalar em menos de 5 minutos.
               </p>
               
+              ${isPremium ? `<div style="background:linear-gradient(135deg,rgba(79,142,247,0.1),rgba(79,142,247,0.05));border:1px solid rgba(79,142,247,0.3);border-radius:10px;padding:20px;margin-bottom:24px">
+                <div style="font-size:12px;font-weight:700;letter-spacing:2px;color:#4f8ef7;text-transform:uppercase;margin-bottom:12px">&#9889; Você escolheu o Premium</div>
+                <p style="color:#8b93a8;font-size:14px;margin:0 0 12px;line-height:1.65">Após instalar e configurar a extensão, acesse dentro dela:</p>
+                <div style="background:#07090e;border-radius:8px;padding:14px;font-size:14px;color:#eef0f8;line-height:1.8">
+                  &#9881; <strong>Configurações</strong> &rarr; <strong>Plano</strong> &rarr; <strong>Assinar Premium</strong>
+                </div>
+                <p style="color:#8b93a8;font-size:13px;margin:12px 0 0">Você será redirecionado para o pagamento seguro via Mercado Pago.</p>
+              </div>` : ''}
               <div style="background:#11151e;border-radius:10px;padding:20px;margin-bottom:24px">
                 <div style="font-size:12px;font-weight:700;letter-spacing:2px;color:#00d084;text-transform:uppercase;margin-bottom:12px">Passo 1 — Baixe a extensão</div>
                 <p style="color:#8b93a8;font-size:14px;margin:0 0 16px">Clique no botão abaixo para baixar o arquivo da extensão:</p>
