@@ -1,0 +1,184 @@
+<!DOCTYPE html>
+<html lang="pt-BR">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Manual de Instalação — LoggZap Dashboard</title>
+<link href="https://fonts.googleapis.com/css2?family=Syne:wght@700;800&family=DM+Sans:wght@400;500;600&display=swap" rel="stylesheet">
+<style>
+  :root { --green:#00d084; --bg:#07090e; --bg2:#0c0f16; --bg3:#11151e; --text:#eef0f8; --text2:#8b93a8; --text3:#424a61; --border:rgba(255,255,255,0.07); }
+  *,*::before,*::after{box-sizing:border-box;margin:0;padding:0}
+  body{background:var(--bg);color:var(--text);font-family:'DM Sans',sans-serif;font-size:16px;line-height:1.7;padding:0 0 80px}
+  .header{background:var(--bg2);border-bottom:1px solid var(--border);padding:24px 0;text-align:center;margin-bottom:56px}
+  .logo{font-family:'Syne',sans-serif;font-weight:800;font-size:28px}
+  .logo span{color:var(--green)}
+  .logo-sub{font-size:14px;color:var(--text3);margin-top:4px}
+  .wrap{max-width:720px;margin:0 auto;padding:0 24px}
+  .intro{background:var(--bg2);border:1px solid var(--border);border-radius:14px;padding:28px 32px;margin-bottom:48px}
+  .intro p{color:var(--text2);font-size:15px;line-height:1.75}
+  .intro strong{color:var(--green)}
+  h2{font-family:'Syne',sans-serif;font-size:22px;font-weight:700;margin-bottom:20px;padding-top:8px}
+  .steps{display:flex;flex-direction:column;gap:24px;margin-bottom:48px}
+  .step{display:flex;gap:20px;align-items:flex-start}
+  .step-num{width:36px;height:36px;border-radius:50%;background:var(--green);color:#000;font-family:'Syne',sans-serif;font-weight:800;font-size:16px;display:flex;align-items:center;justify-content:center;flex-shrink:0;margin-top:2px}
+  .step-body h3{font-size:16px;font-weight:600;margin-bottom:6px;color:var(--text)}
+  .step-body p{font-size:14px;color:var(--text2);line-height:1.7}
+  .step-body code{background:var(--bg3);border:1px solid var(--border);padding:2px 8px;border-radius:4px;font-size:13px;color:var(--green);font-family:monospace}
+  .tip{background:rgba(0,208,132,0.06);border:1px solid rgba(0,208,132,0.2);border-radius:10px;padding:16px 20px;margin-bottom:48px}
+  .tip-title{font-size:13px;font-weight:700;color:var(--green);margin-bottom:6px;text-transform:uppercase;letter-spacing:1px}
+  .tip p{font-size:14px;color:var(--text2);line-height:1.65}
+  .section{margin-bottom:48px}
+  .divider{height:1px;background:var(--border);margin:48px 0}
+  .chave-box{background:var(--bg2);border:1px solid var(--border);border-radius:12px;padding:24px 28px}
+  .chave-box h3{font-size:16px;font-weight:600;margin-bottom:16px}
+  .chave-steps{list-style:none;display:flex;flex-direction:column;gap:12px}
+  .chave-steps li{display:flex;gap:12px;font-size:14px;color:var(--text2);line-height:1.6}
+  .chave-steps li::before{content:attr(data-n);background:var(--bg3);border:1px solid var(--border);border-radius:50%;width:22px;height:22px;display:flex;align-items:center;justify-content:center;font-size:11px;font-weight:700;color:var(--green);flex-shrink:0;margin-top:1px}
+  .footer{text-align:center;margin-top:64px;padding-top:32px;border-top:1px solid var(--border)}
+  .footer p{font-size:13px;color:var(--text3)}
+  .footer a{color:var(--green);text-decoration:none}
+  @media print{body{background:#fff;color:#000}.header{background:#f5f5f5}.logo span{color:#00a066}.step-num{background:#00a066;-webkit-print-color-adjust:exact;print-color-adjust:exact}}
+</style>
+</head>
+<body>
+
+<div class="header">
+  <div class="logo">Logg<span>Zap</span> Dashboard</div>
+  <div class="logo-sub">Manual de Instalação — v2.6</div>
+</div>
+
+<div class="wrap">
+
+  <div class="intro">
+    <p>Bem-vindo ao <strong>LoggZap Dashboard</strong>. Este manual vai te guiar em 3 etapas simples: instalar a extensão no Chrome, conectar com sua loja Nuvemshop e ativar sua licença.</p>
+    <p style="margin-top:10px">Tempo estimado: <strong>menos de 5 minutos</strong>.</p>
+  </div>
+
+  <!-- PARTE 1: INSTALAR -->
+  <div class="section">
+    <h2>Parte 1 — Instalar a extensão no Chrome</h2>
+    <div class="steps">
+      <div class="step">
+        <div class="step-num">1</div>
+        <div class="step-body">
+          <h3>Baixe o arquivo da extensão</h3>
+          <p>Você recebeu neste email um arquivo chamado <code>LoggZap_v2.6.zip</code>. Salve-o em uma pasta no seu computador que você não vai apagar — por exemplo, <code>Documentos/LoggZap</code>.</p>
+        </div>
+      </div>
+      <div class="step">
+        <div class="step-num">2</div>
+        <div class="step-body">
+          <h3>Descompacte o arquivo</h3>
+          <p>Clique com o botão direito no arquivo ZIP e selecione <strong>"Extrair aqui"</strong> ou <strong>"Extrair tudo"</strong>. Uma pasta chamada <code>extensao</code> será criada.</p>
+        </div>
+      </div>
+      <div class="step">
+        <div class="step-num">3</div>
+        <div class="step-body">
+          <h3>Abra as extensões do Chrome</h3>
+          <p>No Google Chrome, acesse: <code>chrome://extensions</code> na barra de endereços. Ou clique no menu ⋮ → <strong>Extensões</strong> → <strong>Gerenciar extensões</strong>.</p>
+        </div>
+      </div>
+      <div class="step">
+        <div class="step-num">4</div>
+        <div class="step-body">
+          <h3>Ative o Modo do desenvolvedor</h3>
+          <p>No canto superior direito da tela de extensões, ative o botão <strong>"Modo do desenvolvedor"</strong>. Novos botões vão aparecer no topo da página.</p>
+        </div>
+      </div>
+      <div class="step">
+        <div class="step-num">5</div>
+        <div class="step-body">
+          <h3>Carregue a extensão</h3>
+          <p>Clique em <strong>"Carregar sem compactação"</strong> e selecione a pasta <code>extensao</code> que você extraiu no passo 2. O LoggZap Dashboard vai aparecer na lista de extensões.</p>
+        </div>
+      </div>
+      <div class="step">
+        <div class="step-num">6</div>
+        <div class="step-body">
+          <h3>Fixe a extensão na barra do Chrome</h3>
+          <p>Clique no ícone de quebra-cabeça 🧩 na barra do Chrome → encontre <strong>LoggZap Dashboard</strong> → clique no 📌 para fixar. O ícone vai aparecer sempre visível na barra.</p>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <div class="tip">
+    <div class="tip-title">⚠️ Importante</div>
+    <p>Não apague a pasta <code>extensao</code> do seu computador. O Chrome precisa dela para manter a extensão funcionando. Se apagar, precisará instalar novamente.</p>
+  </div>
+
+  <div class="divider"></div>
+
+  <!-- PARTE 2: TOKEN NUVEMSHOP -->
+  <div class="section">
+    <h2>Parte 2 — Obter o Token da Nuvemshop</h2>
+    <p style="font-size:15px;color:var(--text2);margin-bottom:24px">O LoggZap precisa de um token de acesso para ler os dados da sua loja. Siga os passos abaixo para gerá-lo:</p>
+
+    <div class="chave-box">
+      <h3>Como gerar o Token de acesso</h3>
+      <ul class="chave-steps">
+        <li data-n="1">Acesse o painel da sua loja em <strong>minhaloja.nuvemshop.com.br/admin</strong></li>
+        <li data-n="2">No menu lateral, vá em <strong>Meus aplicativos → Seus aplicativos</strong></li>
+        <li data-n="3">Clique em <strong>Criar aplicativo</strong> ou procure o LoggZap na lista de aplicativos instalados</li>
+        <li data-n="4">Clique em <strong>Autenticar aplicativo</strong> ou <strong>Instalar</strong></li>
+        <li data-n="5">Você será redirecionado para uma página de autorização — clique em <strong>Aceitar</strong></li>
+        <li data-n="6">O sistema gerará automaticamente um <strong>Token de acesso</strong>. Copie esse token — você vai precisar dele no próximo passo.</li>
+      </ul>
+    </div>
+  </div>
+
+  <div class="divider"></div>
+
+  <!-- PARTE 3: CONFIGURAR -->
+  <div class="section">
+    <h2>Parte 3 — Configurar o LoggZap</h2>
+    <div class="steps">
+      <div class="step">
+        <div class="step-num">1</div>
+        <div class="step-body">
+          <h3>Abra o painel do LoggZap</h3>
+          <p>Clique no ícone do LoggZap na barra do Chrome. O painel lateral vai abrir com a tela de configuração.</p>
+        </div>
+      </div>
+      <div class="step">
+        <div class="step-num">2</div>
+        <div class="step-body">
+          <h3>Preencha os dados de configuração</h3>
+          <p>Preencha os campos:<br>
+          • <strong>URL do Backend:</strong> <code>https://rastreiobot-production-e904.up.railway.app</code><br>
+          • <strong>Store ID:</strong> o número da sua loja Nuvemshop (aparece na URL do painel)<br>
+          • <strong>Chave Secreta:</strong> fornecida no email de boas-vindas<br>
+          • <strong>Token Nuvemshop:</strong> o token gerado na Parte 2</p>
+        </div>
+      </div>
+      <div class="step">
+        <div class="step-num">3</div>
+        <div class="step-body">
+          <h3>Clique em Salvar e começar</h3>
+          <p>O dashboard vai carregar automaticamente os dados da sua loja. Seu período de trial de 7 dias começa agora.</p>
+        </div>
+      </div>
+      <div class="step">
+        <div class="step-num">4</div>
+        <div class="step-body">
+          <h3>Ative sua licença (após o trial)</h3>
+          <p>Após o pagamento, você receberá uma chave no formato <code>LZB-XXXX-XXXX-XXXX</code> por email. Vá em <strong>Configurações → Ativar chave</strong> e cole a chave para ativar seu plano.</p>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <div class="tip">
+    <div class="tip-title">💡 Onde encontro meu Store ID?</div>
+    <p>Acesse o painel da sua loja Nuvemshop. Olhe para a URL do navegador — ela será algo como <code>minhaloja.nuvemshop.com.br/admin/...</code>. O Store ID também aparece na URL da API quando você gera o token.</p>
+  </div>
+
+  <div class="footer">
+    <p>Dúvidas? Entre em contato: <a href="mailto:contato@loggzap.com.br">contato@loggzap.com.br</a></p>
+    <p style="margin-top:8px">© 2026 LoggZap Dashboard</p>
+  </div>
+
+</div>
+</body>
+</html>
