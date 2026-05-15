@@ -8,27 +8,8 @@ const cron    = require('node-cron');
 const path    = require('path');
 const db      = require('./db');
 
-// Migração: garantir tabelas licencas e auth_sessions existem
-try {
-  db.prepare(`CREATE TABLE IF NOT EXISTS licencas (
-    chave      TEXT PRIMARY KEY,
-    plano      TEXT NOT NULL,
-    store_id   TEXT,
-    payment_id TEXT,
-    status     TEXT DEFAULT 'ativa',
-    expira_em  TEXT NOT NULL,
-    created_at TEXT DEFAULT (datetime('now'))
-  )`).run();
-} catch(e) {}
-
-try {
-  db.prepare(`CREATE TABLE IF NOT EXISTS auth_sessions (
-    code       TEXT PRIMARY KEY,
-    store_id   TEXT,
-    status     TEXT DEFAULT 'pending',
-    created_at TEXT DEFAULT (datetime('now'))
-  )`).run();
-} catch(e) {}
+// Migração: criar tabelas novas no banco existente
+db.migrar();
 
 const app = express();
 app.use(express.json());
