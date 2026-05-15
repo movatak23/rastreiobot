@@ -733,11 +733,15 @@ app.get('/dashboard/:storeId', auth, async (req, res) => {
 app.get('/dashboard-nuvem/:storeId', auth, async (req, res) => {
   const { storeId } = req.params;
   try {
-    const hoje = new Date();
-    const inicioDia    = new Date(hoje.getFullYear(), hoje.getMonth(), hoje.getDate()).toISOString();
-    const inicioOntem  = new Date(hoje.getFullYear(), hoje.getMonth(), hoje.getDate() - 1).toISOString();
-    const inicioSemana = new Date(hoje.getFullYear(), hoje.getMonth(), hoje.getDate() - hoje.getDay()).toISOString();
-    const inicioMes    = new Date(hoje.getFullYear(), hoje.getMonth(), 1).toISOString();
+    // Railway em UTC — meia-noite BRT = 03:00 UTC
+    const _agora = new Date();
+    const _brt = new Date(_agora.getTime() - 3 * 60 * 60 * 1000);
+    const _ano = _brt.getUTCFullYear(), _mes = _brt.getUTCMonth(), _dia = _brt.getUTCDate();
+    const _brtIso = (y, m, d) => new Date(Date.UTC(y, m, d, 3, 0, 0)).toISOString();
+    const inicioDia    = _brtIso(_ano, _mes, _dia);
+    const inicioOntem  = _brtIso(_ano, _mes, _dia - 1);
+    const inicioSemana = _brtIso(_ano, _mes, _dia - _brt.getUTCDay());
+    const inicioMes    = _brtIso(_ano, _mes, 1);
 
     const nuvemSafe = async (path, params) => {
       try { return await nuvemGet(storeId, path, params); }
@@ -748,7 +752,6 @@ app.get('/dashboard-nuvem/:storeId', auth, async (req, res) => {
       }
     };
 
-    console.log('[Dashboard] inicioDia:', inicioDia, 'inicioMes:', inicioMes);
     const [pedidosHoje, pedidosOntem, pedidosSemana, pedidosMes] = await Promise.all([
       nuvemSafe('/orders', { created_at_min: inicioDia,   per_page: 200, fields: 'id,number,total,payment_status,shipping_status,shipping_cost_owner,products,created_at,customer' }),
       nuvemSafe('/orders', { created_at_min: inicioOntem, created_at_max: inicioDia, per_page: 200, fields: 'id,number,total,payment_status,shipping_cost_owner,created_at' }),
