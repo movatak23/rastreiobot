@@ -799,9 +799,12 @@ app.get('/dashboard-nuvem/:storeId', auth, async (req, res) => {
     const horaPico = picoPar ? `${String(picoPar[0]).padStart(2,'0')}h` : null;
 
     // Semana e mês
-    const totalSemana = pagosSemana.reduce((s, p) => s + parseFloat(p.total || 0), 0);
-    const totalMes    = pagosMes.reduce((s, p) => s + parseFloat(p.total || 0), 0);
-    const freteMes    = pagosMes.reduce((s, p) => s + parseFloat(p.shipping_cost_owner || 0), 0);
+    const totalSemana  = pagosSemana.reduce((s, p) => s + parseFloat(p.total || 0), 0);
+    const freteSemana  = pagosSemana.reduce((s, p) => s + parseFloat(p.shipping_cost_owner || 0), 0);
+    const totalMes     = pagosMes.reduce((s, p) => s + parseFloat(p.total || 0), 0);
+    const freteMes     = pagosMes.reduce((s, p) => s + parseFloat(p.shipping_cost_owner || 0), 0);
+    const ticketSemana = pagosSemana.length > 0 ? totalSemana / pagosSemana.length : 0;
+    const ticketMes    = pagosMes.length    > 0 ? totalMes    / pagosMes.length    : 0;
 
     // Últimos 5 pedidos de hoje
     const ultimos = pedidosHoje.slice(0, 5).map(p => ({
@@ -838,6 +841,8 @@ app.get('/dashboard-nuvem/:storeId', auth, async (req, res) => {
       },
       semana: { qtd: pagosSemana.length, total: totalSemana },
       mes:    { qtd: pagosMes.length, total: totalMes, frete: freteMes },
+      semana_det: { qtd: pagosSemana.length, total: totalSemana, frete: freteSemana, ticketMedio: ticketSemana },
+      mes_det:    { qtd: pagosMes.length,    total: totalMes,    frete: freteMes,    ticketMedio: ticketMes    },
       ultimos,
       score,
       atualizadoEm: new Date().toLocaleTimeString('pt-BR', { hour:'2-digit', minute:'2-digit', timeZone:'America/Recife' })
