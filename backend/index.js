@@ -8,7 +8,7 @@ const cron    = require('node-cron');
 const path    = require('path');
 const db      = require('./db');
 
-// Migração: tabelas de licenças e auth_sessions
+// Migração: garantir tabelas licencas e auth_sessions existem
 try {
   db.prepare(`CREATE TABLE IF NOT EXISTS licencas (
     chave      TEXT PRIMARY KEY,
@@ -21,7 +21,6 @@ try {
   )`).run();
 } catch(e) {}
 
-// Migração: garantir tabela auth_sessions existe
 try {
   db.prepare(`CREATE TABLE IF NOT EXISTS auth_sessions (
     code       TEXT PRIMARY KEY,
@@ -29,7 +28,7 @@ try {
     status     TEXT DEFAULT 'pending',
     created_at TEXT DEFAULT (datetime('now'))
   )`).run();
-} catch(e) { console.log('[DB] auth_sessions já existe.'); }
+} catch(e) {}
 
 const app = express();
 app.use(express.json());
