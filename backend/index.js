@@ -867,7 +867,10 @@ function criarTransporter() {
     host: SMTP_HOST || 'smtp.gmail.com',
     port: parseInt(SMTP_PORT || '587'),
     secure: false,
-    auth: { user: SMTP_USER, pass: SMTP_PASS }
+    auth: { user: SMTP_USER, pass: SMTP_PASS },
+    connectionTimeout: 10000,
+    greetingTimeout: 10000,
+    socketTimeout: 10000
   });
 }
 
@@ -995,8 +998,18 @@ app.post('/teste/email', auth, async (req, res) => {
     const chave = gerarChave(plano);
     const expiraEm = new Date(Date.now() + 30 * 24 * 60 * 60 * 1000).toISOString();
     db.criarLicenca(chave, plano, null, 1);
-    await enviarChavePorEmail(email, chave, plano, expiraEm);
-    res.json({ success: true, chave, mensagem: 'Email enviado com sucesso.' });
+    // Tenta enviar email com timeout
+    let emailEnviado = false;
+    try {
+      await Promise.race([
+        enviarChavePorEmail(email, chave, plano, expiraEm),
+        new Promise((_, rej) => setTimeout(() => rej(new Error('timeout')), 12000))
+      ]);
+      emailEnviado = true;
+    } catch(emailErr) {
+      console.error('[Teste Email] Falha no envio:', emailErr.message);
+    }
+    res.json({ success: true, chave, emailEnviado, mensagem: emailEnviado ? 'Email enviado!' : 'Licenca criada mas email falhou. Use a chave manualmente.' });
   } catch(e) {
     console.error('[Teste Email]', e.message);
     res.status(500).json({ success: false, error: e.message });
