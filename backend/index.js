@@ -733,19 +733,18 @@ app.get('/dashboard/:storeId', auth, async (req, res) => {
 app.get('/dashboard-nuvem/:storeId', auth, async (req, res) => {
   const { storeId } = req.params;
   try {
-    // Datas em BRT (UTC-3) — Nuvemshop usa ISO com offset
+    // Datas: meia-noite BRT = 03:00 UTC — Nuvemshop aceita ISO UTC
     const agora = new Date();
-    const brt = new Date(agora.getTime() - 3 * 60 * 60 * 1000); // subtrai 3h para ter hora BRT
-    const pad = n => String(n).padStart(2,'0');
-    const ano  = brt.getUTCFullYear();
-    const mes  = brt.getUTCMonth();
-    const dia  = brt.getUTCDate();
+    const brt = new Date(agora.getTime() - 3 * 60 * 60 * 1000);
+    const ano = brt.getUTCFullYear();
+    const mes = brt.getUTCMonth();
+    const dia = brt.getUTCDate();
     const diaSemana = brt.getUTCDay();
-    const fmtBRT = (y, m, d) => `${y}-${pad(m+1)}-${pad(d)}T00:00:00-03:00`;
-    const inicioDia    = fmtBRT(ano, mes, dia);
-    const inicioOntem  = fmtBRT(ano, mes, dia - 1);
-    const inicioSemana = fmtBRT(ano, mes, dia - diaSemana);
-    const inicioMes    = fmtBRT(ano, mes, 1);
+    const meiaNiuteBRT = (y, m, d) => new Date(Date.UTC(y, m, d, 3, 0, 0)).toISOString();
+    const inicioDia    = meiaNiuteBRT(ano, mes, dia);
+    const inicioOntem  = meiaNiuteBRT(ano, mes, dia - 1);
+    const inicioSemana = meiaNiuteBRT(ano, mes, dia - diaSemana);
+    const inicioMes    = meiaNiuteBRT(ano, mes, 1);
 
     const nuvemSafe = async (path, params) => {
       try { return await nuvemGet(storeId, path, params); }
