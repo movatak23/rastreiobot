@@ -12,6 +12,16 @@ const db      = require('./db');
 // Migração: criar tabelas novas no banco existente
 db.migrar();
 
+// Tabela de leads (cadastros do site)
+db.run(`CREATE TABLE IF NOT EXISTS leads (
+  id INTEGER PRIMARY KEY AUTOINCREMENT,
+  nome TEXT NOT NULL,
+  email TEXT,
+  whatsapp TEXT,
+  plano TEXT DEFAULT 'trial',
+  created_at TEXT
+)`, () => {});
+
 const app = express();
 app.use(express.json());
 app.use(cors({ origin: '*' }));
@@ -753,10 +763,10 @@ app.get('/dashboard-nuvem/:storeId', auth, async (req, res) => {
     };
 
     const [pedidosHoje, pedidosOntem, pedidosSemana, pedidosMes] = await Promise.all([
-      nuvemSafe('/orders', { created_at_min: inicioDia,    per_page: 200 }),
-      nuvemSafe('/orders', { created_at_min: inicioOntem,  created_at_max: inicioDia, per_page: 200 }),
-      nuvemSafe('/orders', { created_at_min: inicioSemana, per_page: 200 }),
-      nuvemSafe('/orders', { created_at_min: inicioMes,    per_page: 200 })
+      nuvemSafe('/orders', { created_at_min: inicioDia,   per_page: 200, fields: 'id,number,total,payment_status,shipping_status,shipping_cost_owner,products,created_at,customer' }),
+      nuvemSafe('/orders', { created_at_min: inicioOntem, created_at_max: inicioDia, per_page: 200, fields: 'id,number,total,payment_status,shipping_cost_owner,created_at' }),
+      nuvemSafe('/orders', { created_at_min: inicioSemana, per_page: 200, fields: 'id,total,payment_status,shipping_cost_owner' }),
+      nuvemSafe('/orders', { created_at_min: inicioMes,   per_page: 200, fields: 'id,total,payment_status,shipping_cost_owner,created_at' })
     ]);
 
     // Filtra pedidos pagos (exclui cancelados e pendentes)
@@ -977,6 +987,95 @@ app.get('/licenca/status/:storeId', auth, (req, res) => {
   if (new Date(lic.expira_em) < new Date()) return res.json({ plano: 'trial', valida: false, motivo: 'expirada' });
   res.json({ plano: lic.plano, valida: true, expira_em: lic.expira_em });
 });
+
+// ── Cadastro de novo usuário ──────────────────────────────────────────────────
+app.post('/cadastro', async (req, res) => {
+  const { nome, email, whatsapp, plano } = req.body;
+  if (!nome || !email) return res.status(400).json({ error: 'Nome e email são obrigatórios.' });
+
+  try {
+    const resend = new Resend(process.env.RESEND_API_KEY);
+
+    // Email com extensão + manual
+    await resend.emails.send({
+      from: 'LoggZap <contato@loggzap.com.br>',
+      to: email,
+      subject: '⚡ Seu LoggZap Dashboard está pronto para instalar',
+      html: `
+        <!DOCTYPE html>
+        <html lang="pt-BR">
+        <head><meta charset="UTF-8"><meta name="viewport" content="width=device-width,initial-scale=1.0"></head>
+        <body style="margin:0;padding:0;background:#07090e;font-family:'DM Sans',Arial,sans-serif;color:#eef0f8">
+          <div style="max-width:600px;margin:0 auto;padding:40px 24px">
+            <div style="text-align:center;margin-bottom:36px">
+              <span style="font-size:32px;font-weight:800">Logg<span style="color:#00d084">Zap</span></span>
+            </div>
+            <div style="background:#0c0f16;border:1px solid rgba(255,255,255,0.07);border-radius:14px;padding:32px">
+              <h1 style="font-size:22px;font-weight:700;margin:0 0 12px">Olá, ${nome}! 👋</h1>
+              <p style="color:#8b93a8;font-size:15px;line-height:1.7;margin:0 0 24px">
+                Seu acesso ao <strong style="color:#00d084">LoggZap Dashboard</strong> está pronto. 
+                Siga os passos abaixo para instalar em menos de 5 minutos.
+              </p>
+              
+              <div style="background:#11151e;border-radius:10px;padding:20px;margin-bottom:24px">
+                <div style="font-size:12px;font-weight:700;letter-spacing:2px;color:#00d084;text-transform:uppercase;margin-bottom:12px">Passo 1 — Baixe a extensão</div>
+                <p style="color:#8b93a8;font-size:14px;margin:0 0 16px">Clique no botão abaixo para baixar o arquivo da extensão:</p>
+                <a href="${process.env.APP_URL}/download/extensao" style="display:inline-block;background:#00d084;color:#000;padding:12px 28px;border-radius:8px;text-decoration:none;font-weight:700;font-size:14px">⬇️ Baixar LoggZap v2.6</a>
+              </div>
+
+              <div style="background:#11151e;border-radius:10px;padding:20px;margin-bottom:24px">
+                <div style="font-size:12px;font-weight:700;letter-spacing:2px;color:#00d084;text-transform:uppercase;margin-bottom:12px">Passo 2 — Leia o manual</div>
+                <p style="color:#8b93a8;font-size:14px;margin:0 0 16px">O manual completo de instalação está disponível online:</p>
+                <a href="${process.env.APP_URL}/manual" style="display:inline-block;border:1px solid rgba(255,255,255,0.15);color:#eef0f8;padding:12px 28px;border-radius:8px;text-decoration:none;font-weight:600;font-size:14px">📖 Ver manual de instalação</a>
+              </div>
+
+              <div style="background:#11151e;border-radius:10px;padding:20px">
+                <div style="font-size:12px;font-weight:700;letter-spacing:2px;color:#00d084;text-transform:uppercase;margin-bottom:12px">Dados de configuração</div>
+                <p style="color:#8b93a8;font-size:14px;margin:0 0 8px">Use estes dados quando for configurar a extensão:</p>
+                <div style="background:#07090e;border-radius:6px;padding:14px;font-family:monospace;font-size:13px;color:#00d084">
+                  URL do Backend: https://rastreiobot-production-e904.up.railway.app<br>
+                  Chave Secreta: MinhaChave2024Secreta
+                </div>
+              </div>
+            </div>
+
+            <div style="text-align:center;margin-top:32px">
+              <p style="color:#424a61;font-size:13px">Seu trial de 7 dias começa quando você instalar a extensão.</p>
+              <p style="color:#424a61;font-size:13px;margin-top:8px">Dúvidas? <a href="mailto:contato@loggzap.com.br" style="color:#00d084">contato@loggzap.com.br</a></p>
+            </div>
+          </div>
+        </body>
+        </html>
+      `
+    });
+
+    // Salvar lead no banco
+    db.run(
+      'INSERT OR IGNORE INTO leads (nome, email, whatsapp, plano, created_at) VALUES (?, ?, ?, ?, datetime("now"))',
+      [nome, email, whatsapp || '', plano || 'trial'],
+      () => {}
+    );
+
+    res.json({ success: true });
+  } catch(e) {
+    console.error('[Cadastro] Erro:', e.message);
+    res.status(500).json({ error: 'Erro ao enviar email. Tente novamente.' });
+  }
+});
+
+// ── Download da extensão ──────────────────────────────────────────────────────
+app.get('/download/extensao', (req, res) => {
+  const path = require('path');
+  const file = path.join(__dirname, 'public', 'LoggZap_v2.6.zip');
+  res.download(file, 'LoggZap_Dashboard_v2.6.zip');
+});
+
+// ── Manual de instalação ──────────────────────────────────────────────────────
+app.get('/manual', (req, res) => {
+  const path = require('path');
+  res.sendFile(path.join(__dirname, 'public', 'manual-loggzap.html'));
+});
+
 
 // ── Paginas de retorno do checkout ───────────────────────────────────────────
 app.get('/checkout/sucesso', (req, res) => {
