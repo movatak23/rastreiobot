@@ -1017,7 +1017,7 @@ app.post('/teste/email', auth, async (req, res) => {
 });
 
 // ── Diagnóstico Nuvemshop ─────────────────────────────────────────────────────
-app.get('/diagnostico/:storeId', auth, async (req, res) => {
+app.get('/diagnostico/:storeId', async (req, res) => {
   const { storeId } = req.params;
   try {
     const row = db.getToken(storeId);
