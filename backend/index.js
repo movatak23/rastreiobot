@@ -750,11 +750,12 @@ app.get('/dashboard-nuvem/:storeId', auth, async (req, res) => {
       }
     };
 
+    const camposBase = 'id,number,total,payment_status,shipping_status,shipping_cost_owner,products,created_at,customer';
     let pedidosHoje = [], pedidosOntem = [], pedidosSemana = [], pedidosMes = [];
-    pedidosHoje   = await nuvemSafe('/orders', { created_at_min: inicioDia, per_page: 200 });
-    pedidosOntem  = await nuvemSafe('/orders', { created_at_min: inicioOntem, created_at_max: inicioDia, per_page: 200 });
-    pedidosSemana = await nuvemSafe('/orders', { created_at_min: inicioSemana, per_page: 200 });
-    pedidosMes    = await nuvemSafe('/orders', { created_at_min: inicioMes, per_page: 200 });
+    pedidosHoje   = await nuvemSafe('/orders', { payment_status: 'paid', created_at_min: inicioDia,    per_page: 200, fields: camposBase });
+    pedidosOntem  = await nuvemSafe('/orders', { payment_status: 'paid', created_at_min: inicioOntem,  created_at_max: inicioDia, per_page: 200, fields: camposBase });
+    pedidosSemana = await nuvemSafe('/orders', { payment_status: 'paid', created_at_min: inicioSemana, per_page: 200, fields: camposBase });
+    pedidosMes    = await nuvemSafe('/orders', { payment_status: 'paid', created_at_min: inicioMes,    per_page: 200, fields: camposBase });
 
     // Filtra pedidos pagos (exclui cancelados e pendentes)
     const pagosHoje   = pedidosHoje.filter(p => p.payment_status === 'paid');
