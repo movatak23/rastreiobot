@@ -754,10 +754,10 @@ app.get('/dashboard-nuvem/:storeId', auth, async (req, res) => {
     };
 
     const [pedidosHoje, pedidosOntem, pedidosSemana, pedidosMes] = await Promise.all([
-      nuvemSafe('/orders', { created_at_min: inicioDia,   per_page: 200, fields: 'id,number,total,payment_status,shipping_status,shipping_cost_owner,products,created_at,customer' }),
-      nuvemSafe('/orders', { created_at_min: inicioOntem, created_at_max: inicioDia, per_page: 200, fields: 'id,number,total,payment_status,shipping_cost_owner,created_at' }),
-      nuvemSafe('/orders', { created_at_min: inicioSemana, per_page: 200, fields: 'id,total,payment_status,shipping_cost_owner' }),
-      nuvemSafe('/orders', { created_at_min: inicioMes,   per_page: 200, fields: 'id,total,payment_status,shipping_cost_owner,created_at' })
+      nuvemSafe('/orders', { created_at_min: inicioDia,    per_page: 200 }),
+      nuvemSafe('/orders', { created_at_min: inicioOntem,  created_at_max: inicioDia, per_page: 200 }),
+      nuvemSafe('/orders', { created_at_min: inicioSemana, per_page: 200 }),
+      nuvemSafe('/orders', { created_at_min: inicioMes,    per_page: 200 })
     ]);
 
     // Filtra pedidos pagos (exclui cancelados e pendentes)
