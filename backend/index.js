@@ -1,6 +1,7 @@
 require('dotenv').config();
 const nodemailer = require('nodemailer');
 const crypto     = require('crypto');
+const { Resend } = require('resend');
 const express = require('express');
 const axios   = require('axios');
 const cors    = require('cors');
@@ -861,24 +862,12 @@ app.get('/auth/status', (req, res) => {
 });
 
 
-// ── Email ─────────────────────────────────────────────────────────────────────
-function criarTransporter() {
-  return nodemailer.createTransport({
-    host: SMTP_HOST || 'smtp.gmail.com',
-    port: parseInt(SMTP_PORT || '587'),
-    secure: false,
-    auth: { user: SMTP_USER, pass: SMTP_PASS },
-    connectionTimeout: 10000,
-    greetingTimeout: 10000,
-    socketTimeout: 10000
-  });
-}
-
+// ── Email via Resend ──────────────────────────────────────────────────────────
 async function enviarChavePorEmail(email, chave, plano, expiraEm) {
-  const transporter = criarTransporter();
+  const resend = new Resend(process.env.RESEND_API_KEY);
   const expira = new Date(expiraEm).toLocaleDateString('pt-BR');
-  await transporter.sendMail({
-    from: '"LoggZap" <' + SMTP_USER + '>',
+  await resend.emails.send({
+    from: 'LoggZap <contato@loggzap.com.br>',
     to: email,
     subject: 'Sua chave de ativacao LoggZap',
     html: '<div style="font-family:sans-serif;max-width:500px;margin:0 auto;background:#0d0d10;color:#ededf2;padding:32px;border-radius:12px">' +
@@ -886,7 +875,7 @@ async function enviarChavePorEmail(email, chave, plano, expiraEm) {
       '<p>Seu pagamento foi confirmado! Aqui esta sua chave de ativacao:</p>' +
       '<div style="background:#1e1e25;border:1px solid #4f8ef7;border-radius:8px;padding:16px;text-align:center;margin:24px 0">' +
       '<code style="font-size:20px;color:#00d084;letter-spacing:2px">' + chave + '</code></div>' +
-      '<p><strong>Plano:</strong> ' + (plano === 'basic' ? 'Basic' : 'Premium') + '</p>' +
+      '<p><strong>Plano:</strong> ' + (plano === 'basic' ? 'Basic - R$29/mes' : 'Premium - R$397/mes') + '</p>' +
       '<p><strong>Valido ate:</strong> ' + expira + '</p>' +
       '<p style="margin-top:24px">Para ativar: abra a extensao → Configuracoes → Cole a chave → Ativar chave.</p>' +
       '<hr style="border-color:#2a2a35;margin:24px 0">' +
