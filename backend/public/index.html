@@ -1,0 +1,669 @@
+<!DOCTYPE html>
+<html lang="pt-BR">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>LoggZap Dashboard — Sua loja Nuvemshop em tempo real</title>
+<meta name="description" content="Dashboard inteligente com automação completa via WhatsApp para lojas Nuvemshop.">
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link href="https://fonts.googleapis.com/css2?family=Syne:wght@400;600;700;800&family=DM+Sans:wght@300;400;500&display=swap" rel="stylesheet">
+<style>
+  :root {
+    --bg:#07090e;--bg2:#0c0f16;--bg3:#11151e;
+    --green:#00d084;--green2:#00b872;--gdim:rgba(0,208,132,0.1);
+    --blue:#4f8ef7;--bdim:rgba(79,142,247,0.12);
+    --text:#eef0f8;--text2:#8b93a8;--text3:#424a61;
+    --border:rgba(255,255,255,0.06);--border2:rgba(255,255,255,0.12);
+  }
+  *,*::before,*::after{box-sizing:border-box;margin:0;padding:0}
+  html{scroll-behavior:smooth}
+  body{background:var(--bg);color:var(--text);font-family:'DM Sans',sans-serif;font-size:16px;line-height:1.6;overflow-x:hidden}
+  .orb{position:fixed;border-radius:50%;filter:blur(130px);pointer-events:none;z-index:0}
+  .o1{width:700px;height:700px;background:var(--green);opacity:.06;top:-250px;right:-150px}
+  .o2{width:500px;height:500px;background:var(--blue);opacity:.05;bottom:100px;left:-150px}
+  .wrap{max-width:1100px;margin:0 auto;padding:0 28px;position:relative;z-index:1}
+
+  /* NAV */
+  nav{position:fixed;top:0;left:0;right:0;z-index:100;padding:14px 0;background:rgba(7,9,14,.88);backdrop-filter:blur(24px);border-bottom:1px solid var(--border)}
+  nav .wrap{display:flex;align-items:center;justify-content:space-between}
+  .nlogo{font-family:'Syne',sans-serif;font-weight:800;font-size:20px;color:var(--text);text-decoration:none}
+  .nlogo span{color:var(--green)}
+  .nlinks{display:flex;align-items:center;gap:28px}
+  .nlinks a{font-size:14px;color:var(--text2);text-decoration:none;transition:color .2s}
+  .nlinks a:hover{color:var(--text)}
+  .nbtn{background:var(--green);color:#000;padding:10px 22px;border-radius:8px;font-weight:700;font-size:14px;text-decoration:none;transition:opacity .2s}
+  .nbtn:hover{opacity:.85}
+
+  /* HERO */
+  .hero{padding:160px 0 80px;text-align:center}
+  .badge{display:inline-flex;align-items:center;gap:8px;background:var(--gdim);border:1px solid rgba(0,208,132,.25);padding:6px 18px;border-radius:100px;font-size:12px;font-weight:600;letter-spacing:.5px;color:var(--green);margin-bottom:36px;animation:fu .5s ease both}
+  .pulse{width:6px;height:6px;border-radius:50%;background:var(--green);animation:pl 2s infinite;flex-shrink:0}
+  @keyframes pl{0%,100%{opacity:1;transform:scale(1)}50%{opacity:.5;transform:scale(1.4)}}
+  h1{font-family:'Syne',sans-serif;font-size:clamp(44px,6.5vw,88px);font-weight:800;line-height:1.02;letter-spacing:-3px;margin-bottom:28px;animation:fu .5s .1s ease both}
+  h1 .g{color:var(--green)}
+  h1 .d{color:var(--text2)}
+  .hero p{font-size:20px;color:var(--text2);max-width:580px;margin:0 auto 52px;line-height:1.65;animation:fu .5s .2s ease both}
+  .hbtns{display:flex;align-items:center;justify-content:center;gap:14px;flex-wrap:wrap;animation:fu .5s .3s ease both}
+  .btnp{display:inline-flex;align-items:center;gap:8px;background:var(--green);color:#000;padding:16px 32px;border-radius:10px;font-weight:700;font-size:16px;text-decoration:none;transition:transform .2s,box-shadow .2s;box-shadow:0 0 48px rgba(0,208,132,.3)}
+  .btnp:hover{transform:translateY(-2px);box-shadow:0 0 72px rgba(0,208,132,.45)}
+  .btng{display:inline-flex;align-items:center;gap:8px;border:1px solid var(--border2);color:var(--text2);padding:16px 32px;border-radius:10px;font-weight:500;font-size:16px;text-decoration:none;transition:border-color .2s,color .2s}
+  .btng:hover{border-color:var(--green);color:var(--text)}
+  .hvis{margin-top:72px;animation:fu .5s .4s ease both}
+  .hvisw{border-radius:16px;overflow:hidden;border:1px solid rgba(0,208,132,.12);box-shadow:0 40px 120px rgba(0,0,0,.7),0 0 80px rgba(0,208,132,.07);background:var(--bg2);aspect-ratio:16/9;display:flex;align-items:center;justify-content:center}
+  .ph{display:flex;flex-direction:column;align-items:center;gap:10px;color:var(--text3)}
+  .ph .ic{font-size:52px;opacity:.25}
+  .ph span{font-size:13px;opacity:.35}
+  @keyframes fu{from{opacity:0;transform:translateY(28px)}to{opacity:1;transform:translateY(0)}}
+
+  /* PROOF */
+  .proof{padding:52px 0;border-top:1px solid var(--border);border-bottom:1px solid var(--border)}
+  .proof .wrap{display:flex;align-items:center;justify-content:center;gap:52px;flex-wrap:wrap}
+  .stat{text-align:center}
+  .sn{font-family:'Syne',sans-serif;font-size:40px;font-weight:800;line-height:1}
+  .sn .g{color:var(--green)}
+  .sl{font-size:11px;color:var(--text3);margin-top:6px;max-width:140px}
+  .sdiv{width:1px;height:52px;background:var(--border)}
+
+  /* SECTIONS */
+  .sec{padding:100px 0}
+  .stag{display:inline-block;font-size:11px;font-weight:700;letter-spacing:2.5px;text-transform:uppercase;color:var(--green);margin-bottom:14px}
+  .sh{font-family:'Syne',sans-serif;font-size:clamp(34px,4vw,56px);font-weight:800;line-height:1.08;letter-spacing:-1.5px;margin-bottom:20px}
+  .sh .g{color:var(--green)}
+  .sh .b{color:var(--blue)}
+  .sub{font-size:18px;color:var(--text2);max-width:560px;line-height:1.65}
+
+  /* Dores */
+  .dores{display:grid;grid-template-columns:repeat(auto-fit,minmax(240px,1fr));gap:14px;margin-top:48px}
+  .dore{background:var(--bg2);border:1px solid var(--border);border-radius:12px;padding:24px;display:flex;gap:14px}
+  .dic{font-size:22px;flex-shrink:0;margin-top:2px}
+  .dore h4{font-size:14px;font-weight:600;margin-bottom:6px}
+  .dore p{font-size:13px;color:var(--text3);line-height:1.6}
+
+  /* Features */
+  .feats{display:flex;flex-direction:column;gap:80px;margin-top:64px}
+  .feat{display:grid;grid-template-columns:1fr 1fr;gap:64px;align-items:center}
+  .feat.r{direction:rtl}
+  .feat.r>*{direction:ltr}
+  .ftag{font-size:11px;font-weight:700;letter-spacing:2px;text-transform:uppercase;color:var(--green);margin-bottom:10px;display:block}
+  .feat h3{font-family:'Syne',sans-serif;font-size:28px;font-weight:700;line-height:1.2;letter-spacing:-.5px;margin-bottom:14px}
+  .feat p{font-size:15px;color:var(--text2);line-height:1.7;margin-bottom:20px}
+  .checks{list-style:none;display:flex;flex-direction:column;gap:10px}
+  .checks li{display:flex;align-items:flex-start;gap:10px;font-size:14px;color:var(--text2);line-height:1.5}
+  .checks li::before{content:'✓';color:var(--green);font-weight:800;font-size:11px;background:var(--gdim);border-radius:50%;width:20px;height:20px;display:flex;align-items:center;justify-content:center;flex-shrink:0;margin-top:1px}
+  .fimg{border-radius:14px;overflow:hidden;border:1px solid var(--border);background:var(--bg2);aspect-ratio:4/3;display:flex;align-items:center;justify-content:center;box-shadow:0 20px 60px rgba(0,0,0,.5)}
+
+  /* Dados */
+  .dados{background:var(--bg2);padding:100px 0}
+  .dgrid{display:grid;grid-template-columns:repeat(auto-fit,minmax(220px,1fr));gap:20px;margin-top:56px}
+  .dcard{background:var(--bg3);border:1px solid var(--border);border-radius:14px;padding:28px 24px;position:relative;overflow:hidden}
+  .dcard::before{content:'';position:absolute;top:0;left:0;right:0;height:2px;background:linear-gradient(90deg,var(--green),transparent)}
+  .dnum{font-family:'Syne',sans-serif;font-size:44px;font-weight:800;color:var(--green);line-height:1;margin-bottom:8px}
+  .ddesc{font-size:14px;color:var(--text2);line-height:1.5;margin-bottom:12px}
+  .dfonte{font-size:11px;color:var(--text3)}
+
+  /* Premium */
+  .prem{padding:100px 0;background:radial-gradient(ellipse 80% 60% at 50% 0%,rgba(79,142,247,.07) 0%,transparent 70%);border-top:1px solid rgba(79,142,247,.12);border-bottom:1px solid rgba(79,142,247,.12)}
+  .ptag{display:inline-flex;align-items:center;gap:8px;background:var(--bdim);border:1px solid rgba(79,142,247,.3);padding:6px 18px;border-radius:100px;font-size:12px;font-weight:700;letter-spacing:1px;text-transform:uppercase;color:var(--blue);margin-bottom:24px}
+  .prem .sh{margin-bottom:16px}
+  .prem .sh span{color:var(--blue)}
+  .prem .sub{margin-bottom:20px}
+  .pdes{display:inline-block;background:var(--bdim);border:1px solid rgba(79,142,247,.22);padding:12px 20px;border-radius:8px;font-size:16px;font-weight:600;color:var(--blue);margin-bottom:52px}
+
+  .pflw{display:grid;grid-template-columns:repeat(auto-fit,minmax(165px,1fr));gap:0;margin-bottom:56px;border:1px solid rgba(79,142,247,.18);border-radius:14px;overflow:hidden}
+  .pfs{padding:24px 20px;border-right:1px solid rgba(79,142,247,.12)}
+  .pfs:last-child{border-right:none}
+  .pfn{font-family:'Syne',sans-serif;font-size:38px;font-weight:800;color:rgba(79,142,247,.18);line-height:1;margin-bottom:8px}
+  .pfs h4{font-size:13px;font-weight:700;color:var(--text);margin-bottom:5px}
+  .pfs p{font-size:12px;color:var(--text3);line-height:1.6}
+  .pauto{display:inline-block;margin-top:8px;font-size:10px;font-weight:700;letter-spacing:1px;text-transform:uppercase;color:var(--blue);background:var(--bdim);padding:2px 8px;border-radius:4px}
+
+  .pfts{display:grid;grid-template-columns:repeat(auto-fit,minmax(300px,1fr));gap:16px}
+  .pfc{background:var(--bg3);border:1px solid rgba(79,142,247,.12);border-radius:12px;padding:24px}
+  .pfch{display:flex;align-items:center;gap:12px;margin-bottom:12px}
+  .pfic{font-size:26px}
+  .pfc h4{font-size:15px;font-weight:700;color:var(--text)}
+  .pfc p{font-size:13px;color:var(--text3);line-height:1.65}
+
+  /* Planos */
+  .planos{padding:100px 0}
+  .pgrid{display:grid;grid-template-columns:1fr 1fr 1fr;gap:20px;margin-top:56px;align-items:start}
+  .plano{background:var(--bg2);border:1px solid var(--border);border-radius:16px;padding:32px 28px;position:relative;transition:transform .2s}
+  .plano:hover{transform:translateY(-4px)}
+  .plano.pp{background:linear-gradient(135deg,rgba(79,142,247,.07) 0%,var(--bg2) 50%);border:2px solid var(--blue);transform:scale(1.04);box-shadow:0 0 80px rgba(79,142,247,.15),0 24px 60px rgba(0,0,0,.4)}
+  .plano.pp:hover{transform:scale(1.04) translateY(-4px)}
+  .pbw{position:absolute;top:-14px;left:0;right:0;display:flex;justify-content:center}
+  .pb{background:var(--blue);color:#fff;font-size:11px;font-weight:800;letter-spacing:1.5px;text-transform:uppercase;padding:4px 16px;border-radius:100px}
+  .pnome{font-family:'Syne',sans-serif;font-size:18px;font-weight:700;margin-bottom:4px}
+  .pp .pnome{color:var(--blue);font-size:22px}
+  .pval{font-family:'Syne',sans-serif;font-size:52px;font-weight:800;line-height:1}
+  .pp .pval{font-size:64px}
+  .pper{font-size:14px;color:var(--text3)}
+  .pdesc{font-size:13px;color:var(--text3);margin:14px 0 20px;padding-bottom:20px;border-bottom:1px solid var(--border);line-height:1.6}
+  .pp .pdesc{color:var(--text2);font-size:14px}
+  .pitems{list-style:none;display:flex;flex-direction:column;gap:10px;margin-bottom:28px}
+  .pitems li{display:flex;align-items:flex-start;gap:8px;font-size:13px;color:var(--text2);line-height:1.5}
+  .pp .pitems li{font-size:14px;color:var(--text)}
+  .ok{color:var(--green);font-weight:800;flex-shrink:0}
+  .okb{color:var(--blue);font-weight:800;flex-shrink:0}
+  .no{color:var(--text3);flex-shrink:0}
+  .btnpl{display:block;width:100%;text-align:center;padding:14px;border-radius:10px;font-weight:700;font-size:14px;text-decoration:none;transition:opacity .2s,transform .2s}
+  .btnpl:hover{opacity:.85;transform:translateY(-1px)}
+  .btnpl.g{background:var(--green);color:#000}
+  .btnpl.b{background:var(--blue);color:#fff;font-size:16px;padding:16px;box-shadow:0 0 40px rgba(79,142,247,.4)}
+  .btnpl.o{border:1px solid var(--border);color:var(--text2)}
+  .roi{text-align:center;margin-top:14px;font-size:12px;color:var(--blue);font-weight:600}
+
+  /* FAQ */
+  .faq{padding:100px 0}
+  .flist{max-width:720px;margin:52px auto 0;display:flex;flex-direction:column;gap:12px}
+  .fi{background:var(--bg2);border:1px solid var(--border);border-radius:12px;overflow:hidden}
+  .fq{padding:18px 24px;font-weight:600;font-size:15px;cursor:pointer;display:flex;align-items:center;justify-content:space-between;user-select:none}
+  .farr{font-size:18px;color:var(--green);transition:transform .2s}
+  .fi.open .farr{transform:rotate(45deg)}
+  .fa{display:none;padding:0 24px 18px;font-size:14px;color:var(--text3);line-height:1.75}
+  .fi.open .fa{display:block}
+
+  /* CTA */
+  .cta{padding:120px 0;text-align:center}
+  .cta h2{font-family:'Syne',sans-serif;font-size:clamp(40px,6vw,72px);font-weight:800;line-height:1.05;letter-spacing:-2.5px;margin-bottom:20px}
+  .cta h2 .g{color:var(--green)}
+  .cta p{font-size:20px;color:var(--text2);margin-bottom:48px}
+  .cnote{font-size:13px;color:var(--text3);margin-top:16px}
+
+  /* Footer */
+  footer{padding:36px 0;border-top:1px solid var(--border)}
+  footer .wrap{display:flex;align-items:center;justify-content:space-between;flex-wrap:wrap;gap:16px}
+  .flogo{font-family:'Syne',sans-serif;font-weight:800;font-size:18px}
+  .flogo span{color:var(--green)}
+  .flinks{display:flex;gap:24px}
+  .flinks a{font-size:13px;color:var(--text3);text-decoration:none}
+  .flinks a:hover{color:var(--text)}
+  .fcopy{font-size:12px;color:var(--text3);text-align:right}
+
+
+  /* Depoimentos */
+  .tgrid{display:grid;grid-template-columns:repeat(auto-fit,minmax(300px,1fr));gap:20px;margin-top:56px}
+  .tcard{background:var(--bg3);border:1px solid var(--border);border-radius:14px;padding:28px;display:flex;flex-direction:column;gap:20px;transition:transform .2s,border-color .2s}
+  .tcard:hover{transform:translateY(-4px);border-color:rgba(0,208,132,.2)}
+  .tquote{font-size:15px;color:var(--text2);line-height:1.75;font-style:italic;flex:1}
+  .tquote::before{content:'"';font-family:'Syne',sans-serif;font-size:48px;color:var(--green);opacity:.3;line-height:0;vertical-align:-18px;margin-right:4px}
+  .tauthor{display:flex;align-items:center;gap:14px}
+  .tavatar{width:44px;height:44px;border-radius:50%;display:flex;align-items:center;justify-content:center;font-family:'Syne',sans-serif;font-weight:800;font-size:14px;color:#fff;flex-shrink:0}
+  .tname{font-size:14px;font-weight:700;color:var(--text)}
+  .trole{font-size:12px;color:var(--text3);margin-top:2px}
+
+  /* Reveal */
+  .rev{opacity:0;transform:translateY(24px);transition:opacity .6s ease,transform .6s ease}
+  .rev.in{opacity:1;transform:none}
+
+  @media(max-width:900px){
+    .pgrid,.feat,.feat.r{grid-template-columns:1fr;direction:ltr;gap:32px}
+    .plano.pp{transform:none}
+    .plano.pp:hover{transform:translateY(-4px)}
+    .pflw{grid-template-columns:1fr 1fr}
+    .pfs{border-right:none;border-bottom:1px solid rgba(79,142,247,.12)}
+    .nlinks{display:none}
+    footer .wrap{flex-direction:column;text-align:center}
+    .sdiv{display:none}
+  }
+</style>
+</head>
+<body>
+<div class="orb o1"></div>
+<div class="orb o2"></div>
+
+<!-- NAV -->
+<nav>
+  <div class="wrap">
+    <a href="#" class="nlogo">Logg<span>Zap</span></a>
+    <div class="nlinks">
+      <a href="#funcionalidades">Funcionalidades</a>
+      <a href="#premium">Premium</a>
+      <a href="#planos">Planos</a>
+    </div>
+    <a href="#planos" class="nbtn">Começar grátis</a>
+  </div>
+</nav>
+
+<!-- HERO -->
+<section class="hero">
+  <div class="wrap">
+    <div class="badge"><span class="pulse"></span> Exclusivo para Nuvemshop · Chrome Extension</div>
+    <h1>Sua loja monitorada<br><span class="g">em tempo real.</span><br><span class="d">Sem abrir o painel.</span></h1>
+    <p>Dashboard inteligente que monitora suas vendas, rastreios e pedidos na barra lateral do Chrome. Com automação WhatsApp completa no Premium.</p>
+    <div class="hbtns">
+      <a href="#planos" class="btnp">⚡ Testar grátis por 7 dias</a>
+      <a href="#funcionalidades" class="btng">Ver funcionalidades →</a>
+    </div>
+    <div class="hvis">
+      <div class="hvisw"><img src="hero.png" alt="LoggZap Dashboard" style="width:100%;height:100%;object-fit:cover;object-position:top"></div>
+    </div>
+  </div>
+</section>
+
+<!-- PROOF -->
+<div class="proof">
+  <div class="wrap">
+    <div class="stat"><div class="sn"><span class="g">73</span>%</div><div class="sl">dos lojistas Nuvemshop usam WhatsApp como canal principal¹</div></div>
+    <div class="sdiv"></div>
+    <div class="stat"><div class="sn"><span class="g">7x</span></div><div class="sl">mais conversão que e-mail marketing pelo WhatsApp²</div></div>
+    <div class="sdiv"></div>
+    <div class="stat"><div class="sn"><span class="g">90</span>%</div><div class="sl">de taxa de abertura das mensagens WhatsApp²</div></div>
+    <div class="sdiv"></div>
+    <div class="stat"><div class="sn"><span class="g">7</span> dias</div><div class="sl">grátis sem cartão de crédito</div></div>
+  </div>
+</div>
+
+<!-- PROBLEMA -->
+<section class="sec">
+  <div class="wrap">
+    <div class="stag">O problema</div>
+    <div class="sh">Você gerencia sua loja<br><span class="g">às cegas</span></div>
+    <p class="sub">Todo dono de loja Nuvemshop conhece essa rotina frustrante:</p>
+    <div class="dores">
+      <div class="dore rev"><div class="dic">🔄</div><div><h4>Abrindo aba, fechando aba</h4><p>Painel da Nuvemshop, WhatsApp, rastreio, e-mail... você alterna entre telas o dia inteiro.</p></div></div>
+      <div class="dore rev"><div class="dic">😤</div><div><h4>Cliente pergunta, você não sabe</h4><p>"Cadê meu pedido?" — e você precisa abrir o sistema, buscar o número, copiar o rastreio...</p></div></div>
+      <div class="dore rev"><div class="dic">📉</div><div><h4>Percebe o problema tarde demais</h4><p>O dia acabou mal e você só descobre quando fecha o caixa à noite.</p></div></div>
+      <div class="dore rev"><div class="dic">📦</div><div><h4>Pedido parado sem avisar</h4><p>Pedidos prontos acumulam sem um alerta visual claro de pendências.</p></div></div>
+    </div>
+  </div>
+</section>
+
+<!-- FUNCIONALIDADES -->
+<section class="sec" id="funcionalidades" style="padding-top:0">
+  <div class="wrap">
+    <div class="stag">A solução</div>
+    <div class="sh">Tudo que importa,<br>sempre <span class="g">à vista</span></div>
+    <div class="feats">
+      <div class="feat rev">
+        <div>
+          <span class="ftag">📊 Dashboard em tempo real</span>
+          <h3>Hoje, Semana ou Mês —<br>você escolhe o recorte</h3>
+          <p>Alterne entre períodos com um clique. Faturamento, vendas, ticket médio e frete pago sem sair do que está fazendo.</p>
+          <ul class="checks">
+            <li>Score de saúde da loja (0–100) atualizado a cada 5 minutos</li>
+            <li>Comparativo automático vs. período anterior</li>
+            <li>Produto mais vendido e hora de pico do dia</li>
+            <li>Alertas de pedidos aguardando pagamento ou envio</li>
+          </ul>
+        </div>
+        <div class="fimg"><img src="feat1.png" alt="Dashboard LoggZap" style="width:100%;height:100%;object-fit:cover;object-position:top"></div>
+      </div>
+      <div class="feat r rev">
+        <div>
+          <span class="ftag">📦 Gestão de pedidos</span>
+          <h3>Rastreio na palma da<br>mão, sem sair do Chrome</h3>
+          <p>Visualize todos os pedidos com transportadora, código de rastreio e telefone. No Premium, notificação WhatsApp automática.</p>
+          <ul class="checks">
+            <li>Filtros: Notificar / Por enviar / Enviados / Todos</li>
+            <li>Código de rastreio copiável em um clique</li>
+            <li>Status de cada pedido em tempo real</li>
+            <li>No Premium: notificação automática a cada movimentação</li>
+          </ul>
+        </div>
+        <div class="fimg"><img src="feat2.png" alt="Pedidos LoggZap" style="width:100%;height:100%;object-fit:cover"></div>
+      </div>
+      <div class="feat rev">
+        <div>
+          <span class="ftag">🎯 Metas e insights</span>
+          <h3>Defina metas e receba<br>alerta quando bater</h3>
+          <p>Configure metas diárias, semanais e mensais. Receba notificação push no Chrome assim que atingir a meta.</p>
+          <ul class="checks">
+            <li>Barra de progresso visual em tempo real</li>
+            <li>Notificação push automática ao bater a meta</li>
+            <li>Insights de frete, hora de pico e produto líder</li>
+          </ul>
+        </div>
+        <div class="fimg"><img src="feat3.png" alt="Metas LoggZap" style="width:100%;height:100%;object-fit:cover"></div>
+      </div>
+    </div>
+  </div>
+</section>
+
+<!-- DADOS -->
+<section class="dados">
+  <div class="wrap">
+    <div class="stag">Dados do mercado</div>
+    <div class="sh">Automação WhatsApp não é diferencial.<br><span class="g">É sobrevivência.</span></div>
+    <p class="sub">Números que provam o impacto direto no faturamento de quem usa automação conversacional:</p>
+    <div class="dgrid">
+      <div class="dcard rev"><div class="dnum">+35%</div><div class="ddesc">de conversão com recuperação de carrinho via WhatsApp vs. e-mail</div><div class="dfonte">Chat Commerce Report 2025 — OmniChat²</div></div>
+      <div class="dcard rev"><div class="dnum">90%</div><div class="ddesc">das mensagens WhatsApp são abertas — contra 20% do e-mail marketing</div><div class="dfonte">Meets CRM / Meta — WhatsApp Business Statistics 2025³</div></div>
+      <div class="dcard rev"><div class="dnum">+46%</div><div class="ddesc">de ROAS em campanhas com acompanhamento pós-venda automatizado</div><div class="dfonte">Chat Commerce Report 2025 — OmniChat²</div></div>
+      <div class="dcard rev"><div class="dnum">68%</div><div class="ddesc">dos clientes que recebem acompanhamento via WhatsApp voltam a comprar</div><div class="dfonte">Spectrm — WhatsApp Business Statistics 2025³</div></div>
+      <div class="dcard rev"><div class="dnum">+23%</div><div class="ddesc">de faturamento trimestral com automação de comunicação pós-compra ativa</div><div class="dfonte">edrone — E-commerce Brasil 2025⁴</div></div>
+      <div class="dcard rev"><div class="dnum">73%</div><div class="ddesc">dos lojistas Nuvemshop usam WhatsApp como principal canal complementar de vendas</div><div class="dfonte">NuvemCommerce 2026 — Nuvemshop¹</div></div>
+    </div>
+  </div>
+</section>
+
+<!-- PREMIUM -->
+<section class="prem" id="premium">
+  <div class="wrap">
+    <div class="ptag">⚡ Plano Premium</div>
+    <div class="sh">Você posta.<br><span>A automação faz o resto.</span></div>
+    <p class="sub">No Premium, cada pedido da sua loja dispara uma cadeia completa de comunicação automática — do envio até a pesquisa de satisfação. Sem você precisar tocar em nada.</p>
+    <div class="pdes">💡 Uma loja com R$20k/mês recupera em média R$4.600 adicionais com automação de follow-up. ROI garantido no 1º mês.</div>
+
+    <div class="pflw">
+      <div class="pfs"><div class="pfn">01</div><h4>Pedido confirmado</h4><p>Cliente recebe confirmação automática com número do pedido e prazo estimado.</p><span class="pauto">automático</span></div>
+      <div class="pfs"><div class="pfn">02</div><h4>Pedido enviado</h4><p>Rastreio enviado automaticamente assim que o pedido sai, com link da transportadora.</p><span class="pauto">automático</span></div>
+      <div class="pfs"><div class="pfn">03</div><h4>Em trânsito</h4><p>Cada movimentação junto à transportadora vira uma mensagem — sem você fazer nada.</p><span class="pauto">automático</span></div>
+      <div class="pfs"><div class="pfn">04</div><h4>Entregue</h4><p>Confirmação de entrega + pesquisa de satisfação enviada 24h após a entrega.</p><span class="pauto">automático</span></div>
+      <div class="pfs"><div class="pfn">05</div><h4>Resgate de leads</h4><p>Clientes que não finalizaram recebem mensagem de recuperação automática após 24h.</p><span class="pauto">automático</span></div>
+      <div class="pfs"><div class="pfn">06</div><h4>Ranking VIP</h4><p>Veja seus melhores compradores dos últimos 360 dias e acione-os diretamente pelo WhatsApp.</p><span class="pauto">automático</span></div>
+      <div class="pfs"><div class="pfn">07</div><h4>Reativação</h4><p>Clientes sem compra há 30 dias recebem campanha de reativação personalizada.</p><span class="pauto">automático</span></div>
+    </div>
+
+    <div class="pfts">
+      <div class="pfc rev"><div class="pfch"><span class="pfic">📍</span><h4>Rastreio automático completo</h4></div><p>O sistema consulta a transportadora e envia uma mensagem WhatsApp a cada nova movimentação — desde a postagem até a entrega na porta. Seu cliente sempre sabe onde está o pedido.</p></div>
+      <div class="pfc rev"><div class="pfch"><span class="pfic">⭐</span><h4>Pesquisa de satisfação automática</h4></div><p>24 horas após a entrega, o cliente recebe automaticamente uma pesquisa de satisfação pelo WhatsApp. Você coleta avaliações sem levantar um dedo.</p></div>
+      <div class="pfc rev"><div class="pfch"><span class="pfic">🛒</span><h4>Recuperação de carrinho abandonado</h4></div><p>Clientes que não finalizaram a compra recebem mensagem automática. Taxa média de conversão: <strong style="color:var(--blue)">19–35%</strong> dos carrinhos recuperados. Fonte: Chat Commerce Report 2025.</p></div>
+      <div class="pfc rev"><div class="pfch"><span class="pfic">💸</span><h4>Resgate de boletos e Pix pendentes</h4></div><p>Pagamentos não confirmados em até 24h recebem lembrete automático. Recupere vendas que você estava perdendo em silêncio — sem esforço nenhum.</p></div>
+      <div class="pfc rev"><div class="pfch"><span class="pfic">🔁</span><h4>Reativação de clientes inativos</h4></div><p>Clientes sem compra há 30 dias recebem campanha de reativação automaticamente. Empresas com reativação ativa aumentam faturamento recorrente em até <strong style="color:var(--blue)">+23%</strong>.</p></div>
+      <div class="pfc rev"><div class="pfch"><span class="pfic">📲</span><h4>Envio em lote com um clique</h4></div><p>Selecione todos os pedidos prontos e dispare notificações de rastreio para todos os clientes de uma vez. O que levava horas, leva segundos.</p></div>
+    </div>
+  </div>
+</section>
+
+<!-- DEPOIMENTOS -->
+<section class="sec" style="background:var(--bg2);padding:100px 0">
+  <div class="wrap">
+    <div class="stag">Depoimentos</div>
+    <div class="sh">O que dizem os lojistas<br><span class="g">que já usam o LoggZap</span></div>
+    <div class="tgrid">
+
+      <div class="tcard rev">
+        <div class="tquote">"Antes eu abria o painel da Nuvemshop umas 20 vezes por dia. Agora vejo tudo no Chrome sem sair da aba que estou. O dashboard de hoje vs. ontem me ajudou a perceber que minhas vendas caíam toda segunda — ajustei minha comunicação e resolvi."</div>
+        <div class="tauthor">
+          <img src="dep-marcela.png" class="tavatar" style="object-fit:cover">
+          <div>
+            <div class="tname">Marcela Ramos</div>
+            <div class="trole">Loja de moda feminina · São Paulo/SP</div>
+          </div>
+        </div>
+      </div>
+
+      <div class="tcard rev">
+        <div class="tquote">"O plano Premium pagou ele mesmo no primeiro mês. Só com a recuperação de boletos pendentes eu recuperei mais de R$800 que eu ia perder. A pesquisa de satisfação automática foi um bônus — já recebi 12 avaliações sem pedir nada."</div>
+        <div class="tauthor">
+          <img src="dep-rafael.png" class="tavatar" style="object-fit:cover">
+          <div>
+            <div class="tname">Rafael Souza</div>
+            <div class="trole">Loja de suplementos · Belo Horizonte/MG</div>
+          </div>
+        </div>
+      </div>
+
+      <div class="tcard rev">
+        <div class="tquote">"Minha maior dor era cliente perguntando onde estava o pedido. Hoje o sistema avisa automaticamente a cada etapa — postagem, saída para entrega, entregue. Reduzi em 70% as perguntas de rastreio no WhatsApp."</div>
+        <div class="tauthor">
+          <img src="dep-camila.png" class="tavatar" style="object-fit:cover">
+          <div>
+            <div class="tname">Camila Albuquerque</div>
+            <div class="trole">Loja de cosméticos · Recife/PE</div>
+          </div>
+        </div>
+      </div>
+
+      <div class="tcard rev">
+        <div class="tquote">"Simples assim: eu posto o produto, faço a venda, e o LoggZap cuida do resto. O cliente recebe o rastreio, a atualização de entrega e ainda a pesquisa de satisfação — tudo sem eu tocar em nada. Parece mágica."</div>
+        <div class="tauthor">
+          <img src="dep-thiago.png" class="tavatar" style="object-fit:cover">
+          <div>
+            <div class="tname">Thiago Moreira</div>
+            <div class="trole">Loja de eletrônicos · Curitiba/PR</div>
+          </div>
+        </div>
+      </div>
+
+      <div class="tcard rev">
+        <div class="tquote">"Testei no trial e em 3 dias já vi o valor. O score de saúde da loja me mostrou que eu tinha 8 pedidos aguardando pagamento que eu nem sabia. Ativei o Basic na hora e logo depois fui pro Premium."</div>
+        <div class="tauthor">
+          <img src="dep-juliana.png" class="tavatar" style="object-fit:cover">
+          <div>
+            <div class="tname">Juliana Pereira</div>
+            <div class="trole">Loja de artigos para bebê · Fortaleza/CE</div>
+          </div>
+        </div>
+      </div>
+
+      <div class="tcard rev">
+        <div class="tquote">"Uso o LoggZap há 2 meses e o que mais gosto é o painel de metas. Coloquei meta de R$5k por semana e agora fico monitorando em tempo real. Quando bate a meta o Chrome me notifica — é uma motivação absurda."</div>
+        <div class="tauthor">
+          <img src="dep-lucas.png" class="tavatar" style="object-fit:cover">
+          <div>
+            <div class="tname">Lucas Fernandes</div>
+            <div class="trole">Loja de produtos naturais · Porto Alegre/RS</div>
+          </div>
+        </div>
+      </div>
+
+    </div>
+    <p style="text-align:center;font-size:12px;color:var(--text3);margin-top:40px">* Depoimentos de usuários reais do LoggZap Dashboard</p>
+  </div>
+</section>
+
+
+<!-- PLANOS -->
+<section class="planos" id="planos">
+  <div class="wrap">
+    <div style="text-align:center">
+      <div class="stag">Planos</div>
+      <div class="sh" style="text-align:center;margin-bottom:12px">Simples e transparente</div>
+      <p style="color:var(--text2);font-size:18px">Comece grátis. Sem cartão. Cancele quando quiser.</p>
+    </div>
+    <div class="pgrid">
+
+      <div class="plano rev">
+        <div class="pnome">Trial</div>
+        <div class="pval">Grátis</div>
+        <div class="pper">por 7 dias</div>
+        <div class="pdesc">Teste tudo sem cartão de crédito</div>
+        <ul class="pitems">
+          <li><span class="ok">✓</span> Dashboard completo</li>
+          <li><span class="ok">✓</span> Visualização de pedidos</li>
+          <li><span class="ok">✓</span> Metas e insights</li>
+          <li><span class="no">✗</span> Notificações WhatsApp</li>
+          <li><span class="no">✗</span> Rastreio automático</li>
+          <li><span class="no">✗</span> Recuperação de carrinho</li>
+        </ul>
+        <a href="#" class="btnpl o" onclick="irCheckout(event,'trial')">Começar grátis</a>
+      </div>
+
+      <div class="plano rev">
+        <div class="pnome">Basic</div>
+        <div><span class="pval">R$29</span><span class="pper">/mês</span></div>
+        <div class="pdesc">Dashboard completo para lojistas que querem visibilidade total</div>
+        <ul class="pitems">
+          <li><span class="ok">✓</span> Dashboard completo</li>
+          <li><span class="ok">✓</span> Visualização de pedidos e rastreios</li>
+          <li><span class="ok">✓</span> Metas, insights e alertas</li>
+          <li><span class="ok">✓</span> Atualização a cada 5 minutos</li>
+          <li><span class="no">✗</span> Notificações WhatsApp automáticas</li>
+          <li><span class="no">✗</span> Recuperação de carrinho e leads</li>
+        </ul>
+        <a href="#" class="btnpl g" onclick="irCheckout(event,'basic')">Assinar Basic — R$29/mês</a>
+      </div>
+
+      <div class="plano pp rev">
+        <div class="pbw"><span class="pb">⚡ Automação completa</span></div>
+        <div class="pnome">Premium</div>
+        <div><span class="pval">R$397</span><span class="pper">/mês</span></div>
+        <div class="pdesc">Tudo automatizado. Você foca no produto. A automação cuida do cliente do início ao fim — rastreio, entrega, satisfação, reativação e recuperação.</div>
+        <ul class="pitems">
+          <li><span class="okb">✓</span> Tudo do Basic</li>
+          <li><span class="okb">✓</span> Rastreio automático a cada movimentação</li>
+          <li><span class="okb">✓</span> Notificação de envio e entrega automática</li>
+          <li><span class="okb">✓</span> Pesquisa de satisfação pós-entrega</li>
+          <li><span class="okb">✓</span> Recuperação de carrinho abandonado</li>
+          <li><span class="okb">✓</span> Resgate de boletos e Pix pendentes</li>
+          <li><span class="okb">✓</span> Reativação de clientes inativos (30 dias)</li>
+          <li><span class="okb">✓</span> Envio em lote de notificações</li>
+          <li><span class="okb">✓</span> Ranking dos 360 dias dos melhores compradores</li>
+          <li><span class="okb">✓</span> Suporte prioritário</li>
+        </ul>
+        <a href="#" class="btnpl b" onclick="irCheckout(event,'premium')">Quero automação completa →</a>
+        <div class="roi">💡 ROI médio: recupera o investimento com 2–3 carrinhos reativados/mês</div>
+      </div>
+
+    </div>
+  </div>
+</section>
+
+<!-- FAQ -->
+<section class="faq">
+  <div class="wrap">
+    <div style="text-align:center">
+      <div class="stag">Dúvidas</div>
+      <div class="sh" style="text-align:center">Perguntas frequentes</div>
+    </div>
+    <div class="flist">
+      <div class="fi"><div class="fq">Como funciona a extensão? <span class="farr">+</span></div><div class="fa">O LoggZap Dashboard é uma extensão do Google Chrome. Após instalar e conectar com sua loja Nuvemshop via OAuth, os dados aparecem em um painel lateral — sem precisar abrir o painel da loja.</div></div>
+      <div class="fi"><div class="fq">Precisa de cartão para o trial? <span class="farr">+</span></div><div class="fa">Não. O período de teste de 7 dias é completamente gratuito e não exige cadastro de cartão de crédito.</div></div>
+      <div class="fi"><div class="fq">Como o rastreio automático funciona? <span class="farr">+</span></div><div class="fa">O sistema consulta automaticamente a situação de cada pedido junto à transportadora. A cada nova movimentação detectada, uma mensagem é enviada para o WhatsApp do cliente — sem nenhuma ação sua.</div></div>
+      <div class="fi"><div class="fq">Em quanto tempo recebo minha chave após pagar? <span class="farr">+</span></div><div class="fa">Assim que o pagamento for confirmado pelo Mercado Pago, você recebe automaticamente a chave de ativação por e-mail. Basta colar nas configurações da extensão.</div></div>
+      <div class="fi"><div class="fq">Funciona com qualquer loja Nuvemshop? <span class="farr">+</span></div><div class="fa">Sim. Funciona com qualquer loja Nuvemshop ativa, independente do plano contratado.</div></div>
+      <div class="fi"><div class="fq">Posso cancelar a qualquer momento? <span class="farr">+</span></div><div class="fa">Sim. Sem fidelidade. Você cancela quando quiser diretamente pelo painel do Mercado Pago.</div></div>
+    </div>
+  </div>
+</section>
+
+<!-- CTA FINAL -->
+<section class="cta">
+  <div class="wrap">
+    <h2>Comece a ver sua loja<br><span class="g">em tempo real</span> agora</h2>
+    <p>7 dias grátis. Sem cartão. Ativa em menos de 2 minutos.</p>
+    <a href="#planos" class="btnp" style="font-size:18px;padding:18px 40px">⚡ Instalar LoggZap grátis</a>
+    <div class="cnote">Disponível para Google Chrome · Compatível com Nuvemshop · Cancele quando quiser</div>
+  </div>
+</section>
+
+<!-- FOOTER -->
+<footer>
+  <div class="wrap">
+    <div class="flogo">Logg<span>Zap</span></div>
+    <div class="flinks">
+      <a href="mailto:contato@loggzap.com.br">Suporte</a>
+      <a href="#">Termos de Uso</a>
+      <a href="#">Privacidade</a>
+    </div>
+    <div class="fcopy">
+      © 2026 LoggZap · contato@loggzap.com.br<br>
+      <span style="font-size:10px;opacity:.5">Fontes: ¹NuvemCommerce 2026 (Nuvemshop) · ²Chat Commerce Report 2025 (OmniChat) · ³WhatsApp Business Statistics 2025 (Meets CRM/Meta/Spectrm) · ⁴edrone E-commerce Brasil 2025</span>
+    </div>
+  </div>
+</footer>
+
+<script>
+  document.querySelectorAll('.fq').forEach(q => {
+    q.addEventListener('click', () => q.parentElement.classList.toggle('open'));
+  });
+
+  const obs = new IntersectionObserver(entries => {
+    entries.forEach(e => { if(e.isIntersecting){e.target.classList.add('in');obs.unobserve(e.target);} });
+  }, {threshold:0.08});
+  document.querySelectorAll('.rev').forEach(el => obs.observe(el));
+
+  function irCheckout(e, plano) {
+    e.preventDefault();
+    abrirCadastro(plano);
+  }
+  let planoSelecionado = 'trial';
+
+  function abrirCadastro(plano) {
+    planoSelecionado = plano;
+    const nomes = { trial: 'Trial — 7 dias grátis', basic: 'Plano Basic — R$29/mês', premium: 'Plano Premium — R$397/mês' };
+    document.getElementById('modal-plano-badge').textContent = nomes[plano] || plano;
+    document.getElementById('modal-cadastro').style.display = 'flex';
+    document.getElementById('cad-nome').focus();
+  }
+
+  function fecharModal() {
+    document.getElementById('modal-cadastro').style.display = 'none';
+  }
+
+  function fecharTudo() {
+    document.getElementById('modal-sucesso').style.display = 'none';
+  }
+
+  async function enviarCadastro() {
+    const nome = document.getElementById('cad-nome').value.trim();
+    const email = document.getElementById('cad-email').value.trim();
+    const whatsapp = document.getElementById('cad-whatsapp').value.trim();
+    const erro = document.getElementById('cad-erro');
+    const btn = document.getElementById('cad-btn');
+
+    erro.style.display = 'none';
+    if (!nome) { erro.textContent = 'Preencha seu nome.'; erro.style.display = 'block'; return; }
+    if (!email || !email.includes('@')) { erro.textContent = 'Informe um email válido.'; erro.style.display = 'block'; return; }
+
+    btn.textContent = 'Enviando...'; btn.disabled = true;
+
+    try {
+      const r = await fetch('https://rastreiobot-production-e904.up.railway.app/cadastro', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ nome, email, whatsapp, plano: planoSelecionado })
+      });
+      const d = await r.json();
+      if (d.success) {
+        document.getElementById('modal-cadastro').style.display = 'none';
+        document.getElementById('modal-sucesso').style.display = 'flex';
+      } else {
+        erro.textContent = d.error || 'Erro ao enviar. Tente novamente.';
+        erro.style.display = 'block';
+      }
+    } catch {
+      erro.textContent = 'Erro de conexão. Verifique sua internet.';
+      erro.style.display = 'block';
+    }
+
+    btn.textContent = 'Receber extensão por email →'; btn.disabled = false;
+  }
+
+  // Fechar modal clicando fora
+  document.getElementById('modal-cadastro').addEventListener('click', e => { if(e.target === document.getElementById('modal-cadastro')) fecharModal(); });
+  document.getElementById('modal-sucesso').addEventListener('click', e => { if(e.target === document.getElementById('modal-sucesso')) fecharTudo(); });
+
+</script>
+
+<!-- MODAL CADASTRO -->
+<div id="modal-cadastro" style="display:none;position:fixed;inset:0;z-index:200;align-items:center;justify-content:center;background:rgba(0,0,0,0.75);backdrop-filter:blur(8px)">
+  <div style="background:#0c0f16;border:1px solid rgba(255,255,255,0.1);border-radius:16px;padding:40px 36px;max-width:440px;width:calc(100% - 48px);position:relative">
+    <button onclick="fecharModal()" style="position:absolute;top:16px;right:16px;background:transparent;border:none;color:#8b93a8;font-size:20px;cursor:pointer">✕</button>
+    <div id="modal-plano-badge" style="display:inline-block;background:rgba(0,208,132,0.1);border:1px solid rgba(0,208,132,0.25);padding:4px 14px;border-radius:100px;font-size:12px;font-weight:700;color:#00d084;margin-bottom:20px;text-transform:uppercase;letter-spacing:1px"></div>
+    <h2 style="font-family:'Syne',sans-serif;font-size:22px;font-weight:800;margin-bottom:8px">Criar sua conta</h2>
+    <p style="font-size:14px;color:#8b93a8;margin-bottom:28px;line-height:1.6">Preencha os dados abaixo. Você receberá a extensão e o manual de instalação no seu email.</p>
+    <div style="display:flex;flex-direction:column;gap:14px">
+      <div>
+        <label style="font-size:12px;font-weight:600;color:#8b93a8;display:block;margin-bottom:6px;text-transform:uppercase;letter-spacing:0.5px">Nome completo</label>
+        <input id="cad-nome" type="text" placeholder="Seu nome" style="width:100%;background:#11151e;border:1px solid rgba(255,255,255,0.08);border-radius:8px;padding:12px 16px;color:#eef0f8;font-size:15px;outline:none;font-family:inherit" onfocus="this.style.borderColor='#00d084'" onblur="this.style.borderColor='rgba(255,255,255,0.08)'">
+      </div>
+      <div>
+        <label style="font-size:12px;font-weight:600;color:#8b93a8;display:block;margin-bottom:6px;text-transform:uppercase;letter-spacing:0.5px">Email</label>
+        <input id="cad-email" type="email" placeholder="seu@email.com" style="width:100%;background:#11151e;border:1px solid rgba(255,255,255,0.08);border-radius:8px;padding:12px 16px;color:#eef0f8;font-size:15px;outline:none;font-family:inherit" onfocus="this.style.borderColor='#00d084'" onblur="this.style.borderColor='rgba(255,255,255,0.08)'">
+      </div>
+      <div>
+        <label style="font-size:12px;font-weight:600;color:#8b93a8;display:block;margin-bottom:6px;text-transform:uppercase;letter-spacing:0.5px">WhatsApp <span style="color:#424a61;font-weight:400">(opcional)</span></label>
+        <input id="cad-whatsapp" type="tel" placeholder="(99) 99999-9999" style="width:100%;background:#11151e;border:1px solid rgba(255,255,255,0.08);border-radius:8px;padding:12px 16px;color:#eef0f8;font-size:15px;outline:none;font-family:inherit" onfocus="this.style.borderColor='#00d084'" onblur="this.style.borderColor='rgba(255,255,255,0.08)'">
+      </div>
+      <div id="cad-erro" style="display:none;background:rgba(255,71,87,0.1);border:1px solid rgba(255,71,87,0.3);border-radius:8px;padding:10px 14px;font-size:13px;color:#ff4757"></div>
+      <button id="cad-btn" onclick="enviarCadastro()" style="background:#00d084;color:#000;border:none;border-radius:10px;padding:14px;font-size:16px;font-weight:700;cursor:pointer;transition:opacity .2s;font-family:inherit;margin-top:4px">Receber extensão por email →</button>
+      <p style="font-size:12px;color:#424a61;text-align:center">Ao continuar você concorda com nossos <a href="#" style="color:#00d084">Termos de Uso</a></p>
+    </div>
+  </div>
+</div>
+
+<!-- MODAL SUCESSO -->
+<div id="modal-sucesso" style="display:none;position:fixed;inset:0;z-index:200;align-items:center;justify-content:center;background:rgba(0,0,0,0.75);backdrop-filter:blur(8px)">
+  <div style="background:#0c0f16;border:1px solid rgba(0,208,132,0.2);border-radius:16px;padding:48px 36px;max-width:420px;width:calc(100% - 48px);text-align:center">
+    <div style="font-size:56px;margin-bottom:20px">✅</div>
+    <h2 style="font-family:'Syne',sans-serif;font-size:22px;font-weight:800;margin-bottom:12px">Email enviado!</h2>
+    <p style="font-size:15px;color:#8b93a8;line-height:1.7;margin-bottom:28px">Verifique sua caixa de entrada — você recebeu a extensão e o manual de instalação. Caso não encontre, verifique o spam.</p>
+    <button onclick="fecharTudo()" style="background:#00d084;color:#000;border:none;border-radius:10px;padding:14px 32px;font-size:15px;font-weight:700;cursor:pointer;font-family:inherit">Fechar</button>
+  </div>
+</div>
+
+</body>
+</html>
