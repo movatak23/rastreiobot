@@ -110,68 +110,58 @@
 
   <div class="divider"></div>
 
-  <!-- PARTE 2: TOKEN NUVEMSHOP -->
+  <!-- PARTE 2: CONECTAR NUVEMSHOP -->
   <div class="section">
-    <h2>Parte 2 — Obter o Token da Nuvemshop</h2>
-    <p style="font-size:15px;color:var(--text2);margin-bottom:24px">O LoggZap precisa de um token de acesso para ler os dados da sua loja. Siga os passos abaixo para gerá-lo:</p>
+    <h2>Parte 2 — Conectar com a Nuvemshop</h2>
+
+    <div class="tip" style="margin-bottom:24px">
+      <div class="tip-title">📧 Antes de começar</div>
+      <p>Você receberá sua <strong>Chave Secreta</strong> por email após o cadastro. Tenha-a em mãos antes de continuar.</p>
+    </div>
+
+    <p style="font-size:15px;color:var(--text2);margin-bottom:24px">Com a chave em mãos, conecte sua loja em poucos cliques:</p>
 
     <div class="chave-box">
-      <h3>Como gerar o Token de acesso</h3>
+      <h3>Como conectar sua loja</h3>
       <ul class="chave-steps">
-        <li data-n="1">Acesse o painel da sua loja em <strong>minhaloja.nuvemshop.com.br/admin</strong></li>
-        <li data-n="2">No menu lateral, vá em <strong>Meus aplicativos → Seus aplicativos</strong></li>
-        <li data-n="3">Clique em <strong>Criar aplicativo</strong> ou procure o LoggZap na lista de aplicativos instalados</li>
-        <li data-n="4">Clique em <strong>Autenticar aplicativo</strong> ou <strong>Instalar</strong></li>
-        <li data-n="5">Você será redirecionado para uma página de autorização — clique em <strong>Aceitar</strong></li>
-        <li data-n="6">O sistema gerará automaticamente um <strong>Token de acesso</strong>. Copie esse token — você vai precisar dele no próximo passo.</li>
+        <li data-n="1">Abra o painel do LoggZap clicando no ícone na barra do Chrome</li>
+        <li data-n="2">Cole sua <strong>Chave Secreta</strong> no campo indicado</li>
+        <li data-n="3">Clique no botão <strong>"Conectar com Nuvemshop"</strong></li>
+        <li data-n="4">Você será redirecionado para a Nuvemshop — faça login se necessário</li>
+        <li data-n="5">Clique em <strong>"Aceitar"</strong> para autorizar o LoggZap a acessar sua loja</li>
+        <li data-n="6">Pronto! O painel vai carregar automaticamente com os dados da sua loja.</li>
       </ul>
     </div>
   </div>
 
   <div class="divider"></div>
 
-  <!-- PARTE 3: CONFIGURAR -->
+  <!-- PARTE 3: LICENÇA -->
   <div class="section">
-    <h2>Parte 3 — Configurar o LoggZap</h2>
+    <h2>Parte 3 — Ativar sua licença</h2>
     <div class="steps">
       <div class="step">
         <div class="step-num">1</div>
         <div class="step-body">
-          <h3>Abra o painel do LoggZap</h3>
-          <p>Clique no ícone do LoggZap na barra do Chrome. O painel lateral vai abrir com a tela de configuração.</p>
+          <h3>Trial de 7 dias grátis</h3>
+          <p>Assim que conectar sua loja, o trial de 7 dias começa automaticamente. Nenhum cartão necessário.</p>
         </div>
       </div>
       <div class="step">
         <div class="step-num">2</div>
         <div class="step-body">
-          <h3>Preencha os dados de configuração</h3>
-          <p>Preencha os campos:<br>
-          • <strong>URL do Backend:</strong> <code>https://rastreiobot-production-e904.up.railway.app</code><br>
-          • <strong>Store ID:</strong> o número da sua loja Nuvemshop (aparece na URL do painel)<br>
-          • <strong>Chave Secreta:</strong> fornecida no email de boas-vindas<br>
-          • <strong>Token Nuvemshop:</strong> o token gerado na Parte 2</p>
+          <h3>Escolha seu plano</h3>
+          <p>Acesse <code>loggzap.com.br</code> e escolha o plano Basic ou Premium. Após o pagamento, você receberá uma chave no formato <code>LZB-XXXX-XXXX-XXXX</code> por email.</p>
         </div>
       </div>
       <div class="step">
         <div class="step-num">3</div>
         <div class="step-body">
-          <h3>Clique em Salvar e começar</h3>
-          <p>O dashboard vai carregar automaticamente os dados da sua loja. Seu período de trial de 7 dias começa agora.</p>
-        </div>
-      </div>
-      <div class="step">
-        <div class="step-num">4</div>
-        <div class="step-body">
-          <h3>Ative sua licença (após o trial)</h3>
-          <p>Após o pagamento, você receberá uma chave no formato <code>LZB-XXXX-XXXX-XXXX</code> por email. Vá em <strong>Configurações → Ativar chave</strong> e cole a chave para ativar seu plano.</p>
+          <h3>Ative a chave na extensão</h3>
+          <p>No painel do LoggZap, vá em <strong>Configurações → Ativar chave</strong>, cole a chave recebida por email e clique em <strong>Ativar</strong>.</p>
         </div>
       </div>
     </div>
-  </div>
-
-  <div class="tip">
-    <div class="tip-title">💡 Onde encontro meu Store ID?</div>
-    <p>Acesse o painel da sua loja Nuvemshop. Olhe para a URL do navegador — ela será algo como <code>minhaloja.nuvemshop.com.br/admin/...</code>. O Store ID também aparece na URL da API quando você gera o token.</p>
   </div>
 
   <div class="footer">
