@@ -12,15 +12,6 @@ const db      = require('./db');
 // Migração: criar tabelas novas no banco existente
 db.migrar();
 
-// Tabela de leads (cadastros do site)
-db.run(`CREATE TABLE IF NOT EXISTS leads (
-  id INTEGER PRIMARY KEY AUTOINCREMENT,
-  nome TEXT NOT NULL,
-  email TEXT,
-  whatsapp TEXT,
-  plano TEXT DEFAULT 'trial',
-  created_at TEXT
-)`, () => {});
 
 const app = express();
 app.use(express.json());
@@ -1049,12 +1040,28 @@ app.post('/cadastro', async (req, res) => {
       `
     });
 
-    // Salvar lead no banco
-    db.run(
-      'INSERT OR IGNORE INTO leads (nome, email, whatsapp, plano, created_at) VALUES (?, ?, ?, ?, datetime("now"))',
-      [nome, email, whatsapp || '', plano || 'trial'],
-      () => {}
-    );
+    console.log('[Cadastro] Lead registrado:', nome, email, plano);
+
+    // Notificar leads@loggzap.com.br
+    try {
+      await resend.emails.send({
+        from: 'LoggZap <contato@loggzap.com.br>',
+        to: 'leads@loggzap.com.br',
+        subject: `🔔 Novo lead: ${nome} — Plano ${plano}`,
+        html: `
+          <div style="font-family:Arial,sans-serif;max-width:480px;margin:0 auto;padding:32px;background:#0c0f16;color:#eef0f8;border-radius:12px">
+            <h2 style="color:#00d084;margin:0 0 20px">Novo cadastro no LoggZap</h2>
+            <table style="width:100%;border-collapse:collapse">
+              <tr><td style="padding:8px 0;color:#8b93a8;font-size:14px">Nome</td><td style="padding:8px 0;font-size:14px"><strong>${nome}</strong></td></tr>
+              <tr><td style="padding:8px 0;color:#8b93a8;font-size:14px">Email</td><td style="padding:8px 0;font-size:14px"><a href="mailto:${email}" style="color:#00d084">${email}</a></td></tr>
+              <tr><td style="padding:8px 0;color:#8b93a8;font-size:14px">WhatsApp</td><td style="padding:8px 0;font-size:14px">${whatsapp || '—'}</td></tr>
+              <tr><td style="padding:8px 0;color:#8b93a8;font-size:14px">Plano</td><td style="padding:8px 0;font-size:14px"><strong style="color:#00d084">${plano}</strong></td></tr>
+              <tr><td style="padding:8px 0;color:#8b93a8;font-size:14px">Data</td><td style="padding:8px 0;font-size:14px">${new Date().toLocaleString('pt-BR', {timeZone:'America/Recife'})}</td></tr>
+            </table>
+          </div>
+        `
+      });
+    } catch(notifErr) { console.error('[Cadastro] Erro notif lead:', notifErr.message); }
 
     res.json({ success: true });
   } catch(e) {
