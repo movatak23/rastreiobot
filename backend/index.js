@@ -741,15 +741,20 @@ app.get('/dashboard-nuvem/:storeId', auth, async (req, res) => {
     const inicioSemana = fmtData(new Date(hoje.getFullYear(), hoje.getMonth(), hoje.getDate() - hoje.getDay()));
     const inicioMes    = fmtData(new Date(hoje.getFullYear(), hoje.getMonth(), 1));
 
+    const nuvemSafe = async (path, params) => {
+      try { return await nuvemGet(storeId, path, params); }
+      catch(e) {
+        const status = e.response?.status;
+        if (status === 404 || (e.response?.data?.description || '').includes('Last page is 0')) return [];
+        throw e;
+      }
+    };
+
     let pedidosHoje = [], pedidosOntem = [], pedidosSemana = [], pedidosMes = [];
-    try { pedidosHoje   = await nuvemGet(storeId, '/orders', { created_at_min: inicioDia, per_page: 200 }); } 
-    catch(e) { throw new Error('hoje: ' + (e.response?.status || e.message)); }
-    try { pedidosOntem  = await nuvemGet(storeId, '/orders', { created_at_min: inicioOntem, created_at_max: inicioDia, per_page: 200 }); } 
-    catch(e) { throw new Error('ontem: ' + (e.response?.status || e.message)); }
-    try { pedidosSemana = await nuvemGet(storeId, '/orders', { created_at_min: inicioSemana, per_page: 200 }); } 
-    catch(e) { throw new Error('semana: ' + (e.response?.status || e.message)); }
-    try { pedidosMes    = await nuvemGet(storeId, '/orders', { created_at_min: inicioMes, per_page: 200 }); } 
-    catch(e) { throw new Error('mes: ' + (e.response?.status || e.message)); }
+    pedidosHoje   = await nuvemSafe('/orders', { created_at_min: inicioDia, per_page: 200 });
+    pedidosOntem  = await nuvemSafe('/orders', { created_at_min: inicioOntem, created_at_max: inicioDia, per_page: 200 });
+    pedidosSemana = await nuvemSafe('/orders', { created_at_min: inicioSemana, per_page: 200 });
+    pedidosMes    = await nuvemSafe('/orders', { created_at_min: inicioMes, per_page: 200 });
 
     // Filtra pedidos pagos (exclui cancelados e pendentes)
     const pagosHoje   = pedidosHoje.filter(p => p.payment_status === 'paid');
