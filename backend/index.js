@@ -1030,6 +1030,25 @@ app.post('/webhook/mp', async (req, res) => {
   }
 });
 
+// ── Gerar chave manualmente (uso interno) ─────────────────────────────────────
+app.get('/admin/gerar-chave', async (req, res) => {
+  const { plano = 'premium', dias = '99999', email, token } = req.query;
+  if (!token || token !== process.env.ADMIN_TOKEN)
+    return res.status(401).json({ error: 'Não autorizado.' });
+  try {
+    const chave = gerarChave(plano);
+    const meses = Math.ceil(parseInt(dias) / 30);
+    db.criarLicenca(chave, plano, null, meses);
+    if (email) {
+      const expiraEm = new Date(Date.now() + parseInt(dias) * 24 * 60 * 60 * 1000).toISOString();
+      await enviarChavePorEmail(email, chave, plano, expiraEm).catch(() => {});
+    }
+    res.json({ success: true, chave, plano, dias });
+  } catch(e) {
+    res.status(500).json({ success: false, error: e.message });
+  }
+});
+
 // ── Validar licenca (extensao) ────────────────────────────────────────────────
 app.post('/licenca/validar', auth, (req, res) => {
   const { chave, store_id } = req.body;
