@@ -1057,7 +1057,6 @@ app.post('/cadastro', async (req, res) => {
                 <div style="font-size:12px;font-weight:700;letter-spacing:2px;color:#00d084;text-transform:uppercase;margin-bottom:12px">Dados de configuração</div>
                 <p style="color:#8b93a8;font-size:14px;margin:0 0 8px">Use estes dados quando for configurar a extensão:</p>
                 <div style="background:#07090e;border-radius:6px;padding:14px;font-family:monospace;font-size:13px;color:#00d084">
-                  URL do Backend: https://rastreiobot-production-e904.up.railway.app<br>
                   Chave Secreta: MinhaChave2024Secreta
                 </div>
               </div>
