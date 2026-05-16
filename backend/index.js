@@ -1207,6 +1207,11 @@ app.get('/manual', (req, res) => {
   res.sendFile(path.join(__dirname, 'public', 'manual-loggzap.html'));
 });
 
+app.get('/privacidade', (req, res) => {
+  const path = require('path');
+  res.sendFile(path.join(__dirname, 'public', 'privacidade.html'));
+});
+
 
 // ── Paginas de retorno do checkout ───────────────────────────────────────────
 app.get('/checkout/sucesso', (req, res) => {
