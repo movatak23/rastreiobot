@@ -646,6 +646,49 @@ app.get('/pedidos/:storeId', auth, async (req, res) => {
   }
 });
 
+// ── Ranking de melhores clientes (últimos 60 dias) ────────────────────────────
+app.get('/ranking/:storeId', auth, async (req, res) => {
+  const { storeId } = req.params;
+  try {
+    const hoje = new Date();
+    const inicio60 = new Date(Date.UTC(
+      hoje.getUTCFullYear(), hoje.getUTCMonth(), hoje.getUTCDate() - 60, 3, 0, 0
+    )).toISOString();
+
+    const orders = await nuvemGet(storeId, '/orders', {
+      per_page: 200,
+      created_at_min: inicio60
+    });
+
+    const mapa = {};
+    for (const o of orders) {
+      if (o.status === 'cancelled') continue;
+      if (!o.customer) continue;
+      const id = String(o.customer.id || o.contact_email || o.contact_name);
+      if (!mapa[id]) {
+        mapa[id] = {
+          nome: o.customer.name || o.contact_name || 'Cliente',
+          telefone: formatTel(o.contact_phone) || '—',
+          qtd: 0,
+          total: 0
+        };
+      }
+      mapa[id].qtd++;
+      mapa[id].total += parseFloat(o.total || 0);
+    }
+
+    const clientes = Object.values(mapa)
+      .filter(c => c.qtd > 0)
+      .sort((a, b) => b.total - a.total)
+      .slice(0, 50);
+
+    res.json({ success: true, clientes });
+  } catch(e) {
+    console.error('Erro /ranking:', e.message);
+    res.status(500).json({ error: e.message });
+  }
+});
+
 // ── Marcar notificado ─────────────────────────────────────────────────────────
 app.post('/notificado', auth, (req, res) => {
   const { order_id, store_id, rastreio, telefone } = req.body;
@@ -1057,6 +1100,7 @@ app.post('/cadastro', async (req, res) => {
                 <div style="font-size:12px;font-weight:700;letter-spacing:2px;color:#00d084;text-transform:uppercase;margin-bottom:12px">Dados de configuração</div>
                 <p style="color:#8b93a8;font-size:14px;margin:0 0 8px">Use estes dados quando for configurar a extensão:</p>
                 <div style="background:#07090e;border-radius:6px;padding:14px;font-family:monospace;font-size:13px;color:#00d084">
+                  URL do Backend: https://rastreiobot-production-e904.up.railway.app<br>
                   Chave Secreta: MinhaChave2024Secreta
                 </div>
               </div>
