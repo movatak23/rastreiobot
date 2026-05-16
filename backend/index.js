@@ -689,29 +689,29 @@ app.get('/ranking/:storeId', auth, async (req, res) => {
       created_at_min: inicio60
     });
 
+    console.log('[Ranking] total pedidos recebidos:', orders.length);
+
     const mapa = {};
     for (const o of orders) {
       if (o.status === 'cancelled') continue;
-      if (!o.customer) continue;
-      const id = String(o.customer.id || o.contact_email || o.contact_name);
+      const nome = (o.customer && o.customer.name) || o.contact_name || '';
+      const email = (o.customer && o.customer.email) || o.contact_email || '';
+      const telefone = formatTel(o.contact_phone) || '—';
+      const id = email || nome;
+      if (!id) continue;
       if (!mapa[id]) {
-        mapa[id] = {
-          nome: o.customer.name || o.contact_name || 'Cliente',
-          telefone: formatTel(o.contact_phone) || '—',
-          qtd: 0,
-          total: 0
-        };
+        mapa[id] = { nome: nome || email || 'Cliente', telefone, qtd: 0, total: 0 };
       }
       mapa[id].qtd++;
       mapa[id].total += parseFloat(o.total || 0);
     }
 
     const clientes = Object.values(mapa)
-      .filter(c => c.qtd > 0)
       .sort((a, b) => b.total - a.total)
       .slice(0, 50);
 
-    res.json({ success: true, clientes });
+    console.log('[Ranking] clientes encontrados:', clientes.length);
+    res.json({ success: true, clientes, total: clientes.length });
   } catch(e) {
     console.error('Erro /ranking:', e.message);
     res.status(500).json({ error: e.message });
