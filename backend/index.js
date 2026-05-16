@@ -647,6 +647,35 @@ app.get('/pedidos/:storeId', auth, async (req, res) => {
 });
 
 // ── Ranking de melhores clientes (últimos 60 dias) ────────────────────────────
+// ── Diagnóstico ranking (temporário) ─────────────────────────────────────────
+app.get('/ranking-diag/:storeId', auth, async (req, res) => {
+  const { storeId } = req.params;
+  try {
+    const hoje = new Date();
+    const inicio60 = new Date(Date.UTC(
+      hoje.getUTCFullYear(), hoje.getUTCMonth(), hoje.getUTCDate() - 60, 3, 0, 0
+    )).toISOString();
+    const orders = await nuvemGet(storeId, '/orders', {
+      per_page: 5,
+      created_at_min: inicio60
+    });
+    res.json({
+      total: orders.length,
+      amostra: orders.slice(0, 2).map(o => ({
+        id: o.id,
+        status: o.status,
+        total: o.total,
+        contact_name: o.contact_name,
+        contact_email: o.contact_email,
+        contact_phone: o.contact_phone,
+        customer: o.customer
+      }))
+    });
+  } catch(e) {
+    res.status(500).json({ error: e.message });
+  }
+});
+
 app.get('/ranking/:storeId', auth, async (req, res) => {
   const { storeId } = req.params;
   try {
@@ -663,13 +692,15 @@ app.get('/ranking/:storeId', auth, async (req, res) => {
     const mapa = {};
     for (const o of orders) {
       if (o.status === 'cancelled') continue;
-      const nome = (o.customer && o.customer.name) || o.contact_name || '';
-      const email = (o.customer && o.customer.email) || o.contact_email || '';
-      const telefone = formatTel(o.contact_phone) || '—';
-      const id = email || nome || String(o.id);
-      if (!id) continue;
+      if (!o.customer) continue;
+      const id = String(o.customer.id || o.contact_email || o.contact_name);
       if (!mapa[id]) {
-        mapa[id] = { nome: nome || email || 'Cliente', telefone, qtd: 0, total: 0 };
+        mapa[id] = {
+          nome: o.customer.name || o.contact_name || 'Cliente',
+          telefone: formatTel(o.contact_phone) || '—',
+          qtd: 0,
+          total: 0
+        };
       }
       mapa[id].qtd++;
       mapa[id].total += parseFloat(o.total || 0);
@@ -680,7 +711,7 @@ app.get('/ranking/:storeId', auth, async (req, res) => {
       .sort((a, b) => b.total - a.total)
       .slice(0, 50);
 
-    res.json({ success: true, clientes, total: clientes.length });
+    res.json({ success: true, clientes });
   } catch(e) {
     console.error('Erro /ranking:', e.message);
     res.status(500).json({ error: e.message });
