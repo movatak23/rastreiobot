@@ -1086,6 +1086,38 @@ app.post('/licenca/validar', auth, (req, res) => {
   res.json(resultado);
 });
 
+// ── Validar licenca pelo app mobile (sem store_id) ───────────────────────────
+app.post("/licenca/validar-app", auth, (req, res) => {
+  const { chave } = req.body;
+  if (!chave) return res.status(400).json({ error: "chave obrigatoria" });
+  try {
+    const lic = db.getLicencaPorChave(chave);
+    if (!lic) return res.json({ valida: false, motivo: "Chave nao encontrada." });
+    if (new Date(lic.expira_em) < new Date()) return res.json({ valida: false, motivo: "Chave expirada." });
+    if (lic.plano !== "premium") return res.json({ valida: false, motivo: "Plano insuficiente." });
+    if (!lic.store_id) return res.json({ valida: false, motivo: "Loja nao vinculada. Instale a extensao Chrome primeiro." });
+    res.json({ valida: true, plano: lic.plano, store_id: lic.store_id, expira_em: lic.expira_em });
+  } catch(e) {
+    res.status(500).json({ error: e.message });
+  }
+});
+
+// ── Metas da loja ─────────────────────────────────────────────────────────────
+app.get("/metas/:storeId", auth, (req, res) => {
+  try {
+    const metas = db.getMetas(req.params.storeId) || {};
+    res.json({ success: true, metas });
+  } catch(e) { res.status(500).json({ error: e.message }); }
+});
+
+app.post("/metas/:storeId", auth, (req, res) => {
+  const { faturamento, pedidos } = req.body;
+  try {
+    db.salvarMetas(req.params.storeId, faturamento || 0, pedidos || 0);
+    res.json({ success: true });
+  } catch(e) { res.status(500).json({ error: e.message }); }
+});
+
 app.get('/licenca/status/:storeId', auth, (req, res) => {
   const lic = db.getLicencaPorStore(req.params.storeId);
   if (!lic) return res.json({ plano: 'trial', valida: false });
