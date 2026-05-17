@@ -607,14 +607,29 @@ app.get('/pedidos/:storeId', auth, async (req, res) => {
   const { storeId } = req.params;
   const prazo = parseInt(req.query.prazo || '3');
   const incluirNotificados = req.query.incluir_notificados === 'true';
+  const dias = parseInt(req.query.dias || '30');
+  const created_at_min = new Date(Date.UTC(
+    new Date().getUTCFullYear(), new Date().getUTCMonth(), new Date().getUTCDate() - dias, 3, 0, 0
+  )).toISOString();
   try {
-    const orders = await nuvemGet(storeId, '/orders', {
-      per_page: 200,
-      payment_status: 'paid',
-      fields: 'id,number,contact_name,contact_phone,shipping_status,shipping_tracking_number,shipping_option,created_at'
-    });
+    const [ordersPagos, ordersPendentes] = await Promise.all([
+      nuvemGet(storeId, '/orders', {
+        per_page: 200,
+        payment_status: 'paid',
+        created_at_min,
+        fields: 'id,number,contact_name,contact_phone,shipping_status,shipping_tracking_number,shipping_option,created_at,total'
+      }),
+      nuvemGet(storeId, '/orders', {
+        per_page: 50,
+        payment_status: 'pending',
+        fields: 'id,number,contact_name,contact_phone,created_at,total,gateway'
+      }).catch(() => [])
+    ]);
+
     const resultado = [];
-    for (const o of orders) {
+
+    // Pedidos pagos (rastreio/envio)
+    for (const o of ordersPagos) {
       if (o.status === 'cancelled') continue;
       const jaEnviado = db.jaNotificado(String(o.id));
       if (jaEnviado && !incluirNotificados) continue;
@@ -632,14 +647,41 @@ app.get('/pedidos/:storeId', auth, async (req, res) => {
         telefone: tel, rastreio: o.shipping_tracking_number || '',
         transportadora: o.shipping_option || '',
         status: foiEnviado ? 'shipped' : (o.shipping_status || 'pending'),
+        payment_status: 'paid',
+        total: parseFloat(o.total || 0),
         statusRastreio, diasUteis, statusPrazo, ja_notificado: jaEnviado, created_at: o.created_at
       });
     }
+
+    // Pedidos pendentes de pagamento
+    const pendentes = [];
+    for (const o of ordersPendentes) {
+      if (o.status === 'cancelled') continue;
+      pendentes.push({
+        order_id: String(o.id), numero: o.number, cliente: o.contact_name || '',
+        telefone: formatTel(o.contact_phone),
+        rastreio: '', transportadora: o.gateway || '',
+        status: 'aguardando_pagamento',
+        payment_status: 'pending',
+        total: parseFloat(o.total || 0),
+        statusRastreio: null, diasUteis: diasUteisDesde(o.created_at),
+        statusPrazo: null, ja_notificado: false, created_at: o.created_at
+      });
+    }
+
     resultado.sort((a, b) => {
       const p = x => x.statusPrazo === 'atrasado' ? 0 : x.statusPrazo === 'hoje' ? 1 : x.status === 'shipped' ? 2 : 3;
       return p(a) - p(b);
     });
-    res.json({ success: true, total: resultado.length, pedidos: resultado });
+
+    const resumo = {
+      total: resultado.length,
+      atrasados: resultado.filter(p => p.statusPrazo === 'atrasado').length,
+      enviados: resultado.filter(p => p.status === 'shipped').length,
+      pendentes_pagamento: pendentes.length
+    };
+
+    res.json({ success: true, resumo, pedidos: resultado, pendentes_pagamento: pendentes });
   } catch(e) {
     console.error('Erro /pedidos:', e.response?.data || e.message);
     res.status(500).json({ error: e.message });
