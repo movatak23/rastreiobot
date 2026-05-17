@@ -475,6 +475,23 @@ function salvarPaymentId(chave, paymentId) {
   db.prepare('UPDATE licencas SET payment_id = ? WHERE chave = ?').run(paymentId, chave);
 }
 
+// Busca licenca pela chave (para login do app mobile)
+function getLicencaPorChave(chave) {
+  return db.prepare("SELECT * FROM licencas WHERE chave = ? AND status = ?").get(chave, "ativa");
+}
+
+// Metas por loja
+db.exec("CREATE TABLE IF NOT EXISTS metas (store_id TEXT PRIMARY KEY, faturamento REAL DEFAULT 0, pedidos INTEGER DEFAULT 0, updated_at TEXT DEFAULT (datetime('now')))");
+
+function getMetas(storeId) {
+  const row = db.prepare("SELECT faturamento, pedidos FROM metas WHERE store_id = ?").get(storeId);
+  return row || { faturamento: 0, pedidos: 0 };
+}
+
+function salvarMetas(storeId, faturamento, pedidos) {
+  db.prepare("INSERT INTO metas (store_id, faturamento, pedidos, updated_at) VALUES (?, ?, ?, datetime('now')) ON CONFLICT(store_id) DO UPDATE SET faturamento = excluded.faturamento, pedidos = excluded.pedidos, updated_at = excluded.updated_at").run(storeId, faturamento, pedidos);
+}
+
 // ── Auth Sessions ─────────────────────────────────────────────────────────────
 function upsertAuthSession(code, status) {
   db.prepare('INSERT OR REPLACE INTO auth_sessions (code, status) VALUES (?, ?)').run(code, status);
@@ -510,6 +527,6 @@ module.exports = {
   getAdminStats, getLojistaStats,
   upsertAuthSession, getAuthSession, completeAuthSession, deleteAuthSession,
   criarLicenca, getLicenca, getLicencaPorStore, vincularLicenca, validarLicenca,
-  getLicencasPorPayment, salvarPaymentId,
+  getLicencasPorPayment, salvarPaymentId, getLicencaPorChave, getMetas, salvarMetas,
   migrar
 };
