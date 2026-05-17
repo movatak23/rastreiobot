@@ -1101,6 +1101,16 @@ app.post('/webhook/mp', async (req, res) => {
   }
 });
 
+// ── Desvincular dispositivo (admin) ──────────────────────────────────────────
+app.post('/admin/desvincular-dispositivo', (req, res) => {
+  const { chave, token } = req.body;
+  if (!token || token !== process.env.ADMIN_TOKEN)
+    return res.status(401).json({ error: 'Não autorizado.' });
+  if (!chave) return res.status(400).json({ error: 'chave obrigatoria' });
+  db.desvincularDispositivo(chave);
+  res.json({ success: true, message: `Dispositivo desvinculado da chave ${chave}.` });
+});
+
 // ── Gerar chave manualmente (uso interno) ─────────────────────────────────────
 app.get('/admin/gerar-chave', async (req, res) => {
   const { plano = 'premium', dias = '99999', email, token } = req.query;
@@ -1122,15 +1132,15 @@ app.get('/admin/gerar-chave', async (req, res) => {
 
 // ── Validar licenca (extensao) ────────────────────────────────────────────────
 app.post('/licenca/validar', auth, (req, res) => {
-  const { chave, store_id } = req.body;
+  const { chave, store_id, device_id } = req.body;
   if (!chave || !store_id) return res.status(400).json({ error: 'chave e store_id obrigatorios' });
-  const resultado = db.validarLicenca(chave, store_id);
+  const resultado = db.validarLicenca(chave, store_id, device_id || null);
   res.json(resultado);
 });
 
 // ── Validar licenca pelo app mobile (sem store_id) ───────────────────────────
 app.post("/licenca/validar-app", auth, (req, res) => {
-  const { chave } = req.body;
+  const { chave, device_id } = req.body;
   if (!chave) return res.status(400).json({ error: "chave obrigatoria" });
   try {
     const lic = db.getLicencaPorChave(chave);
@@ -1138,6 +1148,15 @@ app.post("/licenca/validar-app", auth, (req, res) => {
     if (new Date(lic.expira_em) < new Date()) return res.json({ valida: false, motivo: "Chave expirada." });
     if (lic.plano !== "premium") return res.json({ valida: false, motivo: "Plano insuficiente." });
     if (!lic.store_id) return res.json({ valida: false, motivo: "Loja nao vinculada. Instale a extensao Chrome primeiro." });
+    // Verificação de dispositivo
+    if (device_id) {
+      if (lic.device_id && lic.device_id !== String(device_id)) {
+        return res.json({ valida: false, motivo: "Esta chave ja esta vinculada a outro dispositivo." });
+      }
+      if (!lic.device_id) {
+        db.prepare("UPDATE licencas SET device_id = ? WHERE chave = ?").run(String(device_id), chave);
+      }
+    }
     res.json({ valida: true, plano: lic.plano, store_id: lic.store_id, expira_em: lic.expira_em });
   } catch(e) {
     res.status(500).json({ error: e.message });

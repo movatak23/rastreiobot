@@ -429,6 +429,8 @@ function migrar() {
       created_at TEXT DEFAULT (datetime('now'))
     );
   `);
+  // Adiciona coluna device_id se não existir
+  try { db.exec("ALTER TABLE licencas ADD COLUMN device_id TEXT"); } catch(e) {}
   console.log('[DB] Migração concluída.');
 }
 
@@ -457,14 +459,28 @@ function vincularLicenca(chave, storeId) {
   db.prepare('UPDATE licencas SET store_id = ? WHERE chave = ?').run(storeId, chave);
 }
 
-function validarLicenca(chave, storeId) {
+function validarLicenca(chave, storeId, deviceId) {
   const lic = db.prepare('SELECT * FROM licencas WHERE chave = ?').get(chave);
   if (!lic) return { valida: false, motivo: 'Chave não encontrada.' };
   if (lic.status !== 'ativa') return { valida: false, motivo: 'Licença inativa.' };
-  if (lic.store_id && lic.store_id !== String(storeId)) return { valida: false, motivo: 'Chave vinculada a outra loja.' };
   if (new Date(lic.expira_em) < new Date()) return { valida: false, motivo: 'Licença expirada.' };
+  if (lic.store_id && lic.store_id !== String(storeId)) return { valida: false, motivo: 'Chave vinculada a outra loja.' };
+  // Verificação de dispositivo
+  if (deviceId) {
+    if (lic.device_id && lic.device_id !== String(deviceId)) {
+      return { valida: false, motivo: 'Esta chave já está vinculada a outro dispositivo. Adquira uma nova licença.' };
+    }
+    if (!lic.device_id) {
+      db.prepare('UPDATE licencas SET device_id = ? WHERE chave = ?').run(String(deviceId), chave);
+    }
+  }
   if (!lic.store_id) db.prepare('UPDATE licencas SET store_id = ? WHERE chave = ?').run(String(storeId), chave);
   return { valida: true, plano: lic.plano, expira_em: lic.expira_em };
+}
+
+// Desvincular dispositivo (admin — para trocar o computador do cliente)
+function desvincularDispositivo(chave) {
+  db.prepare('UPDATE licencas SET device_id = NULL WHERE chave = ?').run(chave);
 }
 
 function getLicencasPorPayment(paymentId) {
@@ -527,6 +543,6 @@ module.exports = {
   getAdminStats, getLojistaStats,
   upsertAuthSession, getAuthSession, completeAuthSession, deleteAuthSession,
   criarLicenca, getLicenca, getLicencaPorStore, vincularLicenca, validarLicenca,
-  getLicencasPorPayment, salvarPaymentId, getLicencaPorChave, getMetas, salvarMetas,
+  getLicencasPorPayment, salvarPaymentId, getLicencaPorChave, getMetas, salvarMetas, desvincularDispositivo,
   migrar
 };
