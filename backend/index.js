@@ -255,6 +255,7 @@ cron.schedule('*/30 * * * *', async () => {
       await verificarPagamentos(store.store_id);
       await verificarBoletosPendentes(store.store_id);
       await verificarCarrinhosAbandonados(store.store_id);
+      await verificarPedidosManuaisAbandonados(store.store_id);
       await verificarRastreios(store.store_id);
       await verificarPosEntrega(store.store_id);
       await verificarPedidosParados(store.store_id);
@@ -453,6 +454,59 @@ async function verificarCarrinhosAbandonados(storeId) {
     const msg = e.response?.data?.description || e.message || '';
     if (msg.includes('Last page is 0')) return;
     console.error(`[Carrinho] Erro loja ${storeId}:`, e.response?.data || e.message);
+  }
+}
+
+// ── Verificar pedidos manuais abandonados (sem pagamento) ─────────────────────
+async function verificarPedidosManuaisAbandonados(storeId) {
+  try {
+    const orders = await nuvemGet(storeId, '/orders', {
+      per_page: 50,
+      payment_status: 'pending',
+      status: 'open'
+    });
+
+    const agora = Date.now();
+
+    for (const o of orders) {
+      if (!o.contact_phone) continue;
+      const telefone = formatTel(o.contact_phone);
+      if (!telefone) continue;
+
+      const criadoEm = new Date(o.created_at).getTime();
+      const minutos = Math.floor((agora - criadoEm) / 60000);
+      const nome = o.contact_name || 'Cliente';
+      const id = 'manual_' + String(o.id);
+      const link = '';
+
+      let etapa = null;
+      if (minutos >= 30  && minutos < 90)   etapa = 30;
+      if (minutos >= 60  && minutos < 120)  etapa = 60;
+      if (minutos >= 1440 && minutos < 1500) etapa = 1440;
+      if (minutos >= 2880 && minutos < 2940) etapa = 2880;
+      if (!etapa) continue;
+
+      if (db.jaCarrinhoEnviado(id, etapa)) continue;
+
+      const mensagem = montarMensagemCarrinho(etapa, nome, link);
+      if (!mensagem) continue;
+
+      try {
+        if (!await podEnviar(telefone, storeId)) continue;
+        await sendWhatsApp(telefone, mensagem, storeId);
+        db.marcarCarrinhoEnviado(id, storeId, etapa, telefone);
+        db.registrarMensagem(telefone);
+        console.log(`[Carrinho Manual] Etapa ${etapa}min enviada para ${nome} — pedido #${o.id}`);
+      } catch(e) {
+        console.error(`[Carrinho Manual] Falha etapa ${etapa}min para #${o.id}:`, e.message);
+      }
+
+      await new Promise(r => setTimeout(r, 500));
+    }
+  } catch(e) {
+    const msg = e.response?.data?.description || e.message || '';
+    if (msg.includes('Last page is 0')) return;
+    console.error(`[Carrinho Manual] Erro loja ${storeId}:`, e.response?.data || e.message);
   }
 }
 
