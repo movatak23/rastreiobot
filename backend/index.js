@@ -1795,7 +1795,7 @@ async function movProcessarMensagem(body) {
   try {
     if (!movPool) return;
     const texto    = (body.text && body.text.message ? body.text.message : '').trim().toLowerCase();
-    const telefone = (body.phone || '').replace(/\D/g, '');
+    const telefone = String(body.phone || '').replace(/\D/g, '');
     if (!texto || !telefone) return;
     const rc = await movQuery(
       'SELECT * FROM movatak_clientes WHERE ativo = true AND $1 ILIKE '%' || trigger_msg || '%'',
@@ -1824,7 +1824,7 @@ async function movProcessarMensagem(body) {
 async function movProcessarEtiqueta(body) {
   try {
     if (!movPool) return;
-    const telefone   = (body.phone || '').replace(/\D/g, '');
+    const telefone   = String(body.phone || '').replace(/\D/g, '');
     const etiqueta   = (body.label || '').toLowerCase().trim();
     const instanceId = body.instanceId || body.instance || '';
     if (!telefone || !etiqueta || !instanceId) return;
@@ -1868,7 +1868,7 @@ async function movProcessarEtiqueta(body) {
 async function movProcessarResposta(body) {
   try {
     if (!movPool || body.fromMe) return;
-    const telefone   = (body.phone || '').replace(/\D/g, '');
+    const telefone   = String(body.phone || '').replace(/\D/g, '');
     const instanceId = body.instanceId || body.instance || '';
     if (!telefone || !instanceId) return;
     const rc = await movQuery(
