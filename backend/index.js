@@ -1797,12 +1797,10 @@ async function movProcessarMensagem(body) {
     const texto    = (body.text && body.text.message ? body.text.message : '').trim().toLowerCase();
     const telefone = String(body.phone || '').replace(/\D/g, '');
     if (!texto || !telefone) return;
-    const rc = await movQuery(
-      'SELECT * FROM movatak_clientes WHERE ativo = true AND $1 ILIKE '%' || trigger_msg || '%'',
-      [texto]
-    );
+    const rc = await movQuery('SELECT * FROM movatak_clientes WHERE ativo = true', []);
     if (!rc || !rc.rows.length) return;
-    const cliente = rc.rows[0];
+    const cliente = rc.rows.find(c => texto.includes((c.trigger_msg || '').toLowerCase().trim()));
+    if (!cliente) return;
     const existe = await movQuery(
       'SELECT id FROM movatak_leads WHERE cliente_id = $1 AND telefone = $2',
       [cliente.id, telefone]
