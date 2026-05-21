@@ -1810,9 +1810,16 @@ async function movProcessarMensagem(body) {
       "INSERT INTO movatak_leads (cliente_id, telefone, nome, etapa) VALUES ($1, $2, $3, 'lead')",
       [cliente.id, telefone, body.senderName || null]
     );
-    await axios.post(
-      'https://api.z-api.io/instances/' + cliente.zapi_instance + '/token/' + cliente.zapi_token + '/label-contact',
-      { phone: telefone, labelName: 'Lead' },
+    // Buscar ID da etiqueta 'Lead' na instância
+    const tagsRes = await axios.get(
+      'https://api.z-api.io/instances/' + cliente.zapi_instance + '/token/' + cliente.zapi_token + '/tags',
+      { headers: { 'Client-Token': cliente.zapi_client_token } }
+    );
+    const leadTag = (tagsRes.data || []).find(t => (t.name || '').toLowerCase() === 'lead');
+    if (!leadTag) { console.log('[Movatak] Etiqueta Lead nao encontrada na instancia ' + cliente.nome); return; }
+    await axios.put(
+      'https://api.z-api.io/instances/' + cliente.zapi_instance + '/token/' + cliente.zapi_token + '/chats/' + telefone + '/tags/' + leadTag.id + '/add',
+      {},
       { headers: { 'Client-Token': cliente.zapi_client_token } }
     );
     console.log('[Movatak] Lead criado: ' + telefone + ' cliente ' + cliente.nome);
