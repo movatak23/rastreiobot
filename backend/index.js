@@ -1898,11 +1898,14 @@ cron.schedule('0 * * * *', async () => {
     const r = await movQuery(
       "SELECT f.*, l.telefone, l.nome, c.zapi_instance, c.zapi_token, c.zapi_client_token FROM movatak_followup f JOIN movatak_leads l ON l.id=f.lead_id JOIN movatak_clientes c ON c.id=f.cliente_id WHERE f.status='pendente' AND f.proximo_envio<=NOW() AND l.etapa='followup'", []
     );
+    // Buscar mensagens personalizadas do banco (com fallback para padrao)
+    const clienteRow = await movQuery('SELECT followup_msgs FROM movatak_clientes WHERE id = $1', [row.cliente_id]);
+    const customMsgs = (clienteRow && clienteRow.rows[0] && clienteRow.rows[0].followup_msgs) || {};
     const MSGS = {
-      1: (n) => 'Oi' + (n ? ' ' + n : '') + '! Tudo bem? Passei aqui pra saber se ficou alguma duvida. Estou a disposicao!',
-      2: (n) => (n || 'Ola') + '! Ainda temos disponibilidade pra voce. Se quiser retomar a conversa, e so chamar!',
-      3: (_) => 'Ei! Nao quero ser chato, mas queria passar uma ultima vez. Tem algo que posso esclarecer?',
-      4: (_) => 'Ultimo recado! Se em algum momento fizer sentido retomar, estarei aqui. Abraco!'
+      1: (n) => (customMsgs.msg1 || 'Oi{nome}! Tudo bem? Passei aqui pra saber se ficou alguma duvida. Estou a disposicao!').replace('{nome}', n ? ' ' + n : ''),
+      2: (n) => (customMsgs.msg2 || '{nome}! Ainda temos disponibilidade pra voce. Se quiser retomar a conversa, e so chamar!').replace('{nome}', n || 'Ola'),
+      3: (_) => customMsgs.msg3 || 'Ei! Nao quero ser chato, mas queria passar uma ultima vez. Tem algo que posso esclarecer?',
+      4: (_) => customMsgs.msg4 || 'Ultimo recado! Se em algum momento fizer sentido retomar, estarei aqui. Abraco!'
     };
     for (const row of (r && r.rows ? r.rows : [])) {
       try {
