@@ -1777,15 +1777,160 @@ function contemGatilho(texto) {
   });
 }
 
+
+// ── Movatak — helpers ────────────────────────────────────────────────────────
+const { Pool } = require('pg');
+const movPool = process.env.MOVATAK_DATABASE_URL
+  ? new Pool({ connectionString: process.env.MOVATAK_DATABASE_URL, ssl: { rejectUnauthorized: false } })
+  : null;
+
+async function movQuery(sql, params) {
+  if (!movPool) return null;
+  const client = await movPool.connect();
+  try { return await client.query(sql, params); }
+  finally { client.release(); }
+}
+
+async function movProcessarMensagem(body) {
+  try {
+    if (!movPool) return;
+    const texto    = (body.text && body.text.message ? body.text.message : '').trim().toLowerCase();
+    const telefone = (body.phone || '').replace(/\D/g, '');
+    if (!texto || !telefone) return;
+    const rc = await movQuery(
+      'SELECT * FROM movatak_clientes WHERE ativo = true AND $1 ILIKE '%' || trigger_msg || '%'',
+      [texto]
+    );
+    if (!rc || !rc.rows.length) return;
+    const cliente = rc.rows[0];
+    const existe = await movQuery(
+      'SELECT id FROM movatak_leads WHERE cliente_id = $1 AND telefone = $2',
+      [cliente.id, telefone]
+    );
+    if (existe && existe.rows.length) return;
+    await movQuery(
+      "INSERT INTO movatak_leads (cliente_id, telefone, nome, etapa) VALUES ($1, $2, $3, 'lead')",
+      [cliente.id, telefone, body.senderName || null]
+    );
+    await axios.post(
+      'https://api.z-api.io/instances/' + cliente.zapi_instance + '/token/' + cliente.zapi_token + '/label-contact',
+      { phone: telefone, labelName: 'Lead' },
+      { headers: { 'Client-Token': cliente.zapi_client_token } }
+    );
+    console.log('[Movatak] Lead criado: ' + telefone + ' cliente ' + cliente.nome);
+  } catch(e) { console.error('[Movatak] movProcessarMensagem:', e.message); }
+}
+
+async function movProcessarEtiqueta(body) {
+  try {
+    if (!movPool) return;
+    const telefone   = (body.phone || '').replace(/\D/g, '');
+    const etiqueta   = (body.label || '').toLowerCase().trim();
+    const instanceId = body.instanceId || body.instance || '';
+    if (!telefone || !etiqueta || !instanceId) return;
+    const rc = await movQuery(
+      'SELECT * FROM movatak_clientes WHERE zapi_instance = $1 AND ativo = true', [instanceId]
+    );
+    if (!rc || !rc.rows.length) return;
+    const cliente = rc.rows[0];
+    const rl = await movQuery(
+      'SELECT * FROM movatak_leads WHERE cliente_id = $1 AND telefone = $2', [cliente.id, telefone]
+    );
+    if (!rl || !rl.rows.length) return;
+    const lead = rl.rows[0];
+    if (etiqueta === 'follow up' || etiqueta === 'followup') {
+      await movQuery("UPDATE movatak_leads SET etapa='followup', atualizado_em=NOW() WHERE id=$1", [lead.id]);
+      await movQuery('DELETE FROM movatak_followup WHERE lead_id=$1', [lead.id]);
+      const diasSeq = { 1:1, 2:3, 3:7, 4:14 };
+      for (const [etapa, dias] of Object.entries(diasSeq)) {
+        const prox = new Date(); prox.setDate(prox.getDate() + dias);
+        await movQuery(
+          "INSERT INTO movatak_followup (lead_id,cliente_id,etapa_seq,proximo_envio,status) VALUES ($1,$2,$3,$4,'pendente')",
+          [lead.id, cliente.id, parseInt(etapa), prox.toISOString()]
+        );
+      }
+      console.log('[Movatak] Follow up agendado lead ' + lead.id);
+    }
+    if (etiqueta === 'cliente') {
+      await movQuery("UPDATE movatak_leads SET etapa='cliente', atualizado_em=NOW() WHERE id=$1", [lead.id]);
+      await movQuery("UPDATE movatak_followup SET status='pausado' WHERE lead_id=$1 AND status='pendente'", [lead.id]);
+      const msg = 'Seja bem-vindo(a)' + (lead.nome ? ', ' + lead.nome : '') + '! Estamos muito felizes em ter voce conosco. Em breve entraremos em contato com os proximos passos. Qualquer duvida, e so chamar!';
+      await axios.post(
+        'https://api.z-api.io/instances/' + cliente.zapi_instance + '/token/' + cliente.zapi_token + '/send-text',
+        { phone: telefone, message: msg },
+        { headers: { 'Client-Token': cliente.zapi_client_token } }
+      );
+      console.log('[Movatak] Cliente convertido lead ' + lead.id);
+    }
+  } catch(e) { console.error('[Movatak] movProcessarEtiqueta:', e.message); }
+}
+
+async function movProcessarResposta(body) {
+  try {
+    if (!movPool || body.fromMe) return;
+    const telefone   = (body.phone || '').replace(/\D/g, '');
+    const instanceId = body.instanceId || body.instance || '';
+    if (!telefone || !instanceId) return;
+    const rc = await movQuery(
+      'SELECT id FROM movatak_clientes WHERE zapi_instance=$1 AND ativo=true', [instanceId]
+    );
+    if (!rc || !rc.rows.length) return;
+    const rl = await movQuery(
+      "SELECT id FROM movatak_leads WHERE cliente_id=$1 AND telefone=$2 AND etapa='followup'",
+      [rc.rows[0].id, telefone]
+    );
+    if (!rl || !rl.rows.length) return;
+    await movQuery(
+      "UPDATE movatak_followup SET status='pausado' WHERE lead_id=$1 AND status='pendente'", [rl.rows[0].id]
+    );
+    console.log('[Movatak] Follow up pausado por resposta lead ' + rl.rows[0].id);
+  } catch(e) { console.error('[Movatak] movProcessarResposta:', e.message); }
+}
+
+cron.schedule('0 * * * *', async () => {
+  if (!movPool) return;
+  try {
+    const r = await movQuery(
+      "SELECT f.*, l.telefone, l.nome, c.zapi_instance, c.zapi_token, c.zapi_client_token FROM movatak_followup f JOIN movatak_leads l ON l.id=f.lead_id JOIN movatak_clientes c ON c.id=f.cliente_id WHERE f.status='pendente' AND f.proximo_envio<=NOW() AND l.etapa='followup'", []
+    );
+    const MSGS = {
+      1: (n) => 'Oi' + (n ? ' ' + n : '') + '! Tudo bem? Passei aqui pra saber se ficou alguma duvida. Estou a disposicao!',
+      2: (n) => (n || 'Ola') + '! Ainda temos disponibilidade pra voce. Se quiser retomar a conversa, e so chamar!',
+      3: (_) => 'Ei! Nao quero ser chato, mas queria passar uma ultima vez. Tem algo que posso esclarecer?',
+      4: (_) => 'Ultimo recado! Se em algum momento fizer sentido retomar, estarei aqui. Abraco!'
+    };
+    for (const row of (r && r.rows ? r.rows : [])) {
+      try {
+        const msg = MSGS[row.etapa_seq] && MSGS[row.etapa_seq](row.nome);
+        if (!msg) continue;
+        await axios.post(
+          'https://api.z-api.io/instances/' + row.zapi_instance + '/token/' + row.zapi_token + '/send-text',
+          { phone: row.telefone, message: msg },
+          { headers: { 'Client-Token': row.zapi_client_token } }
+        );
+        await movQuery("UPDATE movatak_followup SET status='enviado' WHERE id=$1", [row.id]);
+        console.log('[Movatak Cron] Follow up ' + row.etapa_seq + ' enviado lead ' + row.lead_id);
+      } catch(e) { console.error('[Movatak Cron] lead ' + row.lead_id + ':', e.message); }
+    }
+  } catch(e) { console.error('[Movatak Cron]', e.message); }
+});
+
+// Webhook etiqueta Movatak (rota separada)
 app.post('/webhook/zapi', async (req, res) => {
   res.json({ ok: true }); // Responde imediatamente
 
   try {
     const body = req.body;
 
+    // Movatak — processa lead e resposta de follow up
+    if (!body.fromMe) {
+      await movProcessarMensagem(body);
+      await movProcessarResposta(body);
+    }
+
     // Ignora mensagens enviadas pelo próprio bot
     if (body.fromMe) return;
-    if (!body.text?.message) return;
+    if (!body.text || !body.text.message) return;
 
     const texto    = body.text.message;
     const telefone = body.phone; // formato: 5581999999999
