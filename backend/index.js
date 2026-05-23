@@ -362,17 +362,24 @@ async function verificarBoletosPendentes(storeId) {
       const nome     = o.contact_name || 'Cliente';
 
       // Janelas ampliadas: até 4h após cada marco para não perder crons
+      // Etapa 9999 = resgate único para pedidos antigos sem nenhuma mensagem enviada
       let etapa = null;
       if (minutos >= 60   && minutos < 300)  etapa = 60;
       if (minutos >= 1440 && minutos < 1680) etapa = 1440;
       if (minutos >= 2880 && minutos < 3120) etapa = 2880;
+      if (minutos >= 4320 && !db.jaBoletoEnviado(id, 60) && !db.jaBoletoEnviado(id, 1440) && !db.jaBoletoEnviado(id, 2880)) etapa = 9999;
       if (!etapa) continue;
 
       if (db.jaBoletoEnviado(id, etapa)) continue;
 
       // Determinar método para personalizar mensagem
       const metodoLabel = gw.includes('pix') ? 'PIX' : gw === '' ? 'link de pagamento' : 'boleto';
-      const mensagem = montarMensagemBoleto(etapa, nome, o.number, metodoLabel);
+      let mensagem;
+      if (etapa === 9999) {
+        mensagem = `⚠️ ${nome}, seu pedido *#${o.number}* ainda está aguardando pagamento. Ainda tem interesse? O que falta para finalizarmos e despacharmos seu pedido nas próximas 24h?`;
+      } else {
+        mensagem = montarMensagemBoleto(etapa, nome, o.number, metodoLabel);
+      }
       if (!mensagem) continue;
 
       try {
