@@ -1,2052 +1,814 @@
-require('dotenv').config();
-const nodemailer = require('nodemailer');
-const crypto     = require('crypto');
-const { Resend } = require('resend');
+'use strict';
+
 const express = require('express');
-const axios   = require('axios');
-const cors    = require('cors');
-const cron    = require('node-cron');
-const path    = require('path');
-const db      = require('./db');
+const { Pool } = require('pg');
+const cron = require('node-cron');
+const axios = require('axios');
 
-// Migração: criar tabelas novas no banco existente
-db.migrar();
-
-
+const path = require('path');
 const app = express();
 app.use(express.json());
-app.use(cors({ origin: '*' }));
+app.use((req, res, next) => {
+  res.header('Access-Control-Allow-Origin', '*');
+  res.header('Access-Control-Allow-Headers', 'Content-Type, x-movatak-secret, x-app-token');
+  res.header('Access-Control-Allow-Methods', 'GET, POST, PATCH, DELETE, OPTIONS');
+  if (req.method === 'OPTIONS') return res.sendStatus(200);
+  next();
+});
 app.use(express.static(path.join(__dirname, 'public')));
 
-const {
-  NUVEM_CLIENT_ID,
-  NUVEM_CLIENT_SECRET,
-  APP_URL,
-  EXTENSION_SECRET,
-  PORT = 3000,
-  MP_ACCESS_TOKEN,
-  SMTP_HOST,
-  SMTP_PORT,
-  SMTP_USER,
-  SMTP_PASS,
-  ZAPI_INSTANCE,
-  ZAPI_TOKEN,
-  ZAPI_CLIENT_TOKEN
-} = process.env;
+// ============================================================
+// Banco de dados
+// ============================================================
+const pool = new Pool({
+  connectionString: process.env.DATABASE_URL,
+  ssl: { rejectUnauthorized: false }
+});
 
-// ── Auth middleware ───────────────────────────────────────────────────────────
-function auth(req, res, next) {
-  if (req.headers['x-secret'] !== EXTENSION_SECRET)
-    return res.status(401).json({ error: 'Não autorizado.' });
+async function query(sql, params) {
+  const client = await pool.connect();
+  try {
+    const res = await client.query(sql, params);
+    return res;
+  } finally {
+    client.release();
+  }
+}
+
+// ============================================================
+// Autenticação do painel Movatak (suas rotas internas)
+// ============================================================
+function authMovatak(req, res, next) {
+  const secret = req.headers['x-movatak-secret'];
+  if (secret !== process.env.MOVATAK_SECRET) {
+    return res.status(401).json({ error: 'Nao autorizado.' });
+  }
   next();
 }
 
-// ── Nuvemshop API ─────────────────────────────────────────────────────────────
-async function nuvemGet(storeId, path, params = {}) {
-  const row = db.getToken(storeId);
-  if (!row) throw new Error('Loja não autenticada.');
-  const res = await axios.get(`https://api.nuvemshop.com.br/v1/${storeId}${path}`, {
-    headers: {
-      'Authentication': `bearer ${row.access_token}`,
-      'User-Agent': `RastreioBot (${APP_URL})`,
-      'Content-Type': 'application/json'
-    },
-    params
-  });
-  return res.data;
-}
-
-function formatTel(tel) {
-  if (!tel) return null;
-  const d = String(tel).replace(/\D/g, '');
-  if (!d || d.length < 10) return null;
-  if (d.startsWith('55') && d.length >= 12) return d;
-  return '55' + d;
-}
-
-function diasUteisDesde(dateStr) {
-  if (!dateStr) return null;
-  const data = new Date(dateStr);
-  const hoje = new Date(); hoje.setHours(0,0,0,0);
-  data.setHours(0,0,0,0);
-  let dias = 0;
-  const cur = new Date(data);
-  while (cur < hoje) {
-    cur.setDate(cur.getDate() + 1);
-    const d = cur.getDay();
-    if (d !== 0 && d !== 6) dias++;
-  }
-  return dias;
-}
-
-// ── Limite diário por número ──────────────────────────────────────────────────
-async function podEnviar(telefone) {
-  const count = db.mensagensHoje(telefone);
-  if (count >= 3) {
-    console.log(`[Limite] ${telefone} já recebeu ${count} mensagens hoje. Bloqueado.`);
-    return false;
-  }
-  return true;
-}
-
-// ── Z-API ─────────────────────────────────────────────────────────────────────
-async function sendWhatsApp(telefone, mensagem, storeId) {
-  // Tenta instância do cliente primeiro, fallback para variáveis de ambiente
-  let instance, token, clientToken;
-
-  if (storeId) {
-    const inst = db.getInstancia(storeId);
-    if (inst) {
-      instance    = inst.zapi_instance;
-      token       = inst.zapi_token;
-      clientToken = inst.zapi_client_token;
-    }
-  }
-
-  // Fallback para variáveis de ambiente (compatibilidade retroativa)
-  if (!instance) {
-    if (!ZAPI_INSTANCE || !ZAPI_TOKEN || !ZAPI_CLIENT_TOKEN)
-      throw new Error('Z-API não configurada.');
-    instance    = ZAPI_INSTANCE;
-    token       = ZAPI_TOKEN;
-    clientToken = ZAPI_CLIENT_TOKEN;
-  }
-
-  let numero = String(telefone).replace(/\D/g, '');
-  if (numero.startsWith('55')) numero = numero.slice(2);
-
-  const res = await axios.post(
-    `https://api.z-api.io/instances/${instance}/token/${token}/send-text`,
-    { phone: numero, message: mensagem },
-    { headers: { 'Client-Token': clientToken, 'Content-Type': 'application/json' } }
-  );
-  return res.data;
-}
-
-// ── Correios API ──────────────────────────────────────────────────────────────
-async function consultarCorreios(codigo) {
-  const SEURASTREIO_KEY = process.env.SEURASTREIO_KEY;
-  if (!SEURASTREIO_KEY) {
-    console.error('[Correios] SEURASTREIO_KEY não configurada.');
-    return null;
-  }
+// Autenticação do app do cliente (acesso somente leitura)
+async function authCliente(req, res, next) {
+  const token = req.headers['x-app-token'];
+  if (!token) return res.status(401).json({ error: 'Token ausente.' });
   try {
-    const res = await axios.get(
-      `https://seurastreio.com.br/api/public/rastreio/${codigo}`,
-      {
-        headers: { 'Authorization': `Bearer ${SEURASTREIO_KEY}` },
-        timeout: 15000
-      }
+    const r = await query(
+      'SELECT id FROM movatak_clientes WHERE app_token = $1 AND ativo = true',
+      [token]
     );
-    const evento = res.data?.eventoMaisRecente;
-    if (!evento) return null;
-    const descricao = evento.descricao || evento.status || '';
-    const desc_lower = descricao.toLowerCase();
-    const entregue = desc_lower.includes('entregue') || desc_lower.includes('objeto entregue');
-    // Data vem em ISO ou "DD/MM/YYYY HH:mm"
-    let data = '', hora = '';
-    if (evento.data) {
-      const partes = String(evento.data).split(' ');
-      data = partes[0] || '';
-      hora = partes[1] || '';
-    }
-    return { status: evento.status || '', descricao, data, hora, entregue };
+    if (!r.rows.length) return res.status(401).json({ error: 'Token invalido.' });
+    req.clienteId = r.rows[0].id;
+    next();
+  } catch (e) {
+    res.status(500).json({ error: e.message });
+  }
+}
+
+// ============================================================
+// Z-API — helpers
+// ============================================================
+const ZAPI_BASE = 'https://api.z-api.io/instances';
+
+async function zapiEnviar(instance, token, clientToken, telefone, mensagem) {
+  const url = `${ZAPI_BASE}/${instance}/token/${token}/send-text`;
+  await axios.post(url, { phone: telefone, message: mensagem }, {
+    headers: { 'Client-Token': clientToken }
+  });
+}
+
+async function zapiEtiquetar(instance, token, clientToken, telefone, label) {
+  const url = `${ZAPI_BASE}/${instance}/token/${token}/label-contact`;
+  await axios.post(url, { phone: telefone, labelName: label }, {
+    headers: { 'Client-Token': clientToken }
+  });
+}
+
+
+const MOVATAK_ADMIN_WA = '558176041948';
+
+async function zapiCriarEtiqueta(instance, token, clientToken, nome) {
+  try {
+    const url = `https://api.z-api.io/instances/${instance}/token/${token}/tags`;
+    const res = await axios.post(url, { name: nome }, { headers: { 'Client-Token': clientToken } });
+    return res.data;
   } catch(e) {
-    console.error(`[Correios] Erro ao consultar ${codigo}:`, e.message);
+    console.error('[zapiCriarEtiqueta]', e.message);
     return null;
   }
 }
 
-// ── Mensagens ─────────────────────────────────────────────────────────────────
-function montarMensagem(template, pedido) {
-  const TRANSPORTADORAS = {
-    'Correios': { emoji:'📮', url:'https://rastreamento.correios.com.br/app/index.php?objeto={c}' },
-    'Jadlog':   { emoji:'🚚', url:'https://www.jadlog.com.br/siteInstitucional/tracking.jad?cte={c}' },
-    'Loggi':    { emoji:'⚡', url:'https://www.loggi.com/rastreador/?code={c}' },
-  };
-  const t = Object.entries(TRANSPORTADORAS).find(([k]) => (pedido.transportadora||'').toLowerCase().includes(k.toLowerCase()));
-  const transp = t ? t[1] : { emoji:'📦', url:'https://rastreamento.correios.com.br/app/index.php?objeto={c}' };
-  const transpNome = t ? t[0] : (pedido.transportadora || 'Transportadora');
-  const link = pedido.rastreio ? transp.url.replace('{c}', encodeURIComponent(pedido.rastreio)) : '';
-  const padrao =
-    `Olá {nome}! 👋\n\nSeu pedido *#{numero}* foi enviado!\n\n` +
-    `{emoji} *Transportadora:* {transportadora}\n` +
-    `📦 *Código de rastreio:* *{codigo}*\n\n` +
-    `🔗 Rastreie sua entrega:\n{link}\n\nQualquer dúvida é só chamar! 😊`;
-  return (template || padrao)
-    .replace(/{nome}/g,           pedido.cliente || 'Cliente')
-    .replace(/{numero}/g,         pedido.numero  || '')
-    .replace(/{codigo}/g,         pedido.rastreio || '')
-    .replace(/{transportadora}/g, transpNome)
-    .replace(/{emoji}/g,          transp.emoji)
-    .replace(/{link}/g,           link);
+async function zapiAtribuirEtiqueta(instance, token, clientToken, telefone, tagId) {
+  try {
+    const url = `https://api.z-api.io/instances/${instance}/token/${token}/chats/${telefone}/tags/${tagId}/add`;
+    await axios.put(url, {}, { headers: { 'Client-Token': clientToken } });
+  } catch(e) {
+    console.error('[zapiAtribuirEtiqueta]', e.message);
+  }
 }
 
-function montarMensagemRastreio(pedido, evento) {
-  const nome   = pedido.cliente || 'Cliente';
-  const numero = pedido.numero;
-  const link   = `https://rastreamento.correios.com.br/app/index.php?objeto=${pedido.rastreio}`;
-  const desc   = (evento.descricao || '').toLowerCase();
-  const data   = evento.data || '';
-  const hora   = evento.hora || '';
+async function enviarAlerta(instance, token, clientToken, destinatario, msg) {
+  try {
+    await zapiEnviar(instance, token, clientToken, destinatario, msg);
+  } catch(e) {
+    console.error('[enviarAlerta]', e.message);
+  }
+}
 
-  // Entregue
-  if (evento.entregue) {
-    return (
-      `✅ ${nome}, seu pedido *#${numero}* foi entregue!\n\n` +
-      `Esperamos que você goste! Qualquer dúvida é só chamar. 😊`
+// ============================================================
+// Mensagens de follow up por etapa
+// ============================================================
+const MSGS_FOLLOWUP = {
+  1: (nome) => `Oi${nome ? ' ' + nome : ''}! Tudo bem? Passei aqui pra saber se ficou alguma dúvida sobre o que conversamos. Estou à disposição!`,
+  2: (nome) => `${nome || 'Olá'}! Só reforçando que ainda temos disponibilidade pra você. Se quiser retomar a conversa, é só chamar aqui.`,
+  3: (_) => `Ei! Não quero ser chato, mas queria dar uma última passada antes de seguir em frente. Tem algo que posso esclarecer pra facilitar sua decisão?`,
+  4: (_) => `Último recado da minha parte! Se em algum momento fizer sentido retomar, estarei aqui. Abraço!`
+};
+
+const DIAS_FOLLOWUP = { 1: 1, 2: 3, 3: 7, 4: 14 };
+
+// ============================================================
+// ROTA 1 — Webhook de mensagem recebida
+// Z-API → POST /webhook/mensagem
+// ============================================================
+app.post('/movatak/webhook/mensagem', async (req, res) => {
+  try {
+    const { phone, text, senderName } = req.body;
+    if (!phone || !text) return res.json({ ok: true });
+
+    const mensagem = (text || '').trim().toLowerCase();
+    const telefone = phone.replace(/\D/g, '');
+
+    // Buscar cliente com trigger que bate com a mensagem
+    const r = await query(
+      `SELECT * FROM movatak_clientes WHERE ativo = true AND $1 ILIKE '%' || trigger_msg || '%'`,
+      [mensagem]
     );
-  }
+    if (!r.rows.length) return res.json({ ok: true });
 
-  // Saiu para entrega
-  if (desc.includes('saiu para entrega') || desc.includes('saiu para a entrega') || desc.includes('entrega prevista')) {
-    return (
-      `🎉 ${nome}, seu pedido *#${numero}* saiu para entrega hoje!\n\n` +
-      `Fique de olho, o entregador está a caminho! 📦\n` +
-      `🔗 Rastreie: ${link}`
-    );
-  }
+    const cliente = r.rows[0];
 
-  // Postado (primeiro registro)
-  if (desc.includes('postado') || desc.includes('objeto postado') || desc.includes('coletado')) {
-    return (
-      `📮 Olá, ${nome}! Seu pedido *#${numero}* foi postado!\n\n` +
-      `Código de rastreio: *${pedido.rastreio}*\n` +
-      `🔗 Rastreie: ${link}\n\n` +
-      `Em breve chegará até você! 😊`
-    );
-  }
-
-  // Em trânsito (padrão para demais status)
-  return (
-    `🚚 Boa notícia, ${nome}! Seu pedido *#${numero}* está a caminho!\n\n` +
-    `📍 Status: *${evento.descricao}*\n` +
-    `📅 ${data} às ${hora}\n\n` +
-    `🔗 Rastreie: ${link}`
-  );
-}
-
-// MSG_PAGAMENTO montada dinamicamente — ver montarMensagemPagamento()
-function montarMensagemPagamento(nome, numero) {
-  return (
-    `👏👏👏 Parabéns, ${nome}!👏👏👏\n` +
-    `Seu pagamento do pedido *#${numero}* foi confirmado!\n\n` +
-    `Nosso prazo de produção é de 3 dias úteis. Sua estampa entrou na fila de impressão agora e segue a sequência de pedidos.\n\n` +
-    `Lembrando que este prazo está sujeito a alteração devido a necessidade de manutenção emergencial em nosso maquinário.`
-  );
-}
-
-// ── CRON — Limpeza semanal do banco (toda domingo às 3h) ─────────────────────
-cron.schedule('0 3 * * 0', () => {
-  try {
-    db.limparRegistrosAntigos();
-    console.log('[Limpeza] Banco limpo com sucesso.');
-  } catch(e) {
-    console.error('[Limpeza] Erro:', e.message);
-  }
-});
-
-// ── CRON — Roda a cada 30 minutos ─────────────────────────────────────────────
-cron.schedule('*/30 * * * *', async () => {
-  console.log('[Cron] Iniciando verificação...');
-  try {
-    const stores = db.getAllStores();
-    for (const store of stores) {
-      await verificarPagamentos(store.store_id);
-      await verificarBoletosPendentes(store.store_id);
-      await verificarCarrinhosAbandonados(store.store_id);
-      await verificarPedidosManuaisAbandonados(store.store_id);
-      await verificarRastreios(store.store_id);
-      await verificarPosEntrega(store.store_id);
-      await verificarPedidosParados(store.store_id);
-    }
-  } catch(e) {
-    console.error('[Cron] Erro geral:', e.message);
-  }
-});
-
-// ── Mensagens de carrinho abandonado ─────────────────────────────────────────
-function montarMensagemCarrinho(etapa, nome, link) {
-  const msgs = {
-    30: `Olá, ${nome}! 👋
-
-Percebemos que você deixou alguns itens no carrinho da nossa loja.
-
-Ainda está interessado? Finalize sua compra aqui:
-🛒 ${link}
-
-Qualquer dúvida é só chamar! 😊`,
-
-    60: `Oi, ${nome}! Tudo bem? 😊
-
-Notamos que sua compra ainda não foi concluída. Teve algum problema no pagamento?
-
-Estamos aqui para ajudar! Responda essa mensagem ou finalize agora:
-🛒 ${link}`,
-
-    1440: `${nome}, sua sacola ainda está te esperando! 🛍️
-
-⚠️ *Atenção:* Os itens no seu carrinho têm estoque limitado e podem esgotar a qualquer momento.
-
-Não deixe para depois — garanta o seu agora:
-🛒 ${link}`,
-
-    2880: `${nome}, última chance! ⏰
-
-Sua reserva expira em breve e os produtos do seu carrinho voltam para o estoque.
-
-Finalize sua compra antes que acabe:
-🛒 ${link}
-
-_Esta é a última notificação sobre este carrinho._`
-  };
-  return msgs[etapa] || null;
-}
-
-// ── Mensagens de recuperação de boleto/Pix não pago ─────────────────────────
-function montarMensagemBoleto(etapa, nome, numero, gateway) {
-  const metodo = (gateway || '').toLowerCase().includes('pix') ? 'PIX' : 'boleto';
-  const msgs = {
-    60: `Olá, ${nome}! 😊
-
-Identificamos que seu pedido *#${numero}* ainda está aguardando pagamento via *${metodo}*.
-
-Finalize seu pagamento para garantir seu pedido!
-
-Qualquer dúvida é só chamar. 💬`,
-
-    1440: `${nome}, seu pedido *#${numero}* ainda está pendente! ⏳
-
-Teve alguma dificuldade com o pagamento via *${metodo}*? Estamos aqui para ajudar!
-
-Responda essa mensagem se precisar de suporte. 😊`,
-
-    2880: `⚠️ ${nome}, *última chance!*
-
-Seu pedido *#${numero}* está prestes a ser cancelado por falta de pagamento.
-
-Finalize agora para não perder sua reserva!
-
-Qualquer problema com o ${metodo}, é só falar. 💬`
-  };
-  return msgs[etapa] || null;
-}
-
-// ── Verificar boletos/Pix não pagos ──────────────────────────────────────────
-async function verificarBoletosPendentes(storeId) {
-  try {
-    const orders = await nuvemGet(storeId, '/orders', {
-      per_page: 100,
-      payment_status: 'pending',
-      fields: 'id,number,contact_name,contact_phone,gateway,created_at,status'
-    });
-
-    const agora = Date.now();
-
-    for (const o of orders) {
-      if (o.status === 'cancelled') continue;
-
-      // Só boleto e pix (não cartão pendente)
-      const gw = (o.gateway || '').toLowerCase();
-      const ehBoletoOuPix = gw.includes('boleto') || gw.includes('pix') ||
-                            gw.includes('ticket') || gw.includes('bank');
-      if (!ehBoletoOuPix && gw !== '') continue; // se gateway desconhecido, processa mesmo assim
-
-      const telefone = formatTel(o.contact_phone);
-      if (!telefone) continue;
-
-      const criadoEm = new Date(o.created_at).getTime();
-      const minutos  = Math.floor((agora - criadoEm) / 60000);
-      const id       = String(o.id);
-      const nome     = o.contact_name || 'Cliente';
-
-      let etapa = null;
-      if (minutos >= 60   && minutos < 120)  etapa = 60;
-      if (minutos >= 1440 && minutos < 1500) etapa = 1440;
-      if (minutos >= 2880 && minutos < 2940) etapa = 2880;
-      if (!etapa) continue;
-
-      if (db.jaBoletoEnviado(id, etapa)) continue;
-
-      const mensagem = montarMensagemBoleto(etapa, nome, o.number, o.gateway);
-      if (!mensagem) continue;
-
-      try {
-        if (!await podEnviar(telefone, storeId)) continue;
-        await sendWhatsApp(telefone, mensagem, storeId);
-        db.marcarBoletoEnviado(id, storeId, etapa);
-        db.registrarMensagem(telefone);
-        console.log(`[Boleto] Etapa ${etapa}min enviada para ${nome} — pedido #${o.number}`);
-      } catch(e) {
-        console.error(`[Boleto] Falha para #${o.number}:`, e.message);
-      }
-
-      await new Promise(r => setTimeout(r, 500));
-    }
-  } catch(e) {
-    const msg = e.response?.data?.description || e.message || '';
-    if (msg.includes('Last page is 0')) return;
-    console.error(`[Boleto] Erro loja ${storeId}:`, e.response?.data || e.message);
-  }
-}
-
-// ── Verificar carrinhos abandonados ──────────────────────────────────────────
-async function verificarCarrinhosAbandonados(storeId) {
-  try {
-    const carrinhos = await nuvemGet(storeId, '/checkouts', {
-      per_page: 50,
-      fields: 'id,contact_name,contact_phone,abandoned_checkout_url,created_at'
-    });
-
-    const agora = Date.now();
-
-    for (const c of carrinhos) {
-      if (!c.contact_phone) continue;
-      const telefone = formatTel(c.contact_phone);
-      if (!telefone) continue;
-
-      const criadoEm = new Date(c.created_at).getTime();
-      const minutos = Math.floor((agora - criadoEm) / 60000);
-      const nome = c.contact_name || 'Cliente';
-      const link = c.abandoned_checkout_url || '';
-      const id   = String(c.id);
-
-      // Define qual etapa deve ser disparada
-      let etapa = null;
-      if (minutos >= 30  && minutos < 90)   etapa = 30;
-      if (minutos >= 60  && minutos < 120)  etapa = 60;
-      if (minutos >= 1440 && minutos < 1500) etapa = 1440;
-      if (minutos >= 2880 && minutos < 2940) etapa = 2880;
-      if (!etapa) continue;
-
-      // Verifica se essa etapa já foi enviada
-      if (db.jaCarrinhoEnviado(id, etapa)) continue;
-
-      const mensagem = montarMensagemCarrinho(etapa, nome, link);
-      if (!mensagem) continue;
-
-      try {
-        if (!await podEnviar(telefone, storeId)) continue;
-        await sendWhatsApp(telefone, mensagem, storeId);
-        db.marcarCarrinhoEnviado(id, storeId, etapa, telefone);
-        db.registrarMensagem(telefone);
-        console.log(`[Carrinho] Etapa ${etapa}min enviada para ${nome} — carrinho #${id}`);
-      } catch(e) {
-        console.error(`[Carrinho] Falha etapa ${etapa}min para #${id}:`, e.message);
-      }
-
-      await new Promise(r => setTimeout(r, 500));
-    }
-    // Cruzar carrinhos com pedidos pagos para marcar recuperados
-    try {
-      const pedidosPagos = await nuvemGet(storeId, '/orders', {
-        per_page: 100,
-        payment_status: 'paid',
-        fields: 'id,contact_phone,created_at'
-      });
-      for (const o of pedidosPagos) {
-        const tel = formatTel(o.contact_phone);
-        if (tel) db.marcarCarrinhoRecuperado(tel, storeId);
-      }
-    } catch(e) { /* silencioso — não bloqueia o fluxo principal */ }
-
-  } catch(e) {
-    const msg = e.response?.data?.description || e.message || '';
-    if (msg.includes('Last page is 0')) return;
-    console.error(`[Carrinho] Erro loja ${storeId}:`, e.response?.data || e.message);
-  }
-}
-
-// ── Verificar pedidos manuais abandonados (sem pagamento) ─────────────────────
-async function verificarPedidosManuaisAbandonados(storeId) {
-  try {
-    const orders = await nuvemGet(storeId, '/orders', {
-      per_page: 50,
-      payment_status: 'pending',
-      status: 'open'
-    });
-
-    const agora = Date.now();
-
-    for (const o of orders) {
-      if (!o.contact_phone) continue;
-      const telefone = formatTel(o.contact_phone);
-      if (!telefone) continue;
-
-      const criadoEm = new Date(o.created_at).getTime();
-      const minutos = Math.floor((agora - criadoEm) / 60000);
-      const nome = o.contact_name || 'Cliente';
-      const id = 'manual_' + String(o.id);
-      const link = '';
-
-      let etapa = null;
-      if (minutos >= 30  && minutos < 90)   etapa = 30;
-      if (minutos >= 60  && minutos < 120)  etapa = 60;
-      if (minutos >= 1440 && minutos < 1500) etapa = 1440;
-      if (minutos >= 2880 && minutos < 2940) etapa = 2880;
-      if (!etapa) continue;
-
-      if (db.jaCarrinhoEnviado(id, etapa)) continue;
-
-      const mensagem = montarMensagemCarrinho(etapa, nome, link);
-      if (!mensagem) continue;
-
-      try {
-        if (!await podEnviar(telefone, storeId)) continue;
-        await sendWhatsApp(telefone, mensagem, storeId);
-        db.marcarCarrinhoEnviado(id, storeId, etapa, telefone);
-        db.registrarMensagem(telefone);
-        console.log(`[Carrinho Manual] Etapa ${etapa}min enviada para ${nome} — pedido #${o.id}`);
-      } catch(e) {
-        console.error(`[Carrinho Manual] Falha etapa ${etapa}min para #${o.id}:`, e.message);
-      }
-
-      await new Promise(r => setTimeout(r, 500));
-    }
-  } catch(e) {
-    const msg = e.response?.data?.description || e.message || '';
-    if (msg.includes('Last page is 0')) return;
-    console.error(`[Carrinho Manual] Erro loja ${storeId}:`, e.response?.data || e.message);
-  }
-}
-
-// ── Verificar pagamentos recentes (últimas 2h) ────────────────────────────────
-async function verificarPagamentos(storeId) {
-  try {
-    const desde = new Date(Date.now() - 2 * 60 * 60 * 1000).toISOString();
-    const orders = await nuvemGet(storeId, '/orders', {
-      per_page: 50,
-      payment_status: 'paid',
-      created_at_min: desde,
-      fields: 'id,number,contact_name,contact_phone,payment_status,created_at'
-    });
-
-    for (const o of orders) {
-      if (o.status === 'cancelled') continue;
-      if (db.jaConfirmacaoEnviada(String(o.id))) continue;
-
-      const telefone = formatTel(o.contact_phone);
-      if (!telefone) continue;
-
-      try {
-        await sendWhatsApp(telefone, montarMensagemPagamento(o.contact_name || 'Cliente', o.number));
-        db.marcarConfirmacaoEnviada(String(o.id), storeId);
-        console.log(`[Pagamento] WhatsApp enviado para pedido #${o.number}`);
-      } catch(e) {
-        console.error(`[Pagamento] Falha para #${o.number}:`, e.message);
-      }
-
-      await new Promise(r => setTimeout(r, 500));
-    }
-  } catch(e) {
-    const msg = e.response?.data?.description || e.message || '';
-    if (msg.includes('Last page is 0')) return; // sem pedidos — silencioso
-    console.error(`[Pagamento] Erro loja ${storeId}:`, e.response?.data || e.message);
-  }
-}
-
-// ── Verificar mudanças de rastreio ────────────────────────────────────────────
-async function verificarRastreios(storeId) {
-  try {
-    const orders = await nuvemGet(storeId, '/orders', {
-      per_page: 200,
-      payment_status: 'paid',
-      fields: 'id,number,contact_name,contact_phone,shipping_status,shipping_tracking_number,created_at'
-    });
-
-    for (const o of orders) {
-      if (o.status === 'cancelled') continue;
-      const rastreio = o.shipping_tracking_number?.trim();
-      if (!rastreio) continue;
-      const telefone = formatTel(o.contact_phone);
-      if (!telefone) continue;
-      if (!/^[A-Z]{2}\d{9}[A-Z]{2}$/i.test(rastreio)) continue;
-      if (db.statusRastreio(rastreio) === 'entregue') continue;
-
-      const evento = await consultarCorreios(rastreio);
-      if (!evento) continue;
-
-      const statusAnterior = db.statusRastreio(rastreio);
-      const statusNovo = evento.entregue ? 'entregue' : evento.descricao;
-
-      if (statusNovo && statusNovo !== statusAnterior) {
-        console.log(`[Rastreio] ${rastreio}: "${statusAnterior}" → "${statusNovo}"`);
-        const pedido = { cliente: o.contact_name, numero: o.number, rastreio };
-        try {
-          if (!await podEnviar(telefone, storeId)) continue;
-          await sendWhatsApp(telefone, montarMensagemRastreio(pedido, evento), storeId);
-          db.registrarMensagem(telefone);
-          console.log(`[Rastreio] WhatsApp enviado para #${o.number}`);
-
-          // Pesquisa de satisfação quando entregue
-          if (evento.entregue && !db.jaSatisfacaoEnviada(String(o.id))) {
-            await new Promise(r => setTimeout(r, 3000));
-            if (await podEnviar(telefone)) {
-              const msgSatisfacao =
-                `Como foi a sua experiência com o pedido *#${o.number}*, ${o.contact_name || 'Cliente'}? 😊\n\n` +
-                `Responda com um número:\n\n` +
-                `5️⃣ — Excelente\n` +
-                `4️⃣ — Bom\n` +
-                `3️⃣ — Regular\n` +
-                `2️⃣ — Ruim\n` +
-                `1️⃣ — Péssimo\n\n` +
-                `Sua opinião é muito importante para continuarmos melhorando! 🙏`;
-              await sendWhatsApp(telefone, msgSatisfacao, storeId);
-              db.marcarSatisfacaoEnviada(String(o.id), storeId);
-              db.registrarMensagem(telefone);
-              console.log(`[Satisfação] Pesquisa enviada para #${o.number}`);
-            }
-          }
-        } catch(e) {
-          console.error(`[Rastreio] Falha para #${o.number}:`, e.message);
-        }
-        db.atualizarStatusRastreio(rastreio, statusNovo, evento.data + ' ' + evento.hora);
-      } else if (!statusAnterior) {
-        db.atualizarStatusRastreio(rastreio, statusNovo || 'postado', evento.data + ' ' + evento.hora);
-      }
-
-      await new Promise(r => setTimeout(r, 7000)); // respeita limite 10req/min SeuRastreio
-    }
-  } catch(e) {
-    console.error(`[Rastreio] Erro loja ${storeId}:`, e.response?.data || e.message);
-  }
-}
-
-// ── OAuth ─────────────────────────────────────────────────────────────────────
-app.get('/auth/install', (req, res) => {
-  const { store_id, session_code } = req.query;
-  const state = session_code ? `ext_${session_code}` : (store_id || 'manual');
-  if (session_code) {
-    try { db.upsertAuthSession(session_code, 'pending'); } catch(e) {}
-  }
-  const redirect = encodeURIComponent(`${APP_URL}/auth/callback`);
-  res.redirect(`https://www.nuvemshop.com.br/apps/${NUVEM_CLIENT_ID}/authorize?state=${state}&redirect_uri=${redirect}`);
-});
-
-app.get('/auth/callback', async (req, res) => {
-  const { code, state: storeId } = req.query;
-  if (!code) return res.status(400).send('Código OAuth ausente.');
-  try {
-    const { data } = await axios.post('https://www.nuvemshop.com.br/apps/authorize/token', {
-      client_id: NUVEM_CLIENT_ID,
-      client_secret: NUVEM_CLIENT_SECRET,
-      grant_type: 'authorization_code',
-      code
-    }, { headers: { 'Content-Type': 'application/json' } });
-    const rawState = String(storeId || '');
-    const sessionCode = rawState.startsWith('ext_') ? rawState.slice(4) : null;
-    const sid = String(data.user_id || (sessionCode ? '' : storeId));
-    if (sid) db.saveToken(sid, data.access_token);
-    if (sessionCode) {
-      const realSid = String(data.user_id || sid);
-      if (realSid) db.saveToken(realSid, data.access_token);
-      try { db.completeAuthSession(sessionCode, realSid); } catch(e) {}
-    }
-    const isExt = !!sessionCode;
-    res.send(`<!DOCTYPE html><html><head><meta charset="UTF-8"/>
-    <style>*{font-family:sans-serif;text-align:center;}body{background:#0d0d10;color:#fff;padding:3rem;}
-    h2{color:#00d084;}code{background:#1e1e25;padding:4px 10px;border-radius:6px;font-size:18px;color:#00d084;}</style></head>
-    <body><h2>✅ RastreioBot conectado!</h2><p>Loja autenticada com sucesso.</p>
-    <p style="margin-top:1.5rem;">Seu <strong>Store ID</strong>:</p><code>${sid}</code>
-    ${isExt ? '<p style="color:#00d084;margin-top:1rem;">Você pode fechar esta aba e voltar para a extensão.</p>' : '<p style="color:#888;margin-top:1.5rem;">Cole esse ID nas configurações da extensão.</p>'}
-    </body></html>`);
-  } catch(e) {
-    console.error('OAuth erro:', e.response?.data || e.message);
-    res.status(500).send('Erro na autenticação. Tente novamente.');
-  }
-});
-
-// ── Pedidos ───────────────────────────────────────────────────────────────────
-app.get('/pedidos/:storeId', auth, async (req, res) => {
-  const { storeId } = req.params;
-  const prazo = parseInt(req.query.prazo || '3');
-  const incluirNotificados = req.query.incluir_notificados === 'true';
-  const dias = parseInt(req.query.dias || '30');
-  const created_at_min = new Date(Date.UTC(
-    new Date().getUTCFullYear(), new Date().getUTCMonth(), new Date().getUTCDate() - dias, 3, 0, 0
-  )).toISOString();
-  try {
-    const [ordersPagos, ordersPendentes] = await Promise.all([
-      nuvemGet(storeId, '/orders', {
-        per_page: 200,
-        payment_status: 'paid',
-        created_at_min,
-        fields: 'id,number,contact_name,contact_phone,shipping_status,shipping_tracking_number,shipping_option,created_at,total'
-      }),
-      nuvemGet(storeId, '/orders', {
-        per_page: 50,
-        payment_status: 'pending',
-        fields: 'id,number,contact_name,contact_phone,created_at,total,gateway'
-      }).catch(() => [])
-    ]);
-
-    const resultado = [];
-
-    // Pedidos pagos (rastreio/envio)
-    for (const o of ordersPagos) {
-      if (o.status === 'cancelled') continue;
-      const jaEnviado = db.jaNotificado(String(o.id));
-      if (jaEnviado && !incluirNotificados) continue;
-      const tel = formatTel(o.contact_phone);
-      const diasUteis = diasUteisDesde(o.created_at);
-      let statusPrazo = null;
-      const temRastreio = !!(o.shipping_tracking_number && o.shipping_tracking_number.trim());
-      const foiEnviado  = o.shipping_status === 'shipped' || temRastreio;
-      if (!foiEnviado) {
-        statusPrazo = diasUteis > prazo ? 'atrasado' : diasUteis === prazo ? 'hoje' : 'ok';
-      }
-      const statusRastreio = temRastreio ? db.statusRastreio(o.shipping_tracking_number.trim()) : null;
-      resultado.push({
-        order_id: String(o.id), numero: o.number, cliente: o.contact_name || '',
-        telefone: tel, rastreio: o.shipping_tracking_number || '',
-        transportadora: o.shipping_option || '',
-        status: foiEnviado ? 'shipped' : (o.shipping_status || 'pending'),
-        payment_status: 'paid',
-        total: parseFloat(o.total || 0),
-        statusRastreio, diasUteis, statusPrazo, ja_notificado: jaEnviado, created_at: o.created_at
-      });
-    }
-
-    // Pedidos pendentes de pagamento
-    const pendentes = [];
-    for (const o of ordersPendentes) {
-      if (o.status === 'cancelled') continue;
-      pendentes.push({
-        order_id: String(o.id), numero: o.number, cliente: o.contact_name || '',
-        telefone: formatTel(o.contact_phone),
-        rastreio: '', transportadora: o.gateway || '',
-        status: 'aguardando_pagamento',
-        payment_status: 'pending',
-        total: parseFloat(o.total || 0),
-        statusRastreio: null, diasUteis: diasUteisDesde(o.created_at),
-        statusPrazo: null, ja_notificado: false, created_at: o.created_at
-      });
-    }
-
-    resultado.sort((a, b) => {
-      const p = x => x.statusPrazo === 'atrasado' ? 0 : x.statusPrazo === 'hoje' ? 1 : x.status === 'shipped' ? 2 : 3;
-      return p(a) - p(b);
-    });
-
-    const resumo = {
-      total: resultado.length,
-      atrasados: resultado.filter(p => p.statusPrazo === 'atrasado').length,
-      enviados: resultado.filter(p => p.status === 'shipped').length,
-      pendentes_pagamento: pendentes.length
-    };
-
-    res.json({ success: true, resumo, pedidos: resultado, pendentes_pagamento: pendentes });
-  } catch(e) {
-    console.error('Erro /pedidos:', e.response?.data || e.message);
-    res.status(500).json({ error: e.message });
-  }
-});
-
-// ── Ranking de melhores clientes (últimos 60 dias) ────────────────────────────
-// ── Diagnóstico ranking (temporário) ─────────────────────────────────────────
-app.get('/ranking-diag/:storeId', auth, async (req, res) => {
-  const { storeId } = req.params;
-  try {
-    const hoje = new Date();
-    const inicio60 = new Date(Date.UTC(
-      hoje.getUTCFullYear(), hoje.getUTCMonth(), hoje.getUTCDate() - 60, 3, 0, 0
-    )).toISOString();
-    const orders = await nuvemGet(storeId, '/orders', {
-      per_page: 5,
-      created_at_min: inicio60
-    });
-    res.json({
-      total: orders.length,
-      amostra: orders.slice(0, 2).map(o => ({
-        id: o.id,
-        status: o.status,
-        total: o.total,
-        contact_name: o.contact_name,
-        contact_email: o.contact_email,
-        contact_phone: o.contact_phone,
-        customer: o.customer
-      }))
-    });
-  } catch(e) {
-    res.status(500).json({ error: e.message });
-  }
-});
-
-app.get('/ranking/:storeId', auth, async (req, res) => {
-  const { storeId } = req.params;
-  try {
-    const hoje = new Date();
-    const inicio60 = new Date(Date.UTC(
-      hoje.getUTCFullYear(), hoje.getUTCMonth(), hoje.getUTCDate() - 60, 3, 0, 0
-    )).toISOString();
-
-    const orders = await nuvemGet(storeId, '/orders', {
-      per_page: 200,
-      created_at_min: inicio60
-    });
-
-    console.log('[Ranking] total pedidos recebidos:', orders.length);
-
-    const mapa = {};
-    for (const o of orders) {
-      if (o.status === 'cancelled') continue;
-      const nome = (o.customer && o.customer.name) || o.contact_name || '';
-      const email = (o.customer && o.customer.email) || o.contact_email || '';
-      const telefone = formatTel(o.contact_phone) || '—';
-      const id = email || nome;
-      if (!id) continue;
-      if (!mapa[id]) {
-        mapa[id] = { nome: nome || email || 'Cliente', telefone, qtd: 0, total: 0 };
-      }
-      mapa[id].qtd++;
-      mapa[id].total += parseFloat(o.total || 0);
-    }
-
-    const clientes = Object.values(mapa)
-      .sort((a, b) => b.total - a.total)
-      .slice(0, 50);
-
-    console.log('[Ranking] clientes encontrados:', clientes.length);
-    res.json({ success: true, clientes, total: clientes.length });
-  } catch(e) {
-    console.error('Erro /ranking:', e.message);
-    res.status(500).json({ error: e.message });
-  }
-});
-
-// ── Marcar notificado ─────────────────────────────────────────────────────────
-app.post('/notificado', auth, (req, res) => {
-  const { order_id, store_id, rastreio, telefone } = req.body;
-  if (!order_id || !store_id) return res.status(400).json({ error: 'order_id e store_id obrigatórios.' });
-  db.marcarNotificado(order_id, store_id, rastreio, telefone);
-  res.json({ success: true });
-});
-
-// ── Gestão de clientes (uso interno — você mesmo acessa) ─────────────────────
-
-// Listar todos os clientes
-app.get('/admin/clientes', auth, (req, res) => {
-  const clientes = db.listarInstancias();
-  const stores   = db.getAllStores();
-  res.json({ success: true, total: clientes.length, clientes, stores });
-});
-
-// Cadastrar novo cliente
-app.post('/admin/clientes', auth, (req, res) => {
-  const { store_id, zapi_instance, zapi_token, zapi_client_token, nome_cliente } = req.body;
-  if (!store_id || !zapi_instance || !zapi_token || !zapi_client_token)
-    return res.status(400).json({ error: 'store_id, zapi_instance, zapi_token e zapi_client_token obrigatórios.' });
-  db.salvarInstancia(store_id, zapi_instance, zapi_token, zapi_client_token, nome_cliente);
-  res.json({ success: true, message: `Cliente ${nome_cliente || store_id} cadastrado.` });
-});
-
-// Remover cliente
-app.delete('/admin/clientes/:storeId', auth, (req, res) => {
-  // Remove apenas a instância, mantém tokens OAuth
-  const { storeId } = req.params;
-  res.json({ success: true, message: `Cliente ${storeId} removido.` });
-});
-
-// ── Rastreio público (sem auth) ───────────────────────────────────────────────
-app.get('/rastreio-publico', async (req, res) => {
-  const { codigo } = req.query;
-  if (!codigo) return res.status(400).json({ success: false, error: 'Código obrigatório.' });
-  const evento = await consultarCorreios(codigo);
-  if (!evento) return res.json({ success: false, error: 'Não encontrado.' });
-  res.json({ success: true, evento });
-});
-
-// ── Health check ──────────────────────────────────────────────────────────────
-app.get('/status', (req, res) => {
-  const stores = db.getAllStores();
-  res.json({ ok: true, lojas: stores.length, versao: '2.5.0', cron: 'ativo (30min)' });
-});
-
-// ── API Dashboard Admin ───────────────────────────────────────────────────────
-app.get('/admin/dashboard', auth, (req, res) => {
-  try {
-    const stats = db.getAdminStats();
-    res.json({ success: true, ...stats });
-  } catch(e) {
-    res.status(500).json({ error: e.message });
-  }
-});
-
-// ── API Dashboard Lojista ─────────────────────────────────────────────────────
-app.get('/dashboard/:storeId', auth, async (req, res) => {
-  const { storeId } = req.params;
-  try {
-    const stats = db.getLojistaStats(storeId);
-    // Verifica status Z-API
-    let zapiConectado = false;
-    try {
-      const inst = db.getInstancia(storeId) || {};
-      const instance = inst.zapi_instance || process.env.ZAPI_INSTANCE;
-      const token    = inst.zapi_token    || process.env.ZAPI_TOKEN;
-      const client   = inst.zapi_client_token || process.env.ZAPI_CLIENT_TOKEN;
-      if (instance && token && client) {
-        const r = await axios.get(
-          `https://api.z-api.io/instances/${instance}/token/${token}/status`,
-          { headers: { 'Client-Token': client }, timeout: 5000 }
-        );
-        zapiConectado = r.data?.connected === true || r.data?.status === 'connected';
-      }
-    } catch(e) { zapiConectado = false; }
-    res.json({ success: true, ...stats, zapiConectado });
-  } catch(e) {
-    res.status(500).json({ error: e.message });
-  }
-});
-
-// ── Dashboard completo Nuvemshop (extensão Chrome) ───────────────────────────
-app.get('/dashboard-nuvem/:storeId', auth, async (req, res) => {
-  const { storeId } = req.params;
-  try {
-    // Railway em UTC — meia-noite BRT = 03:00 UTC
-    const _agora = new Date();
-    const _brt = new Date(_agora.getTime() - 3 * 60 * 60 * 1000);
-    const _ano = _brt.getUTCFullYear(), _mes = _brt.getUTCMonth(), _dia = _brt.getUTCDate();
-    const _brtIso = (y, m, d) => new Date(Date.UTC(y, m, d, 3, 0, 0)).toISOString();
-    const inicioDia    = _brtIso(_ano, _mes, _dia);
-    const inicioOntem  = _brtIso(_ano, _mes, _dia - 1);
-    const inicioSemana = _brtIso(_ano, _mes, _dia - _brt.getUTCDay());
-    const inicioMes    = _brtIso(_ano, _mes, 1);
-
-    const nuvemSafe = async (path, params) => {
-      try { return await nuvemGet(storeId, path, params); }
-      catch(e) {
-        const status = e.response?.status;
-        if (status === 404 || (e.response?.data?.description || '').includes('Last page is 0')) return [];
-        throw e;
-      }
-    };
-
-    const [pedidosHoje, pedidosOntem, pedidosSemana, pedidosMes] = await Promise.all([
-      nuvemSafe('/orders', { created_at_min: inicioDia,    per_page: 200 }),
-      nuvemSafe('/orders', { created_at_min: inicioOntem,  created_at_max: inicioDia, per_page: 200 }),
-      nuvemSafe('/orders', { created_at_min: inicioSemana, per_page: 200 }),
-      nuvemSafe('/orders', { created_at_min: inicioMes,    per_page: 200 })
-    ]);
-
-    // Filtra pedidos pagos (exclui cancelados e pendentes)
-    const pagosHoje   = pedidosHoje.filter(p => p.payment_status === 'paid');
-    const pagosOntem  = pedidosOntem.filter(p => p.payment_status === 'paid');
-    const pagosSemana = pedidosSemana.filter(p => p.payment_status === 'paid');
-    const pagosMes    = pedidosMes.filter(p => p.payment_status === 'paid');
-
-    // Métricas hoje
-    const totalHoje       = pagosHoje.reduce((s, p) => s + parseFloat(p.total || 0), 0);
-    const freteHoje       = pagosHoje.reduce((s, p) => s + parseFloat(p.shipping_cost_owner || 0), 0);
-    const ticketMedioHoje = pagosHoje.length > 0 ? totalHoje / pagosHoje.length : 0;
-
-    // Métricas ontem
-    const totalOntem = pagosOntem.reduce((s, p) => s + parseFloat(p.total || 0), 0);
-
-    // Variação
-    const variacaoValor = totalOntem > 0 ? ((totalHoje - totalOntem) / totalOntem * 100) : null;
-    const variacaoQtd   = pagosOntem.length > 0 ? ((pagosHoje.length - pagosOntem.length) / pagosOntem.length * 100) : null;
-
-    // Pendentes de ação
-    const aguardandoPagamento = pedidosHoje.filter(p => p.payment_status === 'pending').length;
-    const aguardandoEnvio     = pedidosHoje.filter(p => p.payment_status === 'paid' && p.shipping_status === 'unpacked').length;
-
-    // Produto mais vendido hoje
-    const prodContagem = {};
-    for (const p of pagosHoje) {
-      for (const prod of (p.products || [])) {
-        const nome = prod.name || 'Produto';
-        prodContagem[nome] = (prodContagem[nome] || 0) + (prod.quantity || 1);
-      }
-    }
-    const prodMaisVendido = Object.entries(prodContagem).sort((a,b) => b[1]-a[1])[0] || null;
-
-    // Hora de pico
-    const contagemHoras = {};
-    for (const p of pedidosHoje) {
-      const h = new Date(p.created_at).getHours();
-      contagemHoras[h] = (contagemHoras[h] || 0) + 1;
-    }
-    const picoPar = Object.entries(contagemHoras).sort((a,b) => b[1]-a[1])[0];
-    const horaPico = picoPar ? `${String(picoPar[0]).padStart(2,'0')}h` : null;
-
-    // Semana e mês
-    const totalSemana  = pagosSemana.reduce((s, p) => s + parseFloat(p.total || 0), 0);
-    const freteSemana  = pagosSemana.reduce((s, p) => s + parseFloat(p.shipping_cost_owner || 0), 0);
-    const totalMes     = pagosMes.reduce((s, p) => s + parseFloat(p.total || 0), 0);
-    const freteMes     = pagosMes.reduce((s, p) => s + parseFloat(p.shipping_cost_owner || 0), 0);
-    const ticketSemana = pagosSemana.length > 0 ? totalSemana / pagosSemana.length : 0;
-    const ticketMes    = pagosMes.length    > 0 ? totalMes    / pagosMes.length    : 0;
-
-    // Últimos 5 pedidos de hoje
-    const ultimos = pedidosHoje.slice(0, 5).map(p => ({
-      numero:  p.number,
-      total:   parseFloat(p.total || 0),
-      status:  p.payment_status,
-      cliente: p.customer ? (p.customer.name || 'Cliente') : 'Cliente',
-      hora:    new Date(p.created_at).toLocaleTimeString('pt-BR', { hour:'2-digit', minute:'2-digit', timeZone:'America/Recife' })
-    }));
-
-    // Score de saúde
-    let score = 100;
-    const totalPedidos = pagosHoje.length + aguardandoPagamento + aguardandoEnvio;
-    if (totalPedidos > 0) {
-      const txPendente = (aguardandoPagamento + aguardandoEnvio) / totalPedidos;
-      score -= Math.round(txPendente * 40);
-    }
-    if (totalHoje === 0) score -= 20;
-    score = Math.max(0, Math.min(100, score));
-
-    res.json({
-      success: true,
-      hoje: {
-        qtd: pagosHoje.length,
-        total: totalHoje,
-        frete: freteHoje,
-        ticketMedio: ticketMedioHoje,
-        variacaoValor,
-        variacaoQtd,
-        aguardandoPagamento,
-        aguardandoEnvio,
-        prodMaisVendido,
-        horaPico
-      },
-      semana: { qtd: pagosSemana.length, total: totalSemana },
-      mes:    { qtd: pagosMes.length, total: totalMes, frete: freteMes },
-      semana_det: { qtd: pagosSemana.length, total: totalSemana, frete: freteSemana, ticketMedio: ticketSemana },
-      mes_det:    { qtd: pagosMes.length,    total: totalMes,    frete: freteMes,    ticketMedio: ticketMes    },
-      ultimos,
-      score,
-      atualizadoEm: new Date().toLocaleTimeString('pt-BR', { hour:'2-digit', minute:'2-digit', timeZone:'America/Recife' })
-    });
-  } catch(e) {
-    console.error('[Dashboard Nuvem]', e.message);
-    res.status(500).json({ success: false, error: e.message });
-  }
-});
-
-
-
-// ── Auth status (polling da extensão) ────────────────────────────────────────
-app.get('/auth/status', (req, res) => {
-  const { code } = req.query;
-  if (!code) return res.status(400).json({ error: 'code obrigatorio' });
-  try {
-    const row = db.getAuthSession(code);
-    if (!row) return res.json({ status: 'pending' });
-    if (row.status === 'done') {
-      db.deleteAuthSession(code);
-      return res.json({ status: 'done', store_id: row.store_id });
-    }
-    res.json({ status: row.status });
-  } catch(e) {
-    res.json({ status: 'pending' });
-  }
-});
-
-
-// ── Email via Resend ──────────────────────────────────────────────────────────
-async function enviarChavePorEmail(email, chave, plano, expiraEm) {
-  const resend = new Resend(process.env.RESEND_API_KEY);
-  const expira = new Date(expiraEm).toLocaleDateString('pt-BR');
-  await resend.emails.send({
-    from: 'LoggZap <contato@loggzap.com.br>',
-    to: email,
-    subject: 'Sua chave de ativacao LoggZap',
-    html: '<div style="font-family:sans-serif;max-width:500px;margin:0 auto;background:#0d0d10;color:#ededf2;padding:32px;border-radius:12px">' +
-      '<h2 style="color:#4f8ef7">LoggZap Dashboard</h2>' +
-      '<p>Seu pagamento foi confirmado! Aqui esta sua chave de ativacao:</p>' +
-      '<div style="background:#1e1e25;border:1px solid #4f8ef7;border-radius:8px;padding:16px;text-align:center;margin:24px 0">' +
-      '<code style="font-size:20px;color:#00d084;letter-spacing:2px">' + chave + '</code></div>' +
-      '<p><strong>Plano:</strong> ' + (plano === 'basic' ? 'Basic - R$29/mes' : 'Premium - R$397/mes') + '</p>' +
-      '<p><strong>Valido ate:</strong> ' + expira + '</p>' +
-      '<p style="margin-top:24px">Para ativar: abra a extensao → Configuracoes → Cole a chave → Ativar chave.</p>' +
-      '<hr style="border-color:#2a2a35;margin:24px 0">' +
-      '<p style="color:#888;font-size:12px">LoggZap | suporte: contato@loggzap.com.br</p></div>'
-  });
-}
-
-function gerarChave(plano) {
-  const crypto = require('crypto');
-  const prefixo = plano === 'premium' ? 'LZP' : 'LZB';
-  const rand = crypto.randomBytes(6).toString('hex').toUpperCase();
-  return prefixo + '-' + rand.slice(0,4) + '-' + rand.slice(4,8) + '-' + rand.slice(8);
-}
-
-// ── Rota de teste de email ────────────────────────────────────────────────────
-app.get('/teste/email', async (req, res) => {
-  const email = req.query.email;
-  if (!email) return res.status(400).json({ error: 'Informe ?email=seu@email.com' });
-  try {
-    const resend = new Resend(process.env.RESEND_API_KEY);
-    await resend.emails.send({
-      from: 'LoggZap <contato@loggzap.com.br>',
-      to: email,
-      subject: '✅ Teste de email LoggZap',
-      html: '<div style="font-family:sans-serif;max-width:500px;margin:0 auto;background:#0d0d10;color:#ededf2;padding:32px;border-radius:12px">' +
-        '<h2 style="color:#00d084">✅ Email funcionando!</h2>' +
-        '<p>O Resend está configurado corretamente para o domínio <strong>loggzap.com.br</strong>.</p>' +
-        '<hr style="border-color:#2a2a35;margin:24px 0">' +
-        '<p style="color:#888;font-size:12px">LoggZap | contato@loggzap.com.br</p></div>'
-    });
-    res.json({ success: true, enviado_para: email });
-  } catch(e) {
-    console.error('[Teste Email]', e.message);
-    res.status(500).json({ error: e.message });
-  }
-});
-
-// ── Checkout Mercado Pago ─────────────────────────────────────────────────────
-app.post('/checkout/criar', async (req, res) => {
-  const { plano, email } = req.body;
-  if (!plano || !email) return res.status(400).json({ error: 'plano e email obrigatorios' });
-  if (!MP_ACCESS_TOKEN) return res.status(500).json({ error: 'MP_ACCESS_TOKEN nao configurado' });
-  const precos = { basic: 29, premium: 397 };
-  const nomes  = { basic: 'LoggZap Basic', premium: 'LoggZap Premium' };
-  if (!precos[plano]) return res.status(400).json({ error: 'plano invalido' });
-  try {
-    const { data } = await axios.post(
-      'https://api.mercadopago.com/checkout/preferences',
-      {
-        items: [{ title: nomes[plano], quantity: 1, unit_price: precos[plano], currency_id: 'BRL' }],
-        payer: { email },
-        back_urls: {
-          success: APP_URL + '/checkout/sucesso',
-          failure: APP_URL + '/checkout/erro',
-          pending: APP_URL + '/checkout/pendente'
-        },
-        auto_return: 'approved',
-        external_reference: JSON.stringify({ plano, email, meses: 1 }),
-        notification_url: APP_URL + '/webhook/mp'
-      },
-      { headers: { 'Authorization': 'Bearer ' + MP_ACCESS_TOKEN, 'Content-Type': 'application/json' } }
-    );
-    res.json({ success: true, url: data.init_point, id: data.id });
-  } catch(e) {
-    console.error('[Checkout MP]', e.response?.data || e.message);
-    res.status(500).json({ error: e.message });
-  }
-});
-
-// ── Webhook Mercado Pago ──────────────────────────────────────────────────────
-app.post('/webhook/mp', async (req, res) => {
-  res.sendStatus(200);
-  const { type, data } = req.body;
-  if (type !== 'payment') return;
-  try {
-    const { data: pagamento } = await axios.get(
-      'https://api.mercadopago.com/v1/payments/' + data.id,
-      { headers: { 'Authorization': 'Bearer ' + MP_ACCESS_TOKEN } }
-    );
-    if (pagamento.status !== 'approved') return;
-    const ref = JSON.parse(pagamento.external_reference || '{}');
-    const { plano, email, meses = 1 } = ref;
-    if (!plano || !email) return;
-    const jaProcessado = db.getLicencasPorPayment(String(data.id));
-    if (jaProcessado) return;
-    const chave = gerarChave(plano);
-    db.criarLicenca(chave, plano, null, meses);
-    db.salvarPaymentId(chave, String(data.id));
-    await enviarChavePorEmail(email, chave, plano,
-      new Date(Date.now() + meses * 30 * 24 * 60 * 60 * 1000).toISOString()
-    );
-    console.log('[MP] Licenca ' + chave + ' gerada para ' + email + ' — plano ' + plano);
-  } catch(e) {
-    console.error('[Webhook MP]', e.message);
-  }
-});
-
-// ── Desvincular dispositivo (admin) ──────────────────────────────────────────
-app.post('/admin/desvincular-dispositivo', (req, res) => {
-  const { chave, token } = req.body;
-  if (!token || token !== process.env.ADMIN_TOKEN)
-    return res.status(401).json({ error: 'Não autorizado.' });
-  if (!chave) return res.status(400).json({ error: 'chave obrigatoria' });
-  db.desvincularDispositivo(chave);
-  res.json({ success: true, message: `Dispositivo desvinculado da chave ${chave}.` });
-});
-
-// ── Gerar chave manualmente (uso interno) ─────────────────────────────────────
-app.get('/admin/gerar-chave', async (req, res) => {
-  const { plano = 'premium', dias = '99999', email, token } = req.query;
-  if (!token || token !== process.env.ADMIN_TOKEN)
-    return res.status(401).json({ error: 'Não autorizado.' });
-  try {
-    const chave = gerarChave(plano);
-    const meses = Math.ceil(parseInt(dias) / 30);
-    db.criarLicenca(chave, plano, null, meses);
-    if (email) {
-      const expiraEm = new Date(Date.now() + parseInt(dias) * 24 * 60 * 60 * 1000).toISOString();
-      await enviarChavePorEmail(email, chave, plano, expiraEm).catch(() => {});
-    }
-    res.json({ success: true, chave, plano, dias });
-  } catch(e) {
-    res.status(500).json({ success: false, error: e.message });
-  }
-});
-
-// ── Validar licenca (extensao) ────────────────────────────────────────────────
-app.post('/licenca/validar', auth, (req, res) => {
-  const { chave, store_id, device_id } = req.body;
-  if (!chave || !store_id) return res.status(400).json({ error: 'chave e store_id obrigatorios' });
-  const resultado = db.validarLicenca(chave, store_id, device_id || null);
-  res.json(resultado);
-});
-
-// ── Validar licenca pelo app mobile (sem store_id) ───────────────────────────
-app.post("/licenca/validar-app", auth, (req, res) => {
-  const { chave, device_id } = req.body;
-  if (!chave) return res.status(400).json({ error: "chave obrigatoria" });
-  try {
-    const lic = db.getLicencaPorChave(chave);
-    if (!lic) return res.json({ valida: false, motivo: "Chave nao encontrada." });
-    if (new Date(lic.expira_em) < new Date()) return res.json({ valida: false, motivo: "Chave expirada." });
-    if (lic.plano !== "premium") return res.json({ valida: false, motivo: "Plano insuficiente." });
-    if (!lic.store_id) return res.json({ valida: false, motivo: "Loja nao vinculada. Instale a extensao Chrome primeiro." });
-    // Verificação de dispositivo
-    if (device_id) {
-      if (lic.device_id && lic.device_id !== String(device_id)) {
-        return res.json({ valida: false, motivo: "Esta chave ja esta vinculada a outro dispositivo." });
-      }
-      if (!lic.device_id) {
-        db.prepare("UPDATE licencas SET device_id = ? WHERE chave = ?").run(String(device_id), chave);
-      }
-    }
-    res.json({ valida: true, plano: lic.plano, store_id: lic.store_id, expira_em: lic.expira_em });
-  } catch(e) {
-    res.status(500).json({ error: e.message });
-  }
-});
-
-// ── Metas da loja ─────────────────────────────────────────────────────────────
-app.get("/metas/:storeId", auth, (req, res) => {
-  try {
-    const metas = db.getMetas(req.params.storeId) || {};
-    res.json({ success: true, metas });
-  } catch(e) { res.status(500).json({ error: e.message }); }
-});
-
-app.post("/metas/:storeId", auth, (req, res) => {
-  const { faturamento, pedidos } = req.body;
-  try {
-    db.salvarMetas(req.params.storeId, faturamento || 0, pedidos || 0);
-    res.json({ success: true });
-  } catch(e) { res.status(500).json({ error: e.message }); }
-});
-
-app.get('/licenca/status/:storeId', auth, (req, res) => {
-  const lic = db.getLicencaPorStore(req.params.storeId);
-  if (!lic) return res.json({ plano: 'trial', valida: false });
-  if (new Date(lic.expira_em) < new Date()) return res.json({ plano: 'trial', valida: false, motivo: 'expirada' });
-  res.json({ plano: lic.plano, valida: true, expira_em: lic.expira_em });
-});
-
-// ── Cadastro de novo usuário ──────────────────────────────────────────────────
-app.post('/cadastro', async (req, res) => {
-  const { nome, email, whatsapp, plano } = req.body;
-  if (!nome || !email) return res.status(400).json({ error: 'Nome e email são obrigatórios.' });
-
-  try {
-    const resend = new Resend(process.env.RESEND_API_KEY);
-    const nomeFormatado = nome.split(' ').map(p => p.charAt(0).toUpperCase() + p.slice(1).toLowerCase()).join(' ');
-    const isPremium = (plano === 'premium');
-
-    // Email com extensão + manual
-    await resend.emails.send({
-      from: 'LoggZap <contato@loggzap.com.br>',
-      to: email,
-      subject: '⚡ Seu LoggZap Dashboard está pronto para instalar',
-      html: `
-        <!DOCTYPE html>
-        <html lang="pt-BR">
-        <head><meta charset="UTF-8"><meta name="viewport" content="width=device-width,initial-scale=1.0"></head>
-        <body style="margin:0;padding:0;background:#07090e;font-family:'DM Sans',Arial,sans-serif;color:#eef0f8">
-          <div style="max-width:600px;margin:0 auto;padding:40px 24px">
-            <div style="text-align:center;margin-bottom:36px">
-              <span style="font-size:32px;font-weight:800">Logg<span style="color:#00d084">Zap</span></span>
-            </div>
-            <div style="background:#0c0f16;border:1px solid rgba(255,255,255,0.07);border-radius:14px;padding:32px">
-              <h1 style="font-size:22px;font-weight:700;margin:0 0 12px">Olá, ${nomeFormatado}! 👋</h1>
-              <p style="color:#8b93a8;font-size:15px;line-height:1.7;margin:0 0 24px">
-                Seu acesso ao <strong style="color:#00d084">LoggZap Dashboard</strong> está pronto. 
-                Siga os passos abaixo para instalar em menos de 5 minutos.
-              </p>
-              
-              ${isPremium ? `<div style="background:linear-gradient(135deg,rgba(79,142,247,0.1),rgba(79,142,247,0.05));border:1px solid rgba(79,142,247,0.3);border-radius:10px;padding:20px;margin-bottom:24px">
-                <div style="font-size:12px;font-weight:700;letter-spacing:2px;color:#4f8ef7;text-transform:uppercase;margin-bottom:12px">&#9889; Você escolheu o Premium</div>
-                <p style="color:#8b93a8;font-size:14px;margin:0 0 12px;line-height:1.65">Após instalar e configurar a extensão, acesse dentro dela:</p>
-                <div style="background:#07090e;border-radius:8px;padding:14px;font-size:14px;color:#eef0f8;line-height:1.8">
-                  &#9881; <strong>Configurações</strong> &rarr; <strong>Plano</strong> &rarr; <strong>Assinar Premium</strong>
-                </div>
-                <p style="color:#8b93a8;font-size:13px;margin:12px 0 0">Você será redirecionado para o pagamento seguro via Mercado Pago.</p>
-              </div>` : ''}
-              <div style="background:#11151e;border-radius:10px;padding:20px;margin-bottom:24px">
-                <div style="font-size:12px;font-weight:700;letter-spacing:2px;color:#00d084;text-transform:uppercase;margin-bottom:12px">Passo 1 — Baixe a extensão</div>
-                <p style="color:#8b93a8;font-size:14px;margin:0 0 16px">Clique no botão abaixo para baixar o arquivo da extensão:</p>
-                <a href="${process.env.APP_URL}/download/extensao" style="display:inline-block;background:#00d084;color:#000;padding:12px 28px;border-radius:8px;text-decoration:none;font-weight:700;font-size:14px">⬇️ Baixar LoggZap v2.6</a>
-              </div>
-
-              <div style="background:#11151e;border-radius:10px;padding:20px;margin-bottom:24px">
-                <div style="font-size:12px;font-weight:700;letter-spacing:2px;color:#00d084;text-transform:uppercase;margin-bottom:12px">Passo 2 — Leia o manual</div>
-                <p style="color:#8b93a8;font-size:14px;margin:0 0 16px">O manual completo de instalação está disponível online:</p>
-                <a href="${process.env.APP_URL}/manual" style="display:inline-block;border:1px solid rgba(255,255,255,0.15);color:#eef0f8;padding:12px 28px;border-radius:8px;text-decoration:none;font-weight:600;font-size:14px">📖 Ver manual de instalação</a>
-              </div>
-
-              <div style="background:#11151e;border-radius:10px;padding:20px">
-                <div style="font-size:12px;font-weight:700;letter-spacing:2px;color:#00d084;text-transform:uppercase;margin-bottom:12px">Dados de configuração</div>
-                <p style="color:#8b93a8;font-size:14px;margin:0 0 8px">Use estes dados quando for configurar a extensão:</p>
-                <div style="background:#07090e;border-radius:6px;padding:14px;font-family:monospace;font-size:13px;color:#00d084">
-                  URL do Backend: https://rastreiobot-production-e904.up.railway.app<br>
-                  Chave Secreta: MinhaChave2024Secreta
-                </div>
-              </div>
-            </div>
-
-            <div style="text-align:center;margin-top:32px">
-              <p style="color:#424a61;font-size:13px">Seu trial de 7 dias começa quando você instalar a extensão.</p>
-              <p style="color:#424a61;font-size:13px;margin-top:8px">Dúvidas? <a href="mailto:contato@loggzap.com.br" style="color:#00d084">contato@loggzap.com.br</a></p>
-            </div>
-          </div>
-        </body>
-        </html>
-      `
-    });
-
-    console.log('[Cadastro] Lead registrado:', nome, email, plano);
-
-    // Notificar leads@loggzap.com.br
-    try {
-      await resend.emails.send({
-        from: 'LoggZap <contato@loggzap.com.br>',
-        to: 'leads@loggzap.com.br',
-        subject: `🔔 Novo lead: ${nome} — Plano ${plano}`,
-        html: `
-          <div style="font-family:Arial,sans-serif;max-width:480px;margin:0 auto;padding:32px;background:#0c0f16;color:#eef0f8;border-radius:12px">
-            <h2 style="color:#00d084;margin:0 0 20px">Novo cadastro no LoggZap</h2>
-            <table style="width:100%;border-collapse:collapse">
-              <tr><td style="padding:8px 0;color:#8b93a8;font-size:14px">Nome</td><td style="padding:8px 0;font-size:14px"><strong>${nome}</strong></td></tr>
-              <tr><td style="padding:8px 0;color:#8b93a8;font-size:14px">Email</td><td style="padding:8px 0;font-size:14px"><a href="mailto:${email}" style="color:#00d084">${email}</a></td></tr>
-              <tr><td style="padding:8px 0;color:#8b93a8;font-size:14px">WhatsApp</td><td style="padding:8px 0;font-size:14px">${whatsapp || '—'}</td></tr>
-              <tr><td style="padding:8px 0;color:#8b93a8;font-size:14px">Plano</td><td style="padding:8px 0;font-size:14px"><strong style="color:#00d084">${plano}</strong></td></tr>
-              <tr><td style="padding:8px 0;color:#8b93a8;font-size:14px">Data</td><td style="padding:8px 0;font-size:14px">${new Date().toLocaleString('pt-BR', {timeZone:'America/Recife'})}</td></tr>
-            </table>
-          </div>
-        `
-      });
-    } catch(notifErr) { console.error('[Cadastro] Erro notif lead:', notifErr.message); }
-
-    res.json({ success: true });
-  } catch(e) {
-    console.error('[Cadastro] Erro:', e.message);
-    res.status(500).json({ error: 'Erro ao enviar email. Tente novamente.' });
-  }
-});
-
-// ── Download da extensão ──────────────────────────────────────────────────────
-app.get('/download/extensao', (req, res) => {
-  const path = require('path');
-  const file = path.join(__dirname, 'public', 'LoggZap_v2.6.zip');
-  res.download(file, 'LoggZap_Dashboard_v2.6.zip');
-});
-
-// ── Manual de instalação ──────────────────────────────────────────────────────
-app.get('/manual', (req, res) => {
-  const path = require('path');
-  res.sendFile(path.join(__dirname, 'public', 'manual-loggzap.html'));
-});
-
-app.get('/privacidade', (req, res) => {
-  const path = require('path');
-  res.sendFile(path.join(__dirname, 'public', 'privacidade.html'));
-});
-
-
-// ── Paginas de retorno do checkout ───────────────────────────────────────────
-app.get('/checkout/sucesso', (req, res) => {
-  res.send('<!DOCTYPE html><html><head><meta charset="UTF-8"><style>*{font-family:sans-serif;text-align:center;}body{background:#0d0d10;color:#fff;padding:3rem;}</style></head><body><h2 style="color:#00d084">Pagamento aprovado!</h2><p>Sua chave sera enviada para o seu email em instantes.</p><p style="color:#888;margin-top:1rem">Verifique tambem a pasta de spam.</p></body></html>');
-});
-
-app.get('/checkout/erro', (req, res) => {
-  res.send('<!DOCTYPE html><html><head><meta charset="UTF-8"><style>*{font-family:sans-serif;text-align:center;}body{background:#0d0d10;color:#fff;padding:3rem;}</style></head><body><h2 style="color:#e05a5a">Pagamento nao aprovado</h2><p>Tente novamente ou entre em contato: contato@loggzap.com.br</p></body></html>');
-});
-
-app.get('/checkout/pendente', (req, res) => {
-  res.send('<!DOCTYPE html><html><head><meta charset="UTF-8"><style>*{font-family:sans-serif;text-align:center;}body{background:#0d0d10;color:#fff;padding:3rem;}</style></head><body><h2 style="color:#e8a030">Pagamento em processamento</h2><p>Voce recebera a chave por email assim que o pagamento for confirmado.</p></body></html>');
-});
-
-
-// ── Rota de teste de email (remover em producao) ──────────────────────────────
-app.post('/teste/email', auth, async (req, res) => {
-  const { email, plano = 'basic' } = req.body;
-  if (!email) return res.status(400).json({ error: 'email obrigatorio' });
-  try {
-    const chave = gerarChave(plano);
-    const expiraEm = new Date(Date.now() + 30 * 24 * 60 * 60 * 1000).toISOString();
-    db.criarLicenca(chave, plano, null, 1);
-    // Tenta enviar email com timeout
-    let emailEnviado = false;
-    try {
-      await Promise.race([
-        enviarChavePorEmail(email, chave, plano, expiraEm),
-        new Promise((_, rej) => setTimeout(() => rej(new Error('timeout')), 12000))
-      ]);
-      emailEnviado = true;
-    } catch(emailErr) {
-      console.error('[Teste Email] Falha no envio:', emailErr.message);
-    }
-    res.json({ success: true, chave, emailEnviado, mensagem: emailEnviado ? 'Email enviado!' : 'Licenca criada mas email falhou. Use a chave manualmente.' });
-  } catch(e) {
-    console.error('[Teste Email]', e.message);
-    res.status(500).json({ success: false, error: e.message });
-  }
-});
-
-// ── Diagnóstico Nuvemshop ─────────────────────────────────────────────────────
-app.get('/diagnostico/:storeId', async (req, res) => {
-  const { storeId } = req.params;
-  try {
-    const row = db.getToken(storeId);
-    if (!row) return res.json({ erro: 'Token nao encontrado no banco', storeId });
-    const token = row.access_token;
-    const tokenPreview = token ? token.substring(0, 10) + '...' : 'VAZIO';
-    
-    let nuvemRes = null;
-    let nuvemErro = null;
-    try {
-      const r = await axios.get(
-        `https://api.nuvemshop.com.br/v1/${storeId}/orders`,
-        {
-          headers: {
-            'Authentication': `bearer ${token}`,
-            'User-Agent': `RastreioBot (${APP_URL})`
-          },
-          params: { per_page: 1 }
-        }
-      );
-      nuvemRes = { status: r.status, total: Array.isArray(r.data) ? r.data.length : 'nao array' };
-    } catch(e) {
-      nuvemErro = { status: e.response?.status, msg: e.response?.data || e.message };
-    }
-    
-    res.json({ storeId, tokenPreview, nuvemRes, nuvemErro });
-  } catch(e) {
-    res.status(500).json({ erro: e.message });
-  }
-});
-
-// ── Ativar plano via chave ────────────────────────────────────────────────────
-app.post('/ativar', auth, (req, res) => {
-  const { chave, store_id } = req.body;
-  if (!chave || !store_id) return res.status(400).json({ error: 'chave e store_id obrigatorios' });
-  // Tabela de chaves — em produção use banco de dados
-  const CHAVES = {
-    'LOGGZAP-BASIC-2026':   'basic',
-    'LOGGZAP-PREMIUM-2026': 'premium'
-  };
-  const plano = CHAVES[chave.toUpperCase()];
-  if (!plano) return res.status(400).json({ error: 'Chave invalida.' });
-  res.json({ success: true, plano, store_id });
-});
-
-// ── Configurações por loja ────────────────────────────────────────────────────
-app.get('/config/:storeId', auth, (req, res) => {
-  try {
-    res.json({ success: true, config: db.getConfig(req.params.storeId) });
-  } catch(e) { res.status(500).json({ error: e.message }); }
-});
-
-app.post('/config/:storeId', auth, (req, res) => {
-  try {
-    db.salvarConfig(req.params.storeId, req.body);
-    res.json({ success: true });
-  } catch(e) { res.status(500).json({ error: e.message }); }
-});
-
-// ── Opt-out manual ────────────────────────────────────────────────────────────
-app.post('/optout', auth, (req, res) => {
-  const { telefone, storeId, acao } = req.body;
-  if (!telefone) return res.status(400).json({ error: 'telefone obrigatório' });
-  if (acao === 'remover') db.removerOptOut(telefone);
-  else db.marcarOptOut(telefone, storeId);
-  res.json({ success: true });
-});
-
-// ── API Frete ─────────────────────────────────────────────────────────────────
-app.get('/frete/:storeId', auth, async (req, res) => {
-  const { storeId } = req.params;
-  try {
-    const orders = await nuvemGet(storeId, '/orders', {
-      per_page: 200,
-      payment_status: 'paid',
-      fields: 'id,number,shipping_cost_customer,created_at'
-    });
-
-    const agora  = new Date();
-    const hoje   = new Date(agora); hoje.setHours(0,0,0,0);
-    const semana = new Date(agora); semana.setDate(semana.getDate() - 7); semana.setHours(0,0,0,0);
-    const mes    = new Date(agora); mes.setDate(mes.getDate() - 30);      mes.setHours(0,0,0,0);
-
-    function calcPeriod(desde) {
-      const period   = orders.filter(o => new Date(o.created_at) >= desde);
-      const comFrete = period.filter(o => parseFloat(o.shipping_cost_customer || 0) > 0);
-      const total    = comFrete.reduce((acc, o) => acc + parseFloat(o.shipping_cost_customer || 0), 0);
-      return {
-        total: Math.round(total * 100) / 100,
-        pedidos: comFrete.length,
-        pedidosTotal: period.length
-      };
-    }
-
-    res.json({
-      success: true,
-      hoje:   calcPeriod(hoje),
-      semana: calcPeriod(semana),
-      mes:    calcPeriod(mes)
-    });
-  } catch(e) {
-    res.status(500).json({ error: e.message });
-  }
-});
-
-// ── Stats de carrinho ────────────────────────────────────────────────────────
-app.get('/carrinho-stats/:storeId', auth, async (req, res) => {
-  try {
-    const stats = db.getCarrinhoStats(req.params.storeId);
-    res.json({ success: true, ...stats });
-  } catch(e) {
-    res.status(500).json({ error: e.message });
-  }
-});
-
-// ── Enviar WhatsApp ───────────────────────────────────────────────────────────
-app.post('/enviar-whatsapp', auth, async (req, res) => {
-  const { telefone, mensagem, order_id, store_id, rastreio } = req.body;
-  if (!telefone || !mensagem) return res.status(400).json({ error: 'telefone e mensagem obrigatórios.' });
-  try {
-    const result = await sendWhatsApp(telefone, mensagem, storeId);
-    if (order_id && store_id) db.marcarNotificado(order_id, store_id, rastreio, telefone);
-    res.json({ success: true, result });
-  } catch(e) {
-    res.status(500).json({ success: false, error: e.response?.data?.message || e.message });
-  }
-});
-
-// ── Status Z-API ──────────────────────────────────────────────────────────────
-app.get('/whatsapp/status', auth, async (req, res) => {
-  if (!ZAPI_INSTANCE || !ZAPI_TOKEN || !ZAPI_CLIENT_TOKEN)
-    return res.json({ conectado: false, erro: 'Z-API não configurada.' });
-  try {
-    const r = await axios.get(
-      `https://api.z-api.io/instances/${ZAPI_INSTANCE}/token/${ZAPI_TOKEN}/status`,
-      { headers: { 'Client-Token': ZAPI_CLIENT_TOKEN } }
-    );
-    const conectado = r.data?.connected === true || r.data?.status === 'connected';
-    res.json({ conectado, estado: r.data?.status || 'unknown', data: r.data });
-  } catch(e) {
-    res.json({ conectado: false, erro: e.message });
-  }
-});
-
-app.get('/whatsapp/qrcode', auth, (req, res) => {
-  res.json({ success: false, error: 'Com Z-API o QR Code é gerado no painel de z-api.io.' });
-});
-
-app.post('/whatsapp/criar-instancia', auth, (req, res) => {
-  res.json({ success: true, message: 'Z-API não precisa criar instância via API.' });
-});
-
-// ── Relatório semanal — toda segunda às 8h ───────────────────────────────────
-// ── Pós-entrega ───────────────────────────────────────────────────────────────
-async function verificarPosEntrega(storeId) {
-  try {
-    const orders = await nuvemGet(storeId, '/orders', {
-      per_page: 100,
-      payment_status: 'paid',
-      fields: 'id,number,contact_name,contact_phone,shipping_status,created_at'
-    });
-    const cfg = db.getConfig(storeId);
-    const templatePadrao = `Olá, {nome}! 🎉\n\nSeu pedido *#{numero}* foi entregue! Esperamos que você tenha adorado.\n\nConta pra gente o que achou? Sua opinião é muito importante para nós! 😊`;
-    const template = cfg.template_pos_entrega || templatePadrao;
-
-    for (const o of orders) {
-      if (o.status === 'cancelled') continue;
-      if (o.shipping_status !== 'delivered') continue;
-      if (db.jaPosEntregaEnviado(String(o.id))) continue;
-      const telefone = formatTel(o.contact_phone);
-      if (!telefone) continue;
-      const nome = o.contact_name || 'Cliente';
-      const mensagem = template.replace('{nome}', nome).replace('{numero}', o.number);
-      try {
-        if (!await podEnviar(telefone, storeId)) continue;
-        await sendWhatsApp(telefone, mensagem, storeId);
-        db.marcarPosEntregaEnviado(String(o.id), storeId);
-        db.registrarMensagem(telefone);
-        console.log(`[PósEntrega] Enviado para ${nome} — pedido #${o.number}`);
-      } catch(e) {
-        console.error(`[PósEntrega] Falha #${o.number}:`, e.message);
-      }
-      await new Promise(r => setTimeout(r, 500));
-    }
-  } catch(e) {
-    const msg = e.response?.data?.description || e.message || '';
-    if (msg.includes('Last page is 0')) return;
-    console.error(`[PósEntrega] Erro loja ${storeId}:`, e.message);
-  }
-}
-
-// ── Alerta pedido parado ──────────────────────────────────────────────────────
-async function verificarPedidosParados(storeId) {
-  try {
-    const cfg = db.getConfig(storeId);
-    const diasLimite = cfg.alerta_parado_dias || 5;
-    const orders = await nuvemGet(storeId, '/orders', {
-      per_page: 100,
-      payment_status: 'paid',
-      fields: 'id,number,contact_name,contact_phone,shipping_status,shipping_tracking_number,created_at'
-    });
-    const inst = db.getInstancia(storeId);
-    if (!inst) return; // sem instância, sem como avisar o lojista
-    const telLojista = inst.zapi_instance ? null : null; // aviso vai para o lojista via número configurado
-
-    for (const o of orders) {
-      if (o.status === 'cancelled') continue;
-      if (o.shipping_status === 'shipped' || o.shipping_status === 'delivered') continue;
-      if (o.shipping_tracking_number?.trim()) continue; // já tem rastreio
-      if (db.jaAlertaParadoEnviado(String(o.id))) continue;
-      const diasUteis = diasUteisDesde(o.created_at);
-      if (diasUteis < diasLimite) continue;
-
-      const telefoneCliente = formatTel(o.contact_phone);
-      const nome = o.contact_name || 'Cliente';
-
-      // Avisa o LOJISTA (número configurado no env)
-      const telLojistaMsg = process.env.LOJISTA_WHATSAPP;
-      if (telLojistaMsg) {
-        try {
-          await sendWhatsApp(telLojistaMsg,
-            `⚠️ *Pedido parado!*\n\nO pedido *#${o.number}* de *${nome}* está há *${diasUteis} dias úteis* sem envio.\n\nVerifique e atualize o rastreio para evitar reclamações.`,
-            storeId
-          );
-          db.marcarAlertaParadoEnviado(String(o.id), storeId);
-          console.log(`[Parado] Alerta enviado ao lojista — pedido #${o.number}`);
-        } catch(e) {
-          console.error(`[Parado] Falha ao alertar lojista #${o.number}:`, e.message);
-        }
-      }
-      await new Promise(r => setTimeout(r, 500));
-    }
-  } catch(e) {
-    const msg = e.response?.data?.description || e.message || '';
-    if (msg.includes('Last page is 0')) return;
-    console.error(`[Parado] Erro loja ${storeId}:`, e.message);
-  }
-}
-
-cron.schedule('0 8 * * 1', async () => {
-  console.log('[Relatório] Gerando relatório semanal...');
-  try {
-    const stores = db.getAllStores();
-    for (const store of stores) {
-      await enviarRelatorioSemanal(store.store_id);
-    }
-  } catch(e) {
-    console.error('[Relatório] Erro:', e.message);
-  }
-});
-
-async function enviarRelatorioSemanal(storeId) {
-  try {
-    const orders = await nuvemGet(storeId, '/orders', {
-      per_page: 200,
-      payment_status: 'paid',
-      fields: 'id,number,contact_name,shipping_status,shipping_tracking_number,created_at'
-    });
-
-    const prazo = 3;
-    let atrasados = [], pendentes = [], entregues = [], emTransito = [];
-
-    for (const o of orders) {
-      if (o.status === 'cancelled') continue;
-      const diasUteis = diasUteisDesde(o.created_at);
-      const temRastreio = !!(o.shipping_tracking_number?.trim());
-      const foiEnviado = o.shipping_status === 'shipped' || temRastreio;
-      const statusRastreio = temRastreio ? db.statusRastreio(o.shipping_tracking_number.trim()) : null;
-
-      if (statusRastreio === 'entregue') {
-        entregues.push(o);
-      } else if (temRastreio) {
-        emTransito.push(o);
-      } else if (!foiEnviado && diasUteis > prazo) {
-        atrasados.push(o);
-      } else if (!foiEnviado) {
-        pendentes.push(o);
-      }
-    }
-
-    const hoje = new Date().toLocaleDateString('pt-BR');
-
-    // Mensagem WhatsApp
-    const msgWA =
-      `📊 *Relatório Semanal DTFclub*\n` +
-      `📅 ${hoje}\n\n` +
-      `⚠️ *Atrasados (sem envio):* ${atrasados.length}\n` +
-      `📦 *Aguardando envio:* ${pendentes.length}\n` +
-      `🚚 *Em trânsito:* ${emTransito.length}\n` +
-      `✅ *Entregues:* ${entregues.length}\n\n` +
-      (atrasados.length > 0
-        ? `*Pedidos atrasados:*\n` + atrasados.slice(0,10).map(o => `• #${o.number} — ${o.contact_name}`).join('\n')
-        : `Nenhum pedido atrasado! 🎉`);
-
-    await sendWhatsApp('5581996852660', msgWA);
-    console.log('[Relatório] WhatsApp enviado');
-
-    // E-mail
-    const nodemailer = require('nodemailer');
-    const transporter = nodemailer.createTransport({
-      service: 'gmail',
-      auth: {
-        user: process.env.EMAIL_USER,
-        pass: process.env.EMAIL_PASS
-      }
-    });
-
-    const atrasadosHtml = atrasados.length
-      ? atrasados.map(o => `<tr><td>#${o.number}</td><td>${o.contact_name}</td><td>${diasUteisDesde(o.created_at)} dias úteis</td></tr>`).join('')
-      : '<tr><td colspan="3">Nenhum pedido atrasado 🎉</td></tr>';
-
-    await transporter.sendMail({
-      from: process.env.EMAIL_USER,
-      to: 'dtfclub23@gmail.com',
-      subject: `📊 Relatório Semanal DTFclub — ${hoje}`,
-      html: `
-        <div style="font-family:sans-serif;max-width:600px;margin:0 auto;background:#f5f5f5;padding:20px;border-radius:12px;">
-          <h2 style="color:#00d084;">📊 Relatório Semanal DTFclub</h2>
-          <p style="color:#666;">Gerado em ${hoje}</p>
-
-          <div style="display:grid;grid-template-columns:1fr 1fr;gap:10px;margin:20px 0;">
-            <div style="background:#fff;padding:15px;border-radius:8px;border-left:4px solid #e05a5a;">
-              <div style="font-size:28px;font-weight:bold;color:#e05a5a;">${atrasados.length}</div>
-              <div style="color:#666;">⚠️ Atrasados</div>
-            </div>
-            <div style="background:#fff;padding:15px;border-radius:8px;border-left:4px solid #e8a030;">
-              <div style="font-size:28px;font-weight:bold;color:#e8a030;">${pendentes.length}</div>
-              <div style="color:#666;">📦 Aguardando envio</div>
-            </div>
-            <div style="background:#fff;padding:15px;border-radius:8px;border-left:4px solid #4f8ef7;">
-              <div style="font-size:28px;font-weight:bold;color:#4f8ef7;">${emTransito.length}</div>
-              <div style="color:#666;">🚚 Em trânsito</div>
-            </div>
-            <div style="background:#fff;padding:15px;border-radius:8px;border-left:4px solid #00d084;">
-              <div style="font-size:28px;font-weight:bold;color:#00d084;">${entregues.length}</div>
-              <div style="color:#666;">✅ Entregues</div>
-            </div>
-          </div>
-
-          <h3 style="color:#e05a5a;">Pedidos Atrasados</h3>
-          <table style="width:100%;border-collapse:collapse;background:#fff;border-radius:8px;overflow:hidden;">
-            <thead style="background:#e05a5a;color:#fff;">
-              <tr><th style="padding:10px;text-align:left;">Pedido</th><th style="padding:10px;text-align:left;">Cliente</th><th style="padding:10px;text-align:left;">Dias úteis</th></tr>
-            </thead>
-            <tbody>${atrasadosHtml}</tbody>
-          </table>
-        </div>
-      `
-    });
-
-    console.log('[Relatório] E-mail enviado para dtfclub23@gmail.com');
-  } catch(e) {
-    console.error('[Relatório] Erro ao enviar:', e.message);
-  }
-}
-
-// ── Webhook Z-API — Resposta automática de rastreio ──────────────────────────
-const GATILHOS = [
-  'cadê meu pedido', 'cade meu pedido',
-  'cadê meu código', 'cade meu codigo',
-  'código de rastreio', 'codigo de rastreio',
-  'preciso do código', 'preciso do codigo',
-  'meu pedido ainda nao chegou', 'meu pedido não chegou',
-  'rastreio', 'rastreamento', 'onde está meu pedido',
-  'onde esta meu pedido'
-];
-
-function contemGatilho(texto) {
-  const t = (texto || '').trim().toLowerCase().normalize('NFD').replace(/[\u0300-\u036f]/g, '');
-  return GATILHOS.some(g => {
-    const gn = g.normalize('NFD').replace(/[\u0300-\u036f]/g, '');
-    return t === gn;
-  });
-}
-
-
-// ── Movatak — helpers ────────────────────────────────────────────────────────
-const { Pool } = require('pg');
-const movPool = process.env.MOVATAK_DATABASE_URL
-  ? new Pool({ connectionString: process.env.MOVATAK_DATABASE_URL, ssl: { rejectUnauthorized: false } })
-  : null;
-
-async function movQuery(sql, params) {
-  if (!movPool) return null;
-  const client = await movPool.connect();
-  try { return await client.query(sql, params); }
-  finally { client.release(); }
-}
-
-async function movProcessarMensagem(body) {
-  try {
-    if (!movPool) return;
-    const texto    = (body.text && body.text.message ? body.text.message : '').trim().toLowerCase();
-    const telefone = String(body.phone || '').replace(/\D/g, '');
-    if (!texto || !telefone) return;
-    const rc = await movQuery('SELECT * FROM movatak_clientes WHERE ativo = true', []);
-    if (!rc || !rc.rows.length) return;
-    const cliente = rc.rows.find(c => texto.includes((c.trigger_msg || '').toLowerCase().trim()));
-    if (!cliente) return;
-    const existe = await movQuery(
+    // Verificar se lead já existe para evitar duplicata
+    const existe = await query(
       'SELECT id FROM movatak_leads WHERE cliente_id = $1 AND telefone = $2',
       [cliente.id, telefone]
     );
-    if (existe && existe.rows.length) return;
-    await movQuery(
-      "INSERT INTO movatak_leads (cliente_id, telefone, nome, etapa) VALUES ($1, $2, $3, 'lead')",
-      [cliente.id, telefone, body.senderName || null]
+    if (existe.rows.length) return res.json({ ok: true });
+
+    // Criar lead
+    await query(
+      `INSERT INTO movatak_leads (cliente_id, telefone, nome, etapa)
+       VALUES ($1, $2, $3, 'lead')`,
+      [cliente.id, telefone, senderName || null]
     );
-    // Buscar ID da etiqueta 'Lead' na instância
-    const tagsRes = await axios.get(
-      'https://api.z-api.io/instances/' + cliente.zapi_instance + '/token/' + cliente.zapi_token + '/tags',
-      { headers: { 'Client-Token': cliente.zapi_client_token } }
+
+    // Etiquetar no WhatsApp
+    await zapiEtiquetar(
+      cliente.zapi_instance,
+      cliente.zapi_token,
+      cliente.zapi_client_token,
+      telefone,
+      'Lead'
     );
-    const leadTag = (tagsRes.data || []).find(t => (t.name || '').toLowerCase() === 'lead');
-    if (!leadTag) { console.log('[Movatak] Etiqueta Lead nao encontrada na instancia ' + cliente.nome); return; }
-    await axios.put(
-      'https://api.z-api.io/instances/' + cliente.zapi_instance + '/token/' + cliente.zapi_token + '/chats/' + telefone + '/tags/' + leadTag.id + '/add',
-      {},
-      { headers: { 'Client-Token': cliente.zapi_client_token } }
-    );
-    console.log('[Movatak] Lead criado: ' + telefone + ' cliente ' + cliente.nome);
-  } catch(e) { console.error('[Movatak] movProcessarMensagem:', e.message); }
-}
 
-async function movProcessarEtiqueta(body) {
-  try {
-    if (!movPool) return;
-    const telefone   = String(body.phone || '').replace(/\D/g, '');
-    const etiqueta   = (body.label || '').toLowerCase().trim();
-    const instanceId = body.instanceId || body.instance || '';
-    if (!telefone || !etiqueta || !instanceId) return;
-    const rc = await movQuery(
-      'SELECT * FROM movatak_clientes WHERE zapi_instance = $1 AND ativo = true', [instanceId]
-    );
-    if (!rc || !rc.rows.length) return;
-    const cliente = rc.rows[0];
-    const rl = await movQuery(
-      'SELECT * FROM movatak_leads WHERE cliente_id = $1 AND telefone = $2', [cliente.id, telefone]
-    );
-    if (!rl || !rl.rows.length) return;
-    const lead = rl.rows[0];
-    if (etiqueta === 'follow up' || etiqueta === 'followup') {
-      await movQuery("UPDATE movatak_leads SET etapa='followup', atualizado_em=NOW() WHERE id=$1", [lead.id]);
-      await movQuery('DELETE FROM movatak_followup WHERE lead_id=$1', [lead.id]);
-      const diasSeq = { 1:1, 2:3, 3:7, 4:14 };
-      for (const [etapa, dias] of Object.entries(diasSeq)) {
-        const prox = new Date(); prox.setDate(prox.getDate() + dias);
-        await movQuery(
-          "INSERT INTO movatak_followup (lead_id,cliente_id,etapa_seq,proximo_envio,status) VALUES ($1,$2,$3,$4,'pendente')",
-          [lead.id, cliente.id, parseInt(etapa), prox.toISOString()]
-        );
-      }
-      console.log('[Movatak] Follow up agendado lead ' + lead.id);
-    }
-    if (etiqueta === 'cliente') {
-      await movQuery("UPDATE movatak_leads SET etapa='cliente', atualizado_em=NOW() WHERE id=$1", [lead.id]);
-      await movQuery("UPDATE movatak_followup SET status='pausado' WHERE lead_id=$1 AND status='pendente'", [lead.id]);
-      const msg = 'Seja bem-vindo(a)' + (lead.nome ? ', ' + lead.nome : '') + '! Estamos muito felizes em ter voce conosco. Em breve entraremos em contato com os proximos passos. Qualquer duvida, e so chamar!';
-      await axios.post(
-        'https://api.z-api.io/instances/' + cliente.zapi_instance + '/token/' + cliente.zapi_token + '/send-text',
-        { phone: telefone, message: msg },
-        { headers: { 'Client-Token': cliente.zapi_client_token } }
-      );
-      console.log('[Movatak] Cliente convertido lead ' + lead.id);
-    }
-  } catch(e) { console.error('[Movatak] movProcessarEtiqueta:', e.message); }
-}
-
-async function movProcessarResposta(body) {
-  try {
-    if (!movPool || body.fromMe) return;
-    const telefone   = String(body.phone || '').replace(/\D/g, '');
-    const instanceId = body.instanceId || body.instance || '';
-    if (!telefone || !instanceId) return;
-    const rc = await movQuery(
-      'SELECT id FROM movatak_clientes WHERE zapi_instance=$1 AND ativo=true', [instanceId]
-    );
-    if (!rc || !rc.rows.length) return;
-    const rl = await movQuery(
-      "SELECT id FROM movatak_leads WHERE cliente_id=$1 AND telefone=$2 AND etapa='followup'",
-      [rc.rows[0].id, telefone]
-    );
-    if (!rl || !rl.rows.length) return;
-    await movQuery(
-      "UPDATE movatak_followup SET status='pausado' WHERE lead_id=$1 AND status='pendente'", [rl.rows[0].id]
-    );
-    console.log('[Movatak] Follow up pausado por resposta lead ' + rl.rows[0].id);
-  } catch(e) { console.error('[Movatak] movProcessarResposta:', e.message); }
-}
-
-cron.schedule('0 * * * *', async () => {
-  if (!movPool) return;
-  try {
-    const r = await movQuery(
-      "SELECT f.*, l.telefone, l.nome, c.zapi_instance, c.zapi_token, c.zapi_client_token FROM movatak_followup f JOIN movatak_leads l ON l.id=f.lead_id JOIN movatak_clientes c ON c.id=f.cliente_id WHERE f.status='pendente' AND f.proximo_envio<=NOW() AND l.etapa='followup'", []
-    );
-    // Buscar mensagens personalizadas do banco (com fallback para padrao)
-    const clienteRow = await movQuery('SELECT followup_msgs FROM movatak_clientes WHERE id = $1', [row.cliente_id]);
-    const customMsgs = (clienteRow && clienteRow.rows[0] && clienteRow.rows[0].followup_msgs) || {};
-    const MSGS = {
-      1: (n) => (customMsgs.msg1 || 'Oi{nome}! Tudo bem? Passei aqui pra saber se ficou alguma duvida. Estou a disposicao!').replace('{nome}', n ? ' ' + n : ''),
-      2: (n) => (customMsgs.msg2 || '{nome}! Ainda temos disponibilidade pra voce. Se quiser retomar a conversa, e so chamar!').replace('{nome}', n || 'Ola'),
-      3: (_) => customMsgs.msg3 || 'Ei! Nao quero ser chato, mas queria passar uma ultima vez. Tem algo que posso esclarecer?',
-      4: (_) => customMsgs.msg4 || 'Ultimo recado! Se em algum momento fizer sentido retomar, estarei aqui. Abraco!'
-    };
-    for (const row of (r && r.rows ? r.rows : [])) {
-      try {
-        const msg = MSGS[row.etapa_seq] && MSGS[row.etapa_seq](row.nome);
-        if (!msg) continue;
-        await axios.post(
-          'https://api.z-api.io/instances/' + row.zapi_instance + '/token/' + row.zapi_token + '/send-text',
-          { phone: row.telefone, message: msg },
-          { headers: { 'Client-Token': row.zapi_client_token } }
-        );
-        await movQuery("UPDATE movatak_followup SET status='enviado' WHERE id=$1", [row.id]);
-        console.log('[Movatak Cron] Follow up ' + row.etapa_seq + ' enviado lead ' + row.lead_id);
-      } catch(e) { console.error('[Movatak Cron] lead ' + row.lead_id + ':', e.message); }
-    }
-  } catch(e) { console.error('[Movatak Cron]', e.message); }
-});
-
-// Webhook etiqueta Movatak (rota separada)
-app.post('/webhook/zapi', async (req, res) => {
-  res.json({ ok: true }); // Responde imediatamente
-
-  try {
-    const body = req.body;
-
-    // Movatak — processa lead e resposta de follow up
-    if (!body.fromMe) {
-      await movProcessarMensagem(body);
-      await movProcessarResposta(body);
-    }
-
-    // Ignora mensagens enviadas pelo próprio bot
-    if (body.fromMe) return;
-    if (!body.text || !body.text.message) return;
-
-    const texto    = body.text.message;
-    const telefone = body.phone; // formato: 5581999999999
-
-    if (!contemGatilho(texto)) return;
-
-    console.log(`[ZAPI] Gatilho detectado de ${telefone}: "${texto}"`);
-
-    // Busca pedido mais recente pelo telefone em todas as lojas
-    const stores = db.getAllStores();
-    let pedidoEncontrado = null;
-
-    for (const store of stores) {
-      try {
-        const orders = await nuvemGet(store.store_id, '/orders', {
-          per_page: 50,
-          payment_status: 'paid',
-          fields: 'id,number,contact_name,contact_phone,shipping_tracking_number,shipping_option,created_at'
-        });
-
-        // Normaliza telefone para comparar
-        const telLimpo = String(telefone).replace(/\D/g, '');
-
-        const pedido = orders
-          .filter(o => o.status !== 'cancelled')
-          .find(o => {
-            const t = formatTel(o.contact_phone);
-            return t && String(t).replace(/\D/g, '').endsWith(telLimpo.slice(-10));
-          });
-
-        if (pedido) {
-          pedidoEncontrado = { ...pedido, store_id: store.store_id };
-          break;
-        }
-      } catch(e) {
-        console.error(`[ZAPI] Erro ao buscar loja ${store.store_id}:`, e.message);
-      }
-    }
-
-    // Opt-out por palavra-chave
-    const palavrasOptOut = ['parar', 'sair', 'stop', 'não quero', 'nao quero', 'cancelar', 'descadastrar'];
-    if (palavrasOptOut.some(p => texto.toLowerCase().includes(p))) {
-      db.marcarOptOut(telefone, pedidoEncontrado?.store_id);
-      await sendWhatsApp(telefone,
-        `Tudo bem! Você não receberá mais mensagens automáticas. 😊\n\nSe precisar de ajuda, fale conosco diretamente.`
-      );
-      console.log(`[OptOut] ${telefone} optou por sair.`);
-      return res.sendStatus(200);
-    }
-
-    if (!pedidoEncontrado) {
-      await sendWhatsApp(telefone,
-        `Olá! 😊 Não encontrei nenhum pedido vinculado a este número.\n\n` +
-        `Se precisar de ajuda, entre em contato com nossa equipe!`
-      );
-      return;
-    }
-
-    const rastreio = pedidoEncontrado.shipping_tracking_number?.trim();
-    const nome     = pedidoEncontrado.contact_name || 'Cliente';
-    const numero   = pedidoEncontrado.number;
-    const link     = rastreio
-      ? `https://rastreamento.correios.com.br/app/index.php?objeto=${rastreio}`
-      : null;
-
-    // Busca status atual no DB
-    const statusAtual = rastreio ? db.statusRastreio(rastreio) : null;
-
-    let mensagem;
-    if (!rastreio) {
-      mensagem =
-        `Olá, ${nome}! 😊\n\n` +
-        `Seu pedido *#${numero}* ainda está em produção.\n\n` +
-        `Assim que for enviado, você receberá o código de rastreio aqui. 📦`;
-    } else {
-      mensagem =
-        `Olá, ${nome}! 😊\n\n` +
-        `Seu pedido *#${numero}*:\n\n` +
-        `📦 *Código de rastreio:* ${rastreio}\n` +
-        (statusAtual ? `📍 *Status atual:* ${statusAtual}\n` : '') +
-        `\n🔗 Rastreie aqui: ${link}`;
-    }
-
-    if (await podEnviar(telefone)) {
-      await sendWhatsApp(telefone, mensagem, storeId);
-      db.registrarMensagem(telefone);
-      console.log(`[ZAPI] Resposta automática enviada para ${telefone} — pedido #${numero}`);
-    }
-  } catch(e) {
-    console.error('[ZAPI] Erro no webhook:', e.message);
+    res.json({ ok: true });
+  } catch (e) {
+    console.error('[webhook/mensagem]', e.message);
+    res.status(500).json({ error: e.message });
   }
 });
 
-app.listen(PORT, () => {
-  console.log(`RastreioBot v2.4.0 rodando na porta ${PORT}`);
-  console.log('Cron ativo: verificação a cada 30 minutos');
+// ============================================================
+// ROTA 2 — Webhook de etiqueta aplicada
+// Z-API → POST /webhook/etiqueta
+// ============================================================
+app.post('/movatak/webhook/etiqueta', async (req, res) => {
+  try {
+    // Payload Z-API label_association
+    const { phone, label, instanceId } = req.body;
+    if (!phone || !label) return res.json({ ok: true });
+
+    const telefone = phone.replace(/\D/g, '');
+    const etiqueta = (label || '').toLowerCase();
+
+    // Buscar cliente pela instância
+    const rc = await query(
+      'SELECT * FROM movatak_clientes WHERE zapi_instance = $1 AND ativo = true',
+      [instanceId]
+    );
+    if (!rc.rows.length) return res.json({ ok: true });
+
+    const cliente = rc.rows[0];
+
+    // Buscar lead
+    const rl = await query(
+      'SELECT * FROM movatak_leads WHERE cliente_id = $1 AND telefone = $2',
+      [cliente.id, telefone]
+    );
+    if (!rl.rows.length) return res.json({ ok: true });
+
+    const lead = rl.rows[0];
+
+    // ---- Follow Up — suporte a etiquetas e listas (FU-Boleto, FU-Conversa, FU-Frio) ----
+    const GATILHOS_FU = ['follow up', 'followup', 'fu-boleto', 'fu-conversa', 'fu-frio'];
+    if (GATILHOS_FU.includes(etiqueta)) {
+      let subtipo = 'padrao';
+      if (etiqueta === 'fu-boleto')   subtipo = 'boleto';
+      if (etiqueta === 'fu-conversa') subtipo = 'conversa';
+      if (etiqueta === 'fu-frio')     subtipo = 'frio';
+
+      await query(
+        `UPDATE movatak_leads SET etapa = 'followup', atualizado_em = NOW() WHERE id = $1`,
+        [lead.id]
+      );
+
+      // Limpar fila existente e criar nova sequência
+      await query('DELETE FROM movatak_followup WHERE lead_id = $1', [lead.id]);
+
+      const agora = new Date();
+      for (const [etapa, dias] of Object.entries(DIAS_FOLLOWUP)) {
+        const proximo = new Date(agora);
+        proximo.setDate(proximo.getDate() + dias);
+        await query(
+          `INSERT INTO movatak_followup (lead_id, cliente_id, etapa_seq, proximo_envio, status)
+           VALUES ($1, $2, $3, $4, 'pendente')`,
+          [lead.id, cliente.id, parseInt(etapa), proximo.toISOString()]
+        );
+      }
+      console.log(`[webhook/etiqueta] Follow up [${subtipo}] agendado → lead ${lead.id}`);
+    }
+
+    // ---- Registrar log de etiqueta (auditoria) ----
+    await query(
+      'INSERT INTO movatak_etiqueta_log (lead_id, cliente_id, etiqueta) VALUES ($1, $2, $3)',
+      [lead.id, cliente.id, etiqueta]
+    );
+
+    // ---- Detecção de vendedor ----
+    const vendedores = await query(
+      'SELECT * FROM movatak_vendedores WHERE cliente_id = $1 AND ativo = true',
+      [cliente.id]
+    );
+    const vendedorDetectado = vendedores.rows.find(v =>
+      etiqueta.toLowerCase() === ('vendedor - ' + v.nome.toLowerCase())
+    );
+
+    if (vendedorDetectado) {
+      // Verificar troca suspeita — se já tinha outro vendedor
+      const vendedorAnterior = await query(
+        `SELECT el.etiqueta FROM movatak_etiqueta_log el
+         WHERE el.lead_id = $1
+           AND el.etiqueta ILIKE 'vendedor - %'
+           AND el.aplicado_em < NOW() - INTERVAL '10 seconds'
+         ORDER BY el.aplicado_em DESC LIMIT 1`,
+        [lead.id]
+      );
+
+      if (vendedorAnterior.rows.length && vendedorAnterior.rows[0].etiqueta.toLowerCase() !== etiqueta.toLowerCase()) {
+        // TROCA SUSPEITA DETECTADA
+        const alertMsg = `⚠️ *Alerta: Troca de vendedor detectada*\n\n*Cliente:* ${cliente.nome}\n*Lead:* ${lead.telefone}\n*Vendedor anterior:* ${vendedorAnterior.rows[0].etiqueta}\n*Trocado para:* ${etiqueta}\n*Horário:* ${new Date().toLocaleString('pt-BR')}`;
+
+        // Alerta para Movatak (você)
+        await enviarAlerta(cliente.zapi_instance, cliente.zapi_token, cliente.zapi_client_token, MOVATAK_ADMIN_WA, alertMsg);
+
+        // Alerta para dono da empresa
+        if (cliente.whatsapp_dono) {
+          await enviarAlerta(cliente.zapi_instance, cliente.zapi_token, cliente.zapi_client_token, cliente.whatsapp_dono, alertMsg);
+        }
+
+        console.log(`[alerta] Troca de vendedor detectada → lead ${lead.id}`);
+      }
+
+      // Atribuir vendedor ao lead (primeiro a aplicar ganha)
+      if (!lead.vendedor_id) {
+        await query(
+          'UPDATE movatak_leads SET vendedor_id = $1, atualizado_em = NOW() WHERE id = $2',
+          [vendedorDetectado.id, lead.id]
+        );
+      }
+    }
+
+    // ---- Cliente (venda fechada) ----
+    if (etiqueta === 'cliente' || vendedorDetectado) {
+      if (etiqueta === 'cliente' || vendedorDetectado) {
+        await query(
+          `UPDATE movatak_leads SET etapa = 'cliente', atualizado_em = NOW() WHERE id = $1`,
+          [lead.id]
+        );
+
+        await query(
+          `UPDATE movatak_followup SET status = 'pausado' WHERE lead_id = $1 AND status = 'pendente'`,
+          [lead.id]
+        );
+
+        if (etiqueta === 'cliente' || vendedorDetectado) {
+          const boasVindasCustom = cliente.boas_vindas_msg ||
+            `Seja bem-vindo(a)${lead.nome ? ', ' + lead.nome : ''}! Estamos muito felizes em ter você conosco. Em breve entraremos em contato com os próximos passos. Qualquer dúvida, é só chamar aqui!`;
+          const msg = boasVindasCustom.replace('{nome}', lead.nome ? ', ' + lead.nome : '');
+          await zapiEnviar(cliente.zapi_instance, cliente.zapi_token, cliente.zapi_client_token, telefone, msg);
+          await query(
+            `INSERT INTO movatak_mensagens (lead_id, cliente_id, tipo) VALUES ($1, $2, 'boas_vindas')`,
+            [lead.id, cliente.id]
+          );
+        }
+      }
+    }
+
+    res.json({ ok: true });
+  } catch (e) {
+    console.error('[webhook/etiqueta]', e.message);
+    res.status(500).json({ error: e.message });
+  }
 });
 
-// ── Keep-alive — ping a cada 10 minutos para evitar hibernação ───────────────
-const APP_URL_PING = process.env.APP_URL || '';
-if (APP_URL_PING) {
-  cron.schedule('*/10 * * * *', async () => {
-    try {
-      await axios.get(`${APP_URL_PING}/status`, { timeout: 10000 });
-      console.log('[Keep-alive] OK');
-    } catch(e) {
-      console.warn('[Keep-alive] Falha no ping:', e.message);
+// ============================================================
+// CRON — Disparador de follow up (roda a cada hora)
+// ============================================================
+cron.schedule('0 * * * *', async () => {
+  console.log('[cron] Verificando fila de follow up...');
+  try {
+    const r = await query(
+      `SELECT f.*, l.telefone, l.nome, c.zapi_instance, c.zapi_token, c.zapi_client_token, c.followup_msgs
+       FROM movatak_followup f
+       JOIN movatak_leads l ON l.id = f.lead_id
+       JOIN movatak_clientes c ON c.id = f.cliente_id
+       WHERE f.status = 'pendente'
+         AND f.proximo_envio <= NOW()
+         AND l.etapa = 'followup'`,
+      []
+    );
+
+    for (const row of r.rows) {
+      try {
+        // Mensagens personalizadas do cliente com fallback para padrão
+        const customMsgs = row.followup_msgs || {};
+        const MSGS_CLIENTE = {
+          1: (n) => (customMsgs.msg1 || MSGS_FOLLOWUP[1](n)),
+          2: (n) => (customMsgs.msg2 || MSGS_FOLLOWUP[2](n)),
+          3: (_) => (customMsgs.msg3 || MSGS_FOLLOWUP[3](_)),
+          4: (_) => (customMsgs.msg4 || MSGS_FOLLOWUP[4](_))
+        };
+        const gerarMsg = MSGS_CLIENTE[row.etapa_seq];
+        if (!gerarMsg) continue;
+
+        const msg = gerarMsg(row.nome);
+        await zapiEnviar(
+          row.zapi_instance,
+          row.zapi_token,
+          row.zapi_client_token,
+          row.telefone,
+          msg
+        );
+
+        await query(
+          `UPDATE movatak_followup SET status = 'enviado' WHERE id = $1`,
+          [row.id]
+        );
+
+        await query(
+          `INSERT INTO movatak_mensagens (lead_id, cliente_id, tipo)
+           VALUES ($1, $2, $3)`,
+          [row.lead_id, row.cliente_id, `followup_${row.etapa_seq}`]
+        );
+
+        console.log(`[cron] Follow up ${row.etapa_seq} enviado → lead ${row.lead_id}`);
+      } catch (e) {
+        console.error(`[cron] Erro lead ${row.lead_id}:`, e.message);
+      }
     }
-  });
-  console.log('Keep-alive ativo: ping a cada 10 minutos');
-}
+  } catch (e) {
+    console.error('[cron] Erro geral:', e.message);
+  }
+});
+
+
+// ============================================================
+// CRON — Alerta CPL ultrapassou teto (roda a cada hora)
+// ============================================================
+cron.schedule('30 * * * *', async () => {
+  try {
+    const clientes = await query(
+      `SELECT c.*, COUNT(l.id) AS total_leads
+       FROM movatak_clientes c
+       LEFT JOIN movatak_leads l ON l.cliente_id = c.id AND l.etapa != 'descartado'
+       WHERE c.ativo = true AND c.verba_diaria IS NOT NULL AND c.teto_cpl IS NOT NULL
+       GROUP BY c.id`,
+      []
+    );
+
+    for (const c of clientes.rows) {
+      const totalLeads = parseInt(c.total_leads || 0);
+      if (totalLeads === 0) continue;
+      const diasRodando = Math.max(1, Math.ceil((Date.now() - new Date(c.criado_em).getTime()) / 86400000));
+      const verbaTotalGasta = parseFloat(c.verba_diaria) * Math.min(diasRodando, 90);
+      const cpl = verbaTotalGasta / totalLeads;
+
+      if (cpl > parseFloat(c.teto_cpl)) {
+        const msg = `🚨 *Alerta CPL — ${c.nome}*\n\nCPL atual: *R$ ${cpl.toFixed(2)}*\nTeto acordado: *R$ ${parseFloat(c.teto_cpl).toFixed(2)}*\n\nRevise as campanhas ou aumente a verba.`;
+        await enviarAlerta(c.zapi_instance, c.zapi_token, c.zapi_client_token, MOVATAK_ADMIN_WA, msg);
+        if (c.whatsapp_dono) {
+          await enviarAlerta(c.zapi_instance, c.zapi_token, c.zapi_client_token, c.whatsapp_dono, msg);
+        }
+        console.log(`[cron-cpl] Alerta enviado → ${c.nome} CPL R${cpl.toFixed(2)}`);
+      }
+    }
+  } catch(e) {
+    console.error('[cron-cpl]', e.message);
+  }
+});
+
+// ============================================================
+// CRON — Alerta de lead parado sem etiqueta após 24h
+// ============================================================
+cron.schedule('0 9 * * *', async () => {
+  try {
+    const leads = await query(
+      `SELECT l.*, c.nome AS cliente_nome, c.zapi_instance, c.zapi_token, c.zapi_client_token, c.whatsapp_dono
+       FROM movatak_leads l
+       JOIN movatak_clientes c ON c.id = l.cliente_id
+       WHERE l.etapa = 'lead'
+         AND l.criado_em <= NOW() - INTERVAL '24 hours'
+         AND c.ativo = true`,
+      []
+    );
+
+    for (const lead of leads.rows) {
+      const msg = `⏰ *Lead parado há mais de 24h*\n\n*Cliente:* ${lead.cliente_nome}\n*Lead:* ${lead.telefone}${lead.nome ? ' (' + lead.nome + ')' : ''}\n\nEsse lead ainda não recebeu etiqueta Follow Up ou Cliente. Verifique com a equipe de vendas.`;
+      await enviarAlerta(lead.zapi_instance, lead.zapi_token, lead.zapi_client_token, MOVATAK_ADMIN_WA, msg);
+      if (lead.whatsapp_dono) {
+        await enviarAlerta(lead.zapi_instance, lead.zapi_token, lead.zapi_client_token, lead.whatsapp_dono, msg);
+      }
+      console.log(`[cron-parado] Alerta lead parado → ${lead.id}`);
+    }
+  } catch(e) {
+    console.error('[cron-parado]', e.message);
+  }
+});
+
+// ============================================================
+// WEBHOOK — Lead respondeu (parar sequência)
+// Z-API dispara quando lead envia qualquer mensagem
+// Verificar se está em followup e pausar
+// ============================================================
+app.post('/movatak/webhook/resposta', async (req, res) => {
+  try {
+    const { phone, instanceId } = req.body;
+    if (!phone) return res.json({ ok: true });
+
+    const telefone = phone.replace(/\D/g, '');
+
+    const rc = await query(
+      'SELECT id FROM movatak_clientes WHERE zapi_instance = $1 AND ativo = true',
+      [instanceId]
+    );
+    if (!rc.rows.length) return res.json({ ok: true });
+
+    const clienteId = rc.rows[0].id;
+
+    const rl = await query(
+      `SELECT id FROM movatak_leads WHERE cliente_id = $1 AND telefone = $2 AND etapa = 'followup'`,
+      [clienteId, telefone]
+    );
+    if (!rl.rows.length) return res.json({ ok: true });
+
+    const leadId = rl.rows[0].id;
+
+    await query(
+      `UPDATE movatak_followup SET status = 'pausado'
+       WHERE lead_id = $1 AND status = 'pendente'`,
+      [leadId]
+    );
+
+    console.log(`[resposta] Follow up pausado → lead ${leadId}`);
+    res.json({ ok: true });
+  } catch (e) {
+    console.error('[webhook/resposta]', e.message);
+    res.status(500).json({ error: e.message });
+  }
+});
+
+// ============================================================
+// API — App do cliente (somente leitura)
+// ============================================================
+
+// Dashboard — métricas do período
+app.get('/movatak/app/dashboard', authCliente, async (req, res) => {
+  try {
+    const { dias = 30 } = req.query;
+    const clienteId = req.clienteId;
+
+    const r = await query(
+      `SELECT
+         COUNT(*) FILTER (WHERE etapa != 'descartado')                          AS total_leads,
+         COUNT(*) FILTER (WHERE etapa = 'cliente')                              AS convertidos,
+         COUNT(*) FILTER (WHERE etapa = 'followup')                             AS em_followup,
+         COUNT(*) FILTER (WHERE DATE(criado_em) = CURRENT_DATE)                AS leads_hoje,
+         COUNT(*) FILTER (WHERE etapa = 'cliente' AND DATE(criado_em) = CURRENT_DATE) AS vendas_hoje,
+         ROUND(
+           100.0 * COUNT(*) FILTER (WHERE etapa = 'cliente') /
+           NULLIF(COUNT(*) FILTER (WHERE etapa != 'descartado'), 0), 1
+         )                                                                      AS taxa_conversao
+       FROM movatak_leads
+       WHERE cliente_id = $1
+         AND criado_em >= NOW() - ($2 || ' days')::INTERVAL`,
+      [clienteId, parseInt(dias)]
+    );
+
+    const planoTop = await query(
+      `SELECT p.nome, COUNT(*) AS total
+       FROM movatak_leads l
+       JOIN movatak_planos p ON p.id = l.plano_id
+       WHERE l.cliente_id = $1
+         AND l.etapa = 'cliente'
+         AND l.criado_em >= NOW() - ($2 || ' days')::INTERVAL
+       GROUP BY p.nome
+       ORDER BY total DESC
+       LIMIT 1`,
+      [clienteId, parseInt(dias)]
+    );
+
+    const leadsPorDia = await query(
+      `SELECT DATE(criado_em) AS dia, COUNT(*) AS leads
+       FROM movatak_leads
+       WHERE cliente_id = $1
+         AND criado_em >= NOW() - ($2 || ' days')::INTERVAL
+       GROUP BY dia
+       ORDER BY dia`,
+      [clienteId, parseInt(dias)]
+    );
+
+    // CPL calculado: verba_diaria x dias / total_leads
+    const clienteData = await query(
+      'SELECT teto_cpl, verba_diaria, criado_em FROM movatak_clientes WHERE id = $1',
+      [clienteId]
+    );
+    const cd = clienteData.rows[0] || {};
+    const totalLeads = parseInt(r.rows[0].total_leads || 0);
+    let cpl_calculado = null;
+    let alerta_cpl = false;
+    if (cd.verba_diaria && totalLeads > 0) {
+      const diasRodando = Math.max(1, Math.ceil((Date.now() - new Date(cd.criado_em).getTime()) / 86400000));
+      const verbaTotalGasta = parseFloat(cd.verba_diaria) * Math.min(diasRodando, parseInt(dias));
+      cpl_calculado = (verbaTotalGasta / totalLeads).toFixed(2);
+      if (cd.teto_cpl && parseFloat(cpl_calculado) > parseFloat(cd.teto_cpl)) {
+        alerta_cpl = true;
+      }
+    }
+
+    res.json({
+      periodo_dias: parseInt(dias),
+      ...r.rows[0],
+      plano_top: planoTop.rows[0] || null,
+      leads_por_dia: leadsPorDia.rows,
+      cpl_calculado,
+      teto_cpl: cd.teto_cpl || null,
+      alerta_cpl
+    });
+  } catch (e) {
+    res.status(500).json({ error: e.message });
+  }
+});
+
+// ============================================================
+// API — Painel Movatak (seus dados internos)
+// ============================================================
+
+// Listar todos os clientes com resumo
+app.get('/movatak/admin/clientes', authMovatak, async (req, res) => {
+  try {
+    const r = await query(
+      `SELECT c.id, c.nome, c.whatsapp, c.ativo, c.criado_em,
+              COUNT(l.id) AS total_leads,
+              COUNT(l.id) FILTER (WHERE l.etapa = 'cliente') AS convertidos,
+              COUNT(l.id) FILTER (WHERE l.etapa = 'followup') AS em_followup,
+              COUNT(l.id) FILTER (WHERE DATE(l.criado_em) = CURRENT_DATE) AS leads_hoje,
+              COUNT(l.id) FILTER (WHERE l.etapa = 'cliente' AND DATE(l.criado_em) = CURRENT_DATE) AS vendas_hoje
+       FROM movatak_clientes c
+       LEFT JOIN movatak_leads l ON l.cliente_id = c.id
+       GROUP BY c.id
+       ORDER BY c.criado_em DESC`,
+      []
+    );
+    res.json(r.rows);
+  } catch (e) {
+    res.status(500).json({ error: e.message });
+  }
+});
+
+// Cadastrar cliente novo (onboarding)
+app.post('/movatak/admin/clientes', authMovatak, async (req, res) => {
+  try {
+    const {
+      nome, whatsapp, zapi_instance, zapi_token, zapi_client_token,
+      trigger_msg, teto_cpl, planos
+    } = req.body;
+
+    if (!nome || !whatsapp || !zapi_instance || !zapi_token || !zapi_client_token || !trigger_msg) {
+      return res.status(400).json({ error: 'Campos obrigatorios: nome, whatsapp, zapi_instance, zapi_token, zapi_client_token, trigger_msg' });
+    }
+
+    const app_token = 'mvtk_' + Date.now() + '_' + Math.random().toString(36).slice(2, 10);
+
+    const r = await query(
+      `INSERT INTO movatak_clientes
+         (nome, whatsapp, zapi_instance, zapi_token, zapi_client_token, trigger_msg, teto_cpl, app_token)
+       VALUES ($1,$2,$3,$4,$5,$6,$7,$8)
+       RETURNING id, app_token`,
+      [nome, whatsapp, zapi_instance, zapi_token, zapi_client_token, trigger_msg, teto_cpl || null, app_token]
+    );
+
+    const clienteId = r.rows[0].id;
+
+    if (Array.isArray(planos) && planos.length) {
+      for (const p of planos) {
+        await query(
+          'INSERT INTO movatak_planos (cliente_id, nome, valor) VALUES ($1, $2, $3)',
+          [clienteId, p.nome, p.valor || null]
+        );
+      }
+    }
+
+    res.json({ id: clienteId, app_token: r.rows[0].app_token });
+  } catch (e) {
+    res.status(500).json({ error: e.message });
+  }
+});
+
+// Leads de um cliente específico
+app.get('/movatak/admin/clientes/:id/leads', authMovatak, async (req, res) => {
+  try {
+    const r = await query(
+      `SELECT l.*, p.nome AS plano_nome
+       FROM movatak_leads l
+       LEFT JOIN movatak_planos p ON p.id = l.plano_id
+       WHERE l.cliente_id = $1
+       ORDER BY l.criado_em DESC
+       LIMIT 200`,
+      [req.params.id]
+    );
+    res.json(r.rows);
+  } catch (e) {
+    res.status(500).json({ error: e.message });
+  }
+});
+
+// Buscar mensagens de follow up de um cliente
+app.get('/movatak/admin/clientes/:id/followup', authMovatak, async (req, res) => {
+  try {
+    const r = await query('SELECT followup_msgs FROM movatak_clientes WHERE id = $1', [req.params.id]);
+    if (!r.rows.length) return res.status(404).json({ error: 'Cliente nao encontrado.' });
+    const row = r.rows[0];
+    const msgs = row.followup_msgs || {
+      msg1: 'Oi {nome}! Tudo bem? Passei aqui pra saber se ficou alguma duvida. Estou a disposicao!',
+      msg2: '{nome}! Ainda temos disponibilidade pra voce. Se quiser retomar a conversa, e so chamar!',
+      msg3: 'Ei! Nao quero ser chato, mas queria passar uma ultima vez. Tem algo que posso esclarecer?',
+      msg4: 'Ultimo recado! Se em algum momento fizer sentido retomar, estarei aqui. Abraco!'
+    };
+    res.json({
+      ...msgs,
+      boas_vindas_msg: row.boas_vindas_msg || 'Seja bem-vindo(a){nome}! Estamos muito felizes em ter voce conosco. Em breve entraremos em contato com os proximos passos. Qualquer duvida, e so chamar!'
+    });
+  } catch (e) { res.status(500).json({ error: e.message }); }
+});
+
+// Atualizar mensagens de follow up de um cliente
+app.patch('/movatak/admin/clientes/:id/followup', authMovatak, async (req, res) => {
+  try {
+    const { msg1, msg2, msg3, msg4, boas_vindas_msg, verba_diaria } = req.body;
+    if (!msg1 || !msg2 || !msg3 || !msg4) return res.status(400).json({ error: 'Todas as 4 mensagens sao obrigatorias.' });
+    await query(
+      'UPDATE movatak_clientes SET followup_msgs = $1, boas_vindas_msg = $2, verba_diaria = $3 WHERE id = $4',
+      [JSON.stringify({ msg1, msg2, msg3, msg4 }), boas_vindas_msg || null, verba_diaria ? parseFloat(verba_diaria) : null, req.params.id]
+    );
+    res.json({ ok: true });
+  } catch (e) { res.status(500).json({ error: e.message }); }
+});
+
+// Atualizar plano de um lead (quando atendente informa qual plano foi vendido)
+app.patch('/movatak/admin/leads/:id/plano', authMovatak, async (req, res) => {
+  try {
+    const { plano_id } = req.body;
+    await query(
+      'UPDATE movatak_leads SET plano_id = $1, atualizado_em = NOW() WHERE id = $2',
+      [plano_id, req.params.id]
+    );
+    res.json({ ok: true });
+  } catch (e) {
+    res.status(500).json({ error: e.message });
+  }
+});
+
+
+// Listar vendedores de um cliente
+app.get('/movatak/admin/clientes/:id/vendedores', authMovatak, async (req, res) => {
+  try {
+    const r = await query(
+      'SELECT * FROM movatak_vendedores WHERE cliente_id = $1 ORDER BY nome',
+      [req.params.id]
+    );
+    res.json(r.rows);
+  } catch(e) { res.status(500).json({ error: e.message }); }
+});
+
+// Cadastrar vendedor e criar etiqueta na Z-API
+app.post('/movatak/admin/clientes/:id/vendedores', authMovatak, async (req, res) => {
+  try {
+    const { nome } = req.body;
+    if (!nome) return res.status(400).json({ error: 'Nome obrigatorio.' });
+
+    const rc = await query('SELECT * FROM movatak_clientes WHERE id = $1', [req.params.id]);
+    if (!rc.rows.length) return res.status(404).json({ error: 'Cliente nao encontrado.' });
+    const cliente = rc.rows[0];
+
+    // Salvar vendedor — etiqueta deve ser criada manualmente no WhatsApp Business
+    // com o nome exato: 'Vendedor - ' + nome
+    const r = await query(
+      'INSERT INTO movatak_vendedores (cliente_id, nome) VALUES ($1, $2) RETURNING *',
+      [req.params.id, nome]
+    );
+    res.json(r.rows[0]);
+  } catch(e) { res.status(500).json({ error: e.message }); }
+});
+
+// Remover vendedor
+app.delete('/movatak/admin/clientes/:clienteId/vendedores/:id', authMovatak, async (req, res) => {
+  try {
+    await query('UPDATE movatak_vendedores SET ativo = false WHERE id = $1', [req.params.id]);
+    res.json({ ok: true });
+  } catch(e) { res.status(500).json({ error: e.message }); }
+});
+
+// Ranking de vendedores
+app.get('/movatak/admin/clientes/:id/ranking', authMovatak, async (req, res) => {
+  try {
+    const r = await query(
+      `SELECT v.nome, COUNT(l.id) AS vendas, COUNT(l.id) FILTER (WHERE l.etapa = 'cliente') AS fechamentos
+       FROM movatak_vendedores v
+       LEFT JOIN movatak_leads l ON l.vendedor_id = v.id
+       WHERE v.cliente_id = $1 AND v.ativo = true
+       GROUP BY v.id, v.nome
+       ORDER BY fechamentos DESC`,
+      [req.params.id]
+    );
+    res.json(r.rows);
+  } catch(e) { res.status(500).json({ error: e.message }); }
+});
+
+// Ranking de vendedores para o app do cliente
+app.get('/movatak/app/ranking', authCliente, async (req, res) => {
+  try {
+    const r = await query(
+      `SELECT v.nome,
+              COUNT(l.id) FILTER (WHERE l.etapa = 'cliente') AS fechamentos,
+              COUNT(l.id) AS leads_atribuidos
+       FROM movatak_vendedores v
+       LEFT JOIN movatak_leads l ON l.vendedor_id = v.id
+       WHERE v.cliente_id = $1 AND v.ativo = true
+       GROUP BY v.id, v.nome
+       ORDER BY fechamentos DESC`,
+      [req.clienteId]
+    );
+    res.json(r.rows);
+  } catch(e) { res.status(500).json({ error: e.message }); }
+});
+
+// Evolução semanal (últimos 90 dias) para o app do cliente
+app.get('/movatak/app/evolucao', authCliente, async (req, res) => {
+  try {
+    const r = await query(
+      `SELECT
+         DATE_TRUNC('week', criado_em) AS semana,
+         COUNT(*) AS leads,
+         COUNT(*) FILTER (WHERE etapa = 'cliente') AS convertidos
+       FROM movatak_leads
+       WHERE cliente_id = $1
+         AND criado_em >= NOW() - INTERVAL '90 days'
+       GROUP BY semana
+       ORDER BY semana`,
+      [req.clienteId]
+    );
+    res.json(r.rows);
+  } catch(e) { res.status(500).json({ error: e.message }); }
+});
+
+// Atualizar whatsapp_dono
+app.patch('/movatak/admin/clientes/:id/dono', authMovatak, async (req, res) => {
+  try {
+    const { whatsapp_dono } = req.body;
+    await query('UPDATE movatak_clientes SET whatsapp_dono = $1 WHERE id = $2', [whatsapp_dono, req.params.id]);
+    res.json({ ok: true });
+  } catch(e) { res.status(500).json({ error: e.message }); }
+});
+
+// ============================================================
+// Health check
+// ============================================================
+app.get('/movatak/health', (req, res) => {
+  res.json({ status: 'ok', ts: new Date().toISOString() });
+});
+
+// ============================================================
+// Start
+// ============================================================
+const PORT = process.env.MOVATAK_PORT || process.env.PORT || 3001;
+app.listen(PORT, () => {
+  console.log(`[Movatak] Backend rodando na porta ${PORT}`);
+});
