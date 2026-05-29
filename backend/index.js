@@ -209,11 +209,11 @@ function montarMensagemCarrinho(etapa, nome, link) {
 }
 
 function montarMensagemBoleto(etapa, nome, numero, gateway) {
-  const metodo = (gateway || '').toLowerCase().includes('pix') ? 'PIX' : 'boleto';
+  const aviso = `\n\n_Se você já efetuou o pagamento por outros métodos, desconsidere esta mensagem._`;
   const msgs = {
-    60: `Olá, ${nome}! 😊\n\nIdentificamos que seu pedido *#${numero}* ainda está aguardando pagamento.\n\nFinalize seu pagamento para garantir seu pedido!\n\nQualquer dúvida é só chamar. 💬`,
-    1440: `${nome}, seu pedido *#${numero}* ainda está pendente! ⏳\n\nTeve alguma dificuldade com o pagamento? Estamos aqui para ajudar!\n\nResponda essa mensagem se precisar de suporte. 😊`,
-    2880: `⚠️ ${nome}, *última chance!*\n\nSeu pedido *#${numero}* está prestes a ser cancelado por falta de pagamento.\n\nFinalize agora para não perder sua reserva!\n\nQualquer problema, é só falar. 💬`
+    60: `Olá, ${nome}! 😊\n\nIdentificamos que seu pedido *#${numero}* ainda está aguardando pagamento.\n\nFinalize seu pagamento para garantir seu pedido!\n\nQualquer dúvida é só chamar. 💬${aviso}`,
+    1440: `${nome}, seu pedido *#${numero}* ainda está pendente! ⏳\n\nTeve alguma dificuldade com o pagamento? Estamos aqui para ajudar!\n\nResponda essa mensagem se precisar de suporte. 😊${aviso}`,
+    2880: `⚠️ ${nome}, *última chance!*\n\nSeu pedido *#${numero}* está prestes a ser cancelado por falta de pagamento.\n\nFinalize agora para não perder sua reserva!\n\nQualquer problema, é só falar. 💬${aviso}`
   };
   return msgs[etapa] || null;
 }
@@ -259,7 +259,7 @@ async function verificarBoletosPendentes(storeId) {
       const metodoLabel = gw.includes('pix') ? 'PIX' : gw === '' ? 'link de pagamento' : 'boleto';
       let mensagem;
       if (etapa === 9999) {
-        mensagem = `⚠️ ${nome}, seu pedido *#${o.number}* ainda está aguardando pagamento. Ainda tem interesse? O que falta para finalizarmos e despacharmos seu pedido nas próximas 24h?`;
+        mensagem = `⚠️ ${nome}, seu pedido *#${o.number}* ainda está aguardando pagamento. Ainda tem interesse? O que falta para finalizarmos e despacharmos seu pedido nas próximas 24h?\n\n_Se você já efetuou o pagamento por outros métodos, desconsidere esta mensagem._`;
       } else {
         mensagem = montarMensagemBoleto(etapa, nome, o.number, metodoLabel);
       }
