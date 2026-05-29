@@ -750,6 +750,98 @@ app.get('/licenca/status/:storeId', auth, (req, res) => {
   res.json({ plano: lic.plano, valida: true, expira_em: lic.expira_em });
 });
 
+
+// ── Cadastro de novo usuário ──────────────────────────────────────────────────
+app.post('/cadastro', async (req, res) => {
+  const { nome, email, whatsapp, plano } = req.body;
+  if (!nome || !email) return res.status(400).json({ error: 'Nome e email são obrigatórios.' });
+
+  const CHROME_URL = 'https://chromewebstore.google.com/detail/loggzap-dashboard/dpfnpaepnholpjgbblljpinbkfoldlpp';
+
+  try {
+    const resend = new Resend(process.env.RESEND_API_KEY);
+    const nomeFormatado = nome.split(' ').map(p => p.charAt(0).toUpperCase() + p.slice(1).toLowerCase()).join(' ');
+    const isPremium = (plano === 'premium');
+
+    await resend.emails.send({
+      from: 'LoggZap <contato@loggzap.com.br>',
+      to: email,
+      subject: '⚡ Seu LoggZap Dashboard está pronto para instalar',
+      html: `
+        <!DOCTYPE html>
+        <html lang="pt-BR">
+        <head><meta charset="UTF-8"><meta name="viewport" content="width=device-width,initial-scale=1.0"></head>
+        <body style="margin:0;padding:0;background:#07090e;font-family:'DM Sans',Arial,sans-serif;color:#eef0f8">
+          <div style="max-width:600px;margin:0 auto;padding:40px 24px">
+            <div style="text-align:center;margin-bottom:36px">
+              <span style="font-size:32px;font-weight:800">Logg<span style="color:#00d084">Zap</span></span>
+            </div>
+            <div style="background:#0c0f16;border:1px solid rgba(255,255,255,0.07);border-radius:14px;padding:32px">
+              <h1 style="font-size:22px;font-weight:700;margin:0 0 12px">Olá, ${nomeFormatado}! 👋</h1>
+              <p style="color:#8b93a8;font-size:15px;line-height:1.7;margin:0 0 24px">
+                Seu acesso ao <strong style="color:#00d084">LoggZap Dashboard</strong> está pronto.
+                Clique no botão abaixo para instalar direto pela Chrome Web Store.
+              </p>
+
+              <div style="background:#11151e;border-radius:10px;padding:20px;margin-bottom:24px">
+                <div style="font-size:12px;font-weight:700;letter-spacing:2px;color:#00d084;text-transform:uppercase;margin-bottom:12px">Passo 1 — Instale a extensão</div>
+                <p style="color:#8b93a8;font-size:14px;margin:0 0 16px">Clique no botão abaixo para instalar direto pela Chrome Web Store:</p>
+                <a href="${CHROME_URL}" style="display:inline-block;background:#00d084;color:#000;padding:12px 28px;border-radius:8px;text-decoration:none;font-weight:700;font-size:14px">🔗 Instalar LoggZap no Chrome</a>
+              </div>
+
+              <div style="background:#11151e;border-radius:10px;padding:20px;margin-bottom:24px">
+                <div style="font-size:12px;font-weight:700;letter-spacing:2px;color:#00d084;text-transform:uppercase;margin-bottom:12px">Passo 2 — Leia o manual</div>
+                <p style="color:#8b93a8;font-size:14px;margin:0 0 16px">O manual completo de instalação está disponível online:</p>
+                <a href="${process.env.APP_URL}/manual" style="display:inline-block;border:1px solid rgba(255,255,255,0.15);color:#eef0f8;padding:12px 28px;border-radius:8px;text-decoration:none;font-weight:600;font-size:14px">📖 Ver manual de instalação</a>
+              </div>
+
+              <div style="background:#11151e;border-radius:10px;padding:20px">
+                <div style="font-size:12px;font-weight:700;letter-spacing:2px;color:#00d084;text-transform:uppercase;margin-bottom:12px">Dados de configuração</div>
+                <p style="color:#8b93a8;font-size:14px;margin:0 0 8px">Use estes dados quando for configurar a extensão:</p>
+                <div style="background:#07090e;border-radius:6px;padding:14px;font-family:monospace;font-size:13px;color:#00d084">
+                  Chave Secreta: MinhaChave2024Secreta
+                </div>
+              </div>
+            </div>
+
+            <div style="text-align:center;margin-top:32px">
+              <p style="color:#424a61;font-size:13px">Seu trial de 7 dias começa quando você instalar a extensão.</p>
+              <p style="color:#424a61;font-size:13px;margin-top:8px">Dúvidas? <a href="mailto:contato@loggzap.com.br" style="color:#00d084">contato@loggzap.com.br</a></p>
+            </div>
+          </div>
+        </body>
+        </html>
+      `
+    });
+
+    console.log('[Cadastro] Lead registrado:', nome, email, plano);
+
+    // Notificar leads@loggzap.com.br
+    try {
+      await resend.emails.send({
+        from: 'LoggZap <contato@loggzap.com.br>',
+        to: 'leads@loggzap.com.br',
+        subject: `🔔 Novo lead: ${nome} — Plano ${plano}`,
+        html: `<div style="font-family:Arial,sans-serif;max-width:480px;margin:0 auto;padding:32px;background:#0c0f16;color:#eef0f8;border-radius:12px">
+          <h2 style="color:#00d084;margin:0 0 20px">Novo cadastro no LoggZap</h2>
+          <table style="width:100%;border-collapse:collapse">
+            <tr><td style="padding:8px 0;color:#8b93a8;font-size:14px">Nome</td><td style="padding:8px 0;font-size:14px"><strong>${nome}</strong></td></tr>
+            <tr><td style="padding:8px 0;color:#8b93a8;font-size:14px">Email</td><td style="padding:8px 0;font-size:14px"><a href="mailto:${email}" style="color:#00d084">${email}</a></td></tr>
+            <tr><td style="padding:8px 0;color:#8b93a8;font-size:14px">WhatsApp</td><td style="padding:8px 0;font-size:14px">${whatsapp || '—'}</td></tr>
+            <tr><td style="padding:8px 0;color:#8b93a8;font-size:14px">Plano</td><td style="padding:8px 0;font-size:14px"><strong style="color:#00d084">${plano}</strong></td></tr>
+            <tr><td style="padding:8px 0;color:#8b93a8;font-size:14px">Data</td><td style="padding:8px 0;font-size:14px">${new Date().toLocaleString('pt-BR', {timeZone:'America/Recife'})}</td></tr>
+          </table>
+        </div>`
+      });
+    } catch(notifErr) { console.error('[Cadastro] Erro notif lead:', notifErr.message); }
+
+    res.json({ success: true, redirect: CHROME_URL });
+  } catch(e) {
+    console.error('[Cadastro] Erro:', e.message);
+    res.status(500).json({ error: 'Erro ao enviar email. Tente novamente.' });
+  }
+});
+
 app.get('/download/extensao', (req, res) => {
   const file = path.join(__dirname, 'public', 'LoggZap_v2.6.zip');
   res.download(file, 'LoggZap_Dashboard_v2.6.zip');
