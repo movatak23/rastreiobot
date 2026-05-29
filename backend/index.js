@@ -842,6 +842,43 @@ app.post('/cadastro', async (req, res) => {
   }
 });
 
+app.get('/ranking/:storeId', auth, async (req, res) => {
+  const { storeId } = req.params;
+  const tipo = req.query.tipo || 'valor'; // 'valor' ou 'compras'
+  const dias = parseInt(req.query.dias || '360');
+  try {
+    const desde = new Date(Date.now() - dias * 24 * 60 * 60 * 1000).toISOString();
+    const orders = await nuvemGet(storeId, '/orders', {
+      per_page: 200,
+      payment_status: 'paid',
+      created_at_min: desde
+    });
+
+    const clientes = {};
+    for (const o of orders) {
+      if (o.status === 'cancelled') continue;
+      const tel = formatTel(o.contact_phone);
+      const nome = o.contact_name || 'Cliente';
+      const key = tel || nome;
+      if (!clientes[key]) clientes[key] = { nome, telefone: tel, total: 0, compras: 0 };
+      clientes[key].total += parseFloat(o.total || 0);
+      clientes[key].compras += 1;
+    }
+
+    const lista = Object.values(clientes)
+      .sort((a, b) => tipo === 'compras' ? b.compras - a.compras : b.total - a.total)
+      .slice(0, 20)
+      .map((c, i) => ({ posicao: i + 1, ...c, total: Math.round(c.total * 100) / 100 }));
+
+    res.json({ success: true, tipo, dias, total: lista.length, clientes: lista });
+  } catch(e) {
+    const msg = e.response?.data?.description || e.message || '';
+    if (msg.includes('Last page is 0')) return res.json({ success: true, tipo, dias, total: 0, clientes: [] });
+    console.error(`[Ranking] Erro loja ${storeId}:`, e.message);
+    res.status(500).json({ error: e.message });
+  }
+});
+
 app.get('/download/extensao', (req, res) => {
   const file = path.join(__dirname, 'public', 'LoggZap_v2.6.zip');
   res.download(file, 'LoggZap_Dashboard_v2.6.zip');
