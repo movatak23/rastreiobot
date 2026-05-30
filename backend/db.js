@@ -120,6 +120,12 @@ db.exec(`
     store_id   TEXT,
     created_at TEXT DEFAULT (datetime('now'))
   );
+
+  CREATE TABLE IF NOT EXISTS clientes_ativos (
+    telefone   TEXT PRIMARY KEY,
+    store_id   TEXT,
+    updated_at TEXT DEFAULT (datetime('now'))
+  );
 `);
 
 function saveToken(storeId, accessToken) {
@@ -355,6 +361,25 @@ function listarNotificadosRecentes() {
   return db.prepare('SELECT order_id, telefone, created_at FROM notificados ORDER BY created_at DESC LIMIT 20').all();
 }
 
+function registrarClienteAtivo(telefone, storeId) {
+  if (!telefone) return;
+  db.prepare(`
+    INSERT INTO clientes_ativos (telefone, store_id, updated_at)
+    VALUES (?, ?, datetime('now'))
+    ON CONFLICT(telefone) DO UPDATE SET updated_at = excluded.updated_at
+  `).run(String(telefone), storeId || null);
+}
+
+function jaClienteAtivo(telefone) {
+  if (!telefone) return false;
+  const tel = String(telefone).replace(/\D/g, '');
+  return !!(
+    db.prepare('SELECT 1 FROM clientes_ativos WHERE telefone = ?').get(tel) ||
+    db.prepare('SELECT 1 FROM clientes_ativos WHERE telefone = ?').get('55' + tel) ||
+    db.prepare('SELECT 1 FROM clientes_ativos WHERE telefone = ?').get(tel.replace(/^55/, ''))
+  );
+}
+
 function jaNotificadoPorTelefone(telefone) {
   return !!db.prepare('SELECT 1 FROM notificados WHERE telefone = ?').get(telefone);
 }
@@ -549,6 +574,7 @@ module.exports = {
   jaPosEntregaEnviado, marcarPosEntregaEnviado,
   jaAlertaParadoEnviado, marcarAlertaParadoEnviado,
   jaNotificadoPorTelefone, listarNotificadosRecentes,
+  registrarClienteAtivo, jaClienteAtivo,
   getAdminStats, getLojistaStats,
   upsertAuthSession, getAuthSession, completeAuthSession, deleteAuthSession,
   criarLicenca, getLicenca, getLicencaPorStore, vincularLicenca, validarLicenca,
