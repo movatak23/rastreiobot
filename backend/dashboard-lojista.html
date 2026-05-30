@@ -72,6 +72,20 @@ input::placeholder{color:var(--text3);}
 @keyframes spin{to{transform:rotate(360deg)}}
 .loading{text-align:center;color:var(--text3);padding:40px;font-size:13px;}
 .updated{font-size:11px;color:var(--text3);text-align:right;margin-top:12px;}
+/* Toggles de automação */
+.toggle-row{display:flex;align-items:center;gap:12px;padding:14px 0;border-bottom:1px solid var(--border);}
+.toggle-row:last-child{border-bottom:none;}
+.toggle-info{flex:1;}
+.toggle-name{font-size:14px;font-weight:600;color:var(--text);}
+.toggle-desc{font-size:12px;color:var(--text3);margin-top:2px;}
+.toggle-saved{font-size:11px;color:var(--green);opacity:0;transition:opacity .2s;}
+.toggle-saved.show{opacity:1;}
+.switch{position:relative;width:46px;height:26px;flex-shrink:0;display:inline-block;}
+.switch input{opacity:0;width:0;height:0;}
+.slider{position:absolute;inset:0;background:var(--bg3);border:1px solid var(--border2);border-radius:26px;cursor:pointer;transition:.2s;}
+.slider::before{content:'';position:absolute;width:18px;height:18px;left:3px;top:3px;background:var(--text2);border-radius:50%;transition:.2s;}
+.switch input:checked + .slider{background:var(--gd);border-color:var(--gb);}
+.switch input:checked + .slider::before{transform:translateX(20px);background:var(--green);}
 @media(max-width:640px){.metrics-grid{grid-template-columns:1fr 1fr;}.msgs-row{grid-template-columns:1fr;}}
 </style>
 </head>
@@ -122,6 +136,12 @@ input::placeholder{color:var(--text3);}
       <div class="prog-wrap" id="prog-wrap"></div>
     </div>
 
+    <!-- Automações ativas -->
+    <div class="section">
+      <div class="section-title">⚙️ Automações da sua loja</div>
+      <div id="toggles"><div class="loading"><span class="spinner"></span>Carregando...</div></div>
+    </div>
+
     <div class="updated" id="updated"></div>
   </div>
 </div>
@@ -141,6 +161,7 @@ function entrar() {
     localStorage.setItem('lz_url', BASE); localStorage.setItem('lz_secret', SECRET); localStorage.setItem('lz_store', STORE);
     document.getElementById('auth-section').style.display = 'none';
     document.getElementById('dash-section').style.display = 'block';
+    loadConfig();
   }).catch(e => { btn.innerHTML = 'Ver meu painel'; btn.disabled = false; showErr(e.message); });
 }
 
@@ -197,11 +218,50 @@ async function loadDash() {
   document.getElementById('updated').textContent = `Atualizado em ${new Date().toLocaleTimeString('pt-BR')}`;
 }
 
-async function api(path) {
-  const res = await fetch(BASE + path, { headers: { 'x-secret': SECRET, 'Content-Type': 'application/json' } });
+async function api(path, method='GET', body=null) {
+  const opts = { method, headers: { 'x-secret': SECRET, 'Content-Type': 'application/json' } };
+  if (body) opts.body = JSON.stringify(body);
+  const res = await fetch(BASE + path, opts);
   const data = await res.json();
   if (!res.ok) throw new Error(data.error || `Erro ${res.status}`);
   return data;
+}
+
+const AUTOMACOES = [
+  { key:'pagamento_ativo',  icon:'👏', nome:'Confirmação de pagamento', desc:'Avisa o cliente quando o pagamento é aprovado' },
+  { key:'boleto_ativo',     icon:'⏰', nome:'Cobrança de pedido não pago', desc:'Lembra boleto/Pix pendente em 5h, 24h e 72h' },
+  { key:'carrinho_ativo',   icon:'🛒', nome:'Recuperação de carrinho', desc:'Mensagens para quem abandonou o checkout' },
+  { key:'rastreio_ativo',   icon:'🚚', nome:'Atualizações de rastreio', desc:'Avisa o cliente a cada movimentação da entrega' },
+  { key:'pos_entrega_ativo',icon:'⭐', nome:'Pesquisa pós-entrega', desc:'Pede avaliação após a entrega do pedido' },
+  { key:'parado_ativo',     icon:'⚠️', nome:'Alerta de pedido parado', desc:'Avisa você sobre pedidos sem envio' },
+];
+
+async function loadConfig() {
+  try {
+    const r = await api(`/config/${STORE}`);
+    const cfg = r.config || {};
+    document.getElementById('toggles').innerHTML = AUTOMACOES.map(a => {
+      const on = cfg[a.key] !== 0 && cfg[a.key] !== false; // padrão ligado
+      return `<div class="toggle-row">
+        <div class="toggle-info"><div class="toggle-name">${a.icon} ${a.nome}</div><div class="toggle-desc">${a.desc}</div></div>
+        <span class="toggle-saved" id="saved-${a.key}">salvo ✓</span>
+        <label class="switch"><input type="checkbox" ${on ? 'checked' : ''} onchange="salvarToggle('${a.key}', this.checked)"><span class="slider"></span></label>
+      </div>`;
+    }).join('');
+  } catch(e) {
+    document.getElementById('toggles').innerHTML = `<div style="color:var(--red);font-size:12px">Erro ao carregar automações: ${e.message}</div>`;
+  }
+}
+
+async function salvarToggle(key, checked) {
+  try {
+    await api(`/config/${STORE}`, 'POST', { [key]: checked ? 1 : 0 });
+    const s = document.getElementById('saved-' + key);
+    if (s) { s.classList.add('show'); setTimeout(() => s.classList.remove('show'), 1500); }
+  } catch(e) {
+    alert('Erro ao salvar: ' + e.message);
+    loadConfig();
+  }
 }
 
 function showErr(msg) { const e = document.getElementById('auth-err'); e.textContent = msg; e.classList.add('show'); setTimeout(() => e.classList.remove('show'), 5000); }
@@ -216,6 +276,7 @@ window.addEventListener('DOMContentLoaded', () => {
     document.getElementById('auth-section').style.display = 'none';
     document.getElementById('dash-section').style.display = 'block';
     loadDash();
+    loadConfig();
   }
 });
 
