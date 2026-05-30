@@ -351,6 +351,10 @@ function marcarPosEntregaEnviado(orderId, storeId) {
 }
 
 // ── Alerta pedido parado ──────────────────────────────────────────────────────
+function jaNotificadoPorTelefone(telefone) {
+  return !!db.prepare('SELECT 1 FROM notificados WHERE telefone = ?').get(telefone);
+}
+
 function jaAlertaParadoEnviado(orderId) {
   return !!db.prepare('SELECT 1 FROM alerta_parado_enviados WHERE order_id = ?').get(orderId);
 }
@@ -540,6 +544,7 @@ module.exports = {
   getConfig, salvarConfig,
   jaPosEntregaEnviado, marcarPosEntregaEnviado,
   jaAlertaParadoEnviado, marcarAlertaParadoEnviado,
+  jaNotificadoPorTelefone,
   getAdminStats, getLojistaStats,
   upsertAuthSession, getAuthSession, completeAuthSession, deleteAuthSession,
   criarLicenca, getLicenca, getLicencaPorStore, vincularLicenca, validarLicenca,
