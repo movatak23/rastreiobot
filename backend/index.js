@@ -224,7 +224,7 @@ function montarMensagemBoleto(etapa, nome, numero, gateway) {
 async function verificarBoletosPendentes(storeId) {
   try {
     const cfg = db.getConfig(storeId) || {};
-    if (cfg.boleto_ativo === false) return;
+    if (cfg.boleto_ativo === 0) return;
     const orders = await nuvemGet(storeId, '/orders', {
       per_page: 100,
       payment_status: 'pending'
@@ -284,7 +284,7 @@ async function verificarBoletosPendentes(storeId) {
 async function verificarCarrinhosAbandonados(storeId) {
   try {
     const cfg = db.getConfig(storeId) || {};
-    if (cfg.carrinho_ativo === false) return;
+    if (cfg.carrinho_ativo === 0) return;
     const carrinhos = await nuvemGet(storeId, '/checkouts', {
       per_page: 50,
       fields: 'id,contact_name,contact_phone,abandoned_checkout_url,created_at'
@@ -340,7 +340,7 @@ async function verificarCarrinhosAbandonados(storeId) {
 async function verificarPagamentos(storeId) {
   try {
     const cfg = db.getConfig(storeId) || {};
-    if (cfg.pagamento_ativo === false) return;
+    if (cfg.pagamento_ativo === 0) return;
     const desde = new Date(Date.now() - 2 * 60 * 60 * 1000).toISOString();
     const orders = await nuvemGet(storeId, '/orders', {
       per_page: 50,
@@ -372,7 +372,7 @@ async function verificarPagamentos(storeId) {
 async function verificarRastreios(storeId) {
   try {
     const cfg = db.getConfig(storeId) || {};
-    if (cfg.rastreio_ativo === false) return;
+    if (cfg.rastreio_ativo === 0) return;
     const orders = await nuvemGet(storeId, '/orders', {
       per_page: 200,
       payment_status: 'paid',
@@ -1028,7 +1028,7 @@ app.post('/whatsapp/criar-instancia', auth, (req, res) => { res.json({ success: 
 async function verificarPosEntrega(storeId) {
   try {
     const cfg = db.getConfig(storeId) || {};
-    if (cfg.pos_entrega_ativo === false) return;
+    if (cfg.pos_entrega_ativo === 0) return;
     const orders = await nuvemGet(storeId, '/orders', { per_page: 100, payment_status: 'paid', fields: 'id,number,contact_name,contact_phone,shipping_status,created_at' });
     const templatePadrao = `Olá, {nome}! 🎉\n\nSeu pedido *#{numero}* foi entregue! Esperamos que você tenha adorado.\n\nConta pra gente o que achou? Sua opinião é muito importante para nós! 😊`;
     const template = cfg.template_pos_entrega || templatePadrao;
@@ -1059,7 +1059,7 @@ async function verificarPosEntrega(storeId) {
 async function verificarPedidosParados(storeId) {
   try {
     const cfg = db.getConfig(storeId) || {};
-    if (cfg.parado_ativo === false) return;
+    if (cfg.parado_ativo === 0) return;
     const diasLimite = cfg.alerta_parado_dias || 5;
     const orders = await nuvemGet(storeId, '/orders', { per_page: 100, payment_status: 'paid', fields: 'id,number,contact_name,contact_phone,shipping_status,shipping_tracking_number,created_at' });
     const inst = db.getInstancia(storeId);
