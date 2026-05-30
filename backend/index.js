@@ -211,9 +211,9 @@ function montarMensagemCarrinho(etapa, nome, link) {
 function montarMensagemBoleto(etapa, nome, numero, gateway) {
   const aviso = `\n\n_Se você já efetuou o pagamento por outros métodos, desconsidere esta mensagem._`;
   const msgs = {
-    60: `Olá, ${nome}! 😊\n\nIdentificamos que seu pedido *#${numero}* ainda está aguardando pagamento.\n\nFinalize seu pagamento para garantir seu pedido!\n\nQualquer dúvida é só chamar. 💬${aviso}`,
+    300: `Olá, ${nome}! 😊\n\nIdentificamos que seu pedido *#${numero}* ainda está aguardando pagamento.\n\nFinalize seu pagamento para garantir seu pedido!\n\nQualquer dúvida é só chamar. 💬${aviso}`,
     1440: `${nome}, seu pedido *#${numero}* ainda está pendente! ⏳\n\nTeve alguma dificuldade com o pagamento? Estamos aqui para ajudar!\n\nResponda essa mensagem se precisar de suporte. 😊${aviso}`,
-    2880: `⚠️ ${nome}, *última chance!*\n\nSeu pedido *#${numero}* está prestes a ser cancelado por falta de pagamento.\n\nFinalize agora para não perder sua reserva!\n\nQualquer problema, é só falar. 💬${aviso}`
+    4320: `⚠️ ${nome}, *última chance!*\n\nSeu pedido *#${numero}* está prestes a ser cancelado por falta de pagamento.\n\nFinalize agora para não perder sua reserva!\n\nQualquer problema, é só falar. 💬${aviso}`
   };
   return msgs[etapa] || null;
 }
@@ -223,6 +223,8 @@ function montarMensagemBoleto(etapa, nome, numero, gateway) {
 // para pedidos manuais (sem gateway definido)
 async function verificarBoletosPendentes(storeId) {
   try {
+    const cfg = db.getConfig(storeId) || {};
+    if (cfg.boleto_ativo === false) return;
     const orders = await nuvemGet(storeId, '/orders', {
       per_page: 100,
       payment_status: 'pending'
@@ -247,22 +249,18 @@ async function verificarBoletosPendentes(storeId) {
       const id       = String(o.id);
       const nome     = o.contact_name || 'Cliente';
 
+      if (minutos > 10080) continue; // teto: ignora pendente com mais de 7 dias
+
       let etapa = null;
-      if (minutos >= 60   && minutos < 300)  etapa = 60;
-      if (minutos >= 1440 && minutos < 1680) etapa = 1440;
-      if (minutos >= 2880 && minutos < 3120) etapa = 2880;
-      if (minutos >= 4320 && !db.jaBoletoEnviado(id, 60) && !db.jaBoletoEnviado(id, 1440) && !db.jaBoletoEnviado(id, 2880)) etapa = 9999;
+      if (minutos >= 300  && minutos < 1440)  etapa = 300;   // 5h
+      if (minutos >= 1440 && minutos < 4320)  etapa = 1440;  // 24h
+      if (minutos >= 4320 && minutos < 10080) etapa = 4320;  // 72h
       if (!etapa) continue;
 
       if (db.jaBoletoEnviado(id, etapa)) continue;
 
       const metodoLabel = gw.includes('pix') ? 'PIX' : gw === '' ? 'link de pagamento' : 'boleto';
-      let mensagem;
-      if (etapa === 9999) {
-        mensagem = `⚠️ ${nome}, seu pedido *#${o.number}* ainda está aguardando pagamento. Ainda tem interesse? O que falta para finalizarmos e despacharmos seu pedido nas próximas 24h?\n\n_Se você já efetuou o pagamento por outros métodos, desconsidere esta mensagem._`;
-      } else {
-        mensagem = montarMensagemBoleto(etapa, nome, o.number, metodoLabel);
-      }
+      const mensagem = montarMensagemBoleto(etapa, nome, o.number, metodoLabel);
       if (!mensagem) continue;
 
       try {
@@ -285,6 +283,8 @@ async function verificarBoletosPendentes(storeId) {
 
 async function verificarCarrinhosAbandonados(storeId) {
   try {
+    const cfg = db.getConfig(storeId) || {};
+    if (cfg.carrinho_ativo === false) return;
     const carrinhos = await nuvemGet(storeId, '/checkouts', {
       per_page: 50,
       fields: 'id,contact_name,contact_phone,abandoned_checkout_url,created_at'
@@ -339,6 +339,8 @@ async function verificarCarrinhosAbandonados(storeId) {
 
 async function verificarPagamentos(storeId) {
   try {
+    const cfg = db.getConfig(storeId) || {};
+    if (cfg.pagamento_ativo === false) return;
     const desde = new Date(Date.now() - 2 * 60 * 60 * 1000).toISOString();
     const orders = await nuvemGet(storeId, '/orders', {
       per_page: 50,
@@ -369,6 +371,8 @@ async function verificarPagamentos(storeId) {
 
 async function verificarRastreios(storeId) {
   try {
+    const cfg = db.getConfig(storeId) || {};
+    if (cfg.rastreio_ativo === false) return;
     const orders = await nuvemGet(storeId, '/orders', {
       per_page: 200,
       payment_status: 'paid',
@@ -530,62 +534,6 @@ app.get('/diag/notificados', auth, (req, res) => {
     const rows = db.listarNotificadosRecentes();
     res.json({ total: rows.length, rows });
   } catch(e) { res.status(500).json({ error: e.message }); }
-});
-
-// ── TEMPORÁRIO: beacon de deploy (remover depois) ────────────────────────────
-app.get('/diag/build', (req, res) => {
-  res.json({ build: 'DIAG-2026-05-30-B', ok: true });
-});
-
-// ── TEMPORÁRIO: diagnóstico de pedidos não pagos (remover depois) ────────────
-app.get('/diag/pendentes/:storeId', async (req, res) => {
-  const storeId = req.params.storeId;
-  const out = {};
-
-  // MÉTODO 1 — filtro payment_status=pending (o que verificarBoletosPendentes usa hoje)
-  try {
-    const orders = await nuvemGet(storeId, '/orders', { per_page: 100, payment_status: 'pending' });
-    const agora = Date.now();
-    const detalhe = orders.map(o => {
-      const id = String(o.id);
-      const gw = (o.gateway || '').toLowerCase();
-      const ehCartao = gw.includes('credit') || gw.includes('credito') || gw.includes('debit') || gw.includes('debito') || gw.includes('card');
-      const telefone = formatTel(o.contact_phone);
-      const minutos = Math.floor((agora - new Date(o.created_at).getTime()) / 60000);
-      let etapa = null;
-      if (minutos >= 60   && minutos < 300)  etapa = 60;
-      if (minutos >= 1440 && minutos < 1680) etapa = 1440;
-      if (minutos >= 2880 && minutos < 3120) etapa = 2880;
-      if (minutos >= 4320 && !db.jaBoletoEnviado(id, 60) && !db.jaBoletoEnviado(id, 1440) && !db.jaBoletoEnviado(id, 2880)) etapa = 9999;
-      return { numero: o.number, gateway: o.gateway || '(vazio)', ehCartao, temTelefone: !!telefone, dias: Math.floor(minutos / 1440), etapa, jaEnviado: etapa ? db.jaBoletoEnviado(id, etapa) : null };
-    });
-    const enviaveisAgora = detalhe.filter(d => d.etapa && !d.ehCartao && d.temTelefone && !d.jaEnviado).length;
-    const semTelefone = detalhe.filter(d => !d.temTelefone).length;
-    const cartao = detalhe.filter(d => d.ehCartao).length;
-    out.metodo_param = { total: orders.length, enviaveisAgora, semTelefone, cartao, detalhe };
-  } catch(e) {
-    out.metodo_param = { erro: e.response?.data?.description || e.message, status: e.response?.status };
-  }
-
-  // MÉTODO 2 — busca por data e filtra no JS (mesmo padrão que o dashboard usa e funciona)
-  try {
-    const desde = new Date(Date.now() - 7 * 24 * 60 * 60 * 1000).toISOString();
-    const todos = await nuvemGet(storeId, '/orders', { per_page: 200, created_at_min: desde });
-    const pendentes = todos.filter(p => p.payment_status === 'pending');
-    out.metodo_data = {
-      total_geral: todos.length,
-      total_pendentes: pendentes.length,
-      amostra: pendentes.slice(0, 8).map(o => ({
-        numero: o.number, status: o.status, payment_status: o.payment_status,
-        gateway: o.gateway || '(vazio)', telefone: formatTel(o.contact_phone),
-        minutos: Math.floor((Date.now() - new Date(o.created_at).getTime()) / 60000)
-      }))
-    };
-  } catch(e) {
-    out.metodo_data = { erro: e.response?.data?.description || e.message, status: e.response?.status };
-  }
-
-  res.json(out);
 });
 
 // ── Verificar se telefone já é cliente ativo (consultado pelo Movatak) ────────
@@ -1079,8 +1027,9 @@ app.post('/whatsapp/criar-instancia', auth, (req, res) => { res.json({ success: 
 
 async function verificarPosEntrega(storeId) {
   try {
+    const cfg = db.getConfig(storeId) || {};
+    if (cfg.pos_entrega_ativo === false) return;
     const orders = await nuvemGet(storeId, '/orders', { per_page: 100, payment_status: 'paid', fields: 'id,number,contact_name,contact_phone,shipping_status,created_at' });
-    const cfg = db.getConfig(storeId);
     const templatePadrao = `Olá, {nome}! 🎉\n\nSeu pedido *#{numero}* foi entregue! Esperamos que você tenha adorado.\n\nConta pra gente o que achou? Sua opinião é muito importante para nós! 😊`;
     const template = cfg.template_pos_entrega || templatePadrao;
     for (const o of orders) {
@@ -1109,7 +1058,8 @@ async function verificarPosEntrega(storeId) {
 
 async function verificarPedidosParados(storeId) {
   try {
-    const cfg = db.getConfig(storeId);
+    const cfg = db.getConfig(storeId) || {};
+    if (cfg.parado_ativo === false) return;
     const diasLimite = cfg.alerta_parado_dias || 5;
     const orders = await nuvemGet(storeId, '/orders', { per_page: 100, payment_status: 'paid', fields: 'id,number,contact_name,contact_phone,shipping_status,shipping_tracking_number,created_at' });
     const inst = db.getInstancia(storeId);
