@@ -544,8 +544,25 @@ app.get('/diag/pendentes/:storeId', async (req, res) => {
 
   // MÉTODO 1 — filtro payment_status=pending (o que verificarBoletosPendentes usa hoje)
   try {
-    const o = await nuvemGet(storeId, '/orders', { per_page: 100, payment_status: 'pending' });
-    out.metodo_param = { total: o.length };
+    const orders = await nuvemGet(storeId, '/orders', { per_page: 100, payment_status: 'pending' });
+    const agora = Date.now();
+    const detalhe = orders.map(o => {
+      const id = String(o.id);
+      const gw = (o.gateway || '').toLowerCase();
+      const ehCartao = gw.includes('credit') || gw.includes('credito') || gw.includes('debit') || gw.includes('debito') || gw.includes('card');
+      const telefone = formatTel(o.contact_phone);
+      const minutos = Math.floor((agora - new Date(o.created_at).getTime()) / 60000);
+      let etapa = null;
+      if (minutos >= 60   && minutos < 300)  etapa = 60;
+      if (minutos >= 1440 && minutos < 1680) etapa = 1440;
+      if (minutos >= 2880 && minutos < 3120) etapa = 2880;
+      if (minutos >= 4320 && !db.jaBoletoEnviado(id, 60) && !db.jaBoletoEnviado(id, 1440) && !db.jaBoletoEnviado(id, 2880)) etapa = 9999;
+      return { numero: o.number, gateway: o.gateway || '(vazio)', ehCartao, temTelefone: !!telefone, dias: Math.floor(minutos / 1440), etapa, jaEnviado: etapa ? db.jaBoletoEnviado(id, etapa) : null };
+    });
+    const enviaveisAgora = detalhe.filter(d => d.etapa && !d.ehCartao && d.temTelefone && !d.jaEnviado).length;
+    const semTelefone = detalhe.filter(d => !d.temTelefone).length;
+    const cartao = detalhe.filter(d => d.ehCartao).length;
+    out.metodo_param = { total: orders.length, enviaveisAgora, semTelefone, cartao, detalhe };
   } catch(e) {
     out.metodo_param = { erro: e.response?.data?.description || e.message, status: e.response?.status };
   }
