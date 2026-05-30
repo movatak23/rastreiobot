@@ -532,6 +532,33 @@ app.get('/diag/notificados', auth, (req, res) => {
   } catch(e) { res.status(500).json({ error: e.message }); }
 });
 
+// ── TEMPORÁRIO: diagnóstico de pedidos não pagos (remover depois) ────────────
+app.get('/diag/pendentes/:storeId', async (req, res) => {
+  try {
+    const orders = await nuvemGet(req.params.storeId, '/orders', { per_page: 100, payment_status: 'pending' });
+    const agora = Date.now();
+    const pedidos = orders.map(o => {
+      const gw = (o.gateway || '').toLowerCase();
+      const ehCartao = gw.includes('credit') || gw.includes('credito') || gw.includes('debit') || gw.includes('debito') || gw.includes('card');
+      const telefone = formatTel(o.contact_phone);
+      const minutos = Math.floor((agora - new Date(o.created_at).getTime()) / 60000);
+      let etapa = null;
+      if (minutos >= 60   && minutos < 300)  etapa = 60;
+      if (minutos >= 1440 && minutos < 1680) etapa = 1440;
+      if (minutos >= 2880 && minutos < 3120) etapa = 2880;
+      if (minutos >= 4320) etapa = 9999;
+      return {
+        numero: o.number, status: o.status, gateway: o.gateway || '(vazio)',
+        ehCartao, telefone, minutos, etapa,
+        jaEnviado: etapa ? db.jaBoletoEnviado(String(o.id), etapa) : null
+      };
+    });
+    res.json({ total: orders.length, pedidos });
+  } catch(e) {
+    res.json({ erro: e.response?.data?.description || e.message, status: e.response?.status });
+  }
+});
+
 // ── Verificar se telefone já é cliente ativo (consultado pelo Movatak) ────────
 app.get('/cliente-ativo/:telefone', async (req, res) => {
   try {
