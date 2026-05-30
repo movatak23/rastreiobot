@@ -353,6 +353,7 @@ async function verificarPagamentos(storeId) {
       try {
         await sendWhatsApp(telefone, montarMensagemPagamento(o.contact_name || 'Cliente', o.number));
         db.marcarConfirmacaoEnviada(String(o.id), storeId);
+        db.registrarClienteAtivo(telefone, storeId);
         console.log(`[Pagamento] WhatsApp enviado para pedido #${o.number}`);
       } catch(e) {
         console.error(`[Pagamento] Falha para #${o.number}:`, e.message);
@@ -392,6 +393,7 @@ async function verificarRastreios(storeId) {
           if (!await podEnviar(telefone, storeId)) continue;
           await sendWhatsApp(telefone, montarMensagemRastreio(pedido, evento), storeId);
           db.registrarMensagem(telefone);
+          db.registrarClienteAtivo(telefone, storeId);
           console.log(`[Rastreio] WhatsApp enviado para #${o.number}`);
           if (evento.entregue && !db.jaSatisfacaoEnviada(String(o.id))) {
             await new Promise(r => setTimeout(r, 3000));
@@ -536,10 +538,8 @@ app.get('/cliente-ativo/:telefone', async (req, res) => {
     const tel = String(req.params.telefone).replace(/\D/g, '');
     if (!tel || tel.length < 10) return res.json({ ativo: false });
     const telVariants = [tel, '55' + tel, tel.replace(/^55/, '')];
-    const notif = db.jaNotificadoPorTelefone(tel) ||
-                  db.jaNotificadoPorTelefone('55' + tel) ||
-                  db.jaNotificadoPorTelefone(tel.replace(/^55/, ''));
-    res.json({ ativo: !!notif, telefone: tel });
+    const ativo = db.jaClienteAtivo(tel);
+    res.json({ ativo, telefone: tel });
   } catch(e) {
     res.json({ ativo: false });
   }
