@@ -522,6 +522,14 @@ app.delete('/admin/clientes/:storeId', auth, (req, res) => {
   res.json({ success: true, message: `Cliente ${storeId} removido.` });
 });
 
+// ── Diagnóstico temporário — ver telefones em notificados ────────────────────
+app.get('/diag/notificados', auth, (req, res) => {
+  try {
+    const rows = db.listarNotificadosRecentes();
+    res.json({ total: rows.length, rows });
+  } catch(e) { res.status(500).json({ error: e.message }); }
+});
+
 // ── Verificar se telefone já é cliente ativo (consultado pelo Movatak) ────────
 app.get('/cliente-ativo/:telefone', async (req, res) => {
   try {
