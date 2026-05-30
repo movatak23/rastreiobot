@@ -522,6 +522,21 @@ app.delete('/admin/clientes/:storeId', auth, (req, res) => {
   res.json({ success: true, message: `Cliente ${storeId} removido.` });
 });
 
+// ── Verificar se telefone já é cliente ativo (consultado pelo Movatak) ────────
+app.get('/cliente-ativo/:telefone', async (req, res) => {
+  try {
+    const tel = String(req.params.telefone).replace(/\D/g, '');
+    if (!tel || tel.length < 10) return res.json({ ativo: false });
+    const telVariants = [tel, '55' + tel, tel.replace(/^55/, '')];
+    const notif = db.jaNotificadoPorTelefone(tel) ||
+                  db.jaNotificadoPorTelefone('55' + tel) ||
+                  db.jaNotificadoPorTelefone(tel.replace(/^55/, ''));
+    res.json({ ativo: !!notif, telefone: tel });
+  } catch(e) {
+    res.json({ ativo: false });
+  }
+});
+
 app.get('/rastreio-publico', async (req, res) => {
   const { codigo } = req.query;
   if (!codigo) return res.status(400).json({ success: false, error: 'Código obrigatório.' });
