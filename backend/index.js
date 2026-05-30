@@ -532,31 +532,43 @@ app.get('/diag/notificados', auth, (req, res) => {
   } catch(e) { res.status(500).json({ error: e.message }); }
 });
 
+// ── TEMPORÁRIO: beacon de deploy (remover depois) ────────────────────────────
+app.get('/diag/build', (req, res) => {
+  res.json({ build: 'DIAG-2026-05-30-B', ok: true });
+});
+
 // ── TEMPORÁRIO: diagnóstico de pedidos não pagos (remover depois) ────────────
 app.get('/diag/pendentes/:storeId', async (req, res) => {
+  const storeId = req.params.storeId;
+  const out = {};
+
+  // MÉTODO 1 — filtro payment_status=pending (o que verificarBoletosPendentes usa hoje)
   try {
-    const orders = await nuvemGet(req.params.storeId, '/orders', { per_page: 100, payment_status: 'pending' });
-    const agora = Date.now();
-    const pedidos = orders.map(o => {
-      const gw = (o.gateway || '').toLowerCase();
-      const ehCartao = gw.includes('credit') || gw.includes('credito') || gw.includes('debit') || gw.includes('debito') || gw.includes('card');
-      const telefone = formatTel(o.contact_phone);
-      const minutos = Math.floor((agora - new Date(o.created_at).getTime()) / 60000);
-      let etapa = null;
-      if (minutos >= 60   && minutos < 300)  etapa = 60;
-      if (minutos >= 1440 && minutos < 1680) etapa = 1440;
-      if (minutos >= 2880 && minutos < 3120) etapa = 2880;
-      if (minutos >= 4320) etapa = 9999;
-      return {
-        numero: o.number, status: o.status, gateway: o.gateway || '(vazio)',
-        ehCartao, telefone, minutos, etapa,
-        jaEnviado: etapa ? db.jaBoletoEnviado(String(o.id), etapa) : null
-      };
-    });
-    res.json({ total: orders.length, pedidos });
+    const o = await nuvemGet(storeId, '/orders', { per_page: 100, payment_status: 'pending' });
+    out.metodo_param = { total: o.length };
   } catch(e) {
-    res.json({ erro: e.response?.data?.description || e.message, status: e.response?.status });
+    out.metodo_param = { erro: e.response?.data?.description || e.message, status: e.response?.status };
   }
+
+  // MÉTODO 2 — busca por data e filtra no JS (mesmo padrão que o dashboard usa e funciona)
+  try {
+    const desde = new Date(Date.now() - 7 * 24 * 60 * 60 * 1000).toISOString();
+    const todos = await nuvemGet(storeId, '/orders', { per_page: 200, created_at_min: desde });
+    const pendentes = todos.filter(p => p.payment_status === 'pending');
+    out.metodo_data = {
+      total_geral: todos.length,
+      total_pendentes: pendentes.length,
+      amostra: pendentes.slice(0, 8).map(o => ({
+        numero: o.number, status: o.status, payment_status: o.payment_status,
+        gateway: o.gateway || '(vazio)', telefone: formatTel(o.contact_phone),
+        minutos: Math.floor((Date.now() - new Date(o.created_at).getTime()) / 60000)
+      }))
+    };
+  } catch(e) {
+    out.metodo_data = { erro: e.response?.data?.description || e.message, status: e.response?.status };
+  }
+
+  res.json(out);
 });
 
 // ── Verificar se telefone já é cliente ativo (consultado pelo Movatak) ────────
