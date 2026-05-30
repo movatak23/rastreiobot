@@ -89,6 +89,12 @@ db.exec(`
     template_boleto   TEXT,
     template_confirmacao TEXT,
     template_pos_entrega TEXT,
+    pagamento_ativo   INTEGER DEFAULT 1,
+    boleto_ativo      INTEGER DEFAULT 1,
+    carrinho_ativo    INTEGER DEFAULT 1,
+    rastreio_ativo    INTEGER DEFAULT 1,
+    pos_entrega_ativo INTEGER DEFAULT 1,
+    parado_ativo      INTEGER DEFAULT 1,
     created_at        TEXT DEFAULT (datetime('now'))
   );
 
@@ -319,17 +325,25 @@ function getConfig(storeId) {
     template_carrinho: null,
     template_boleto: null,
     template_confirmacao: null,
-    template_pos_entrega: null
+    template_pos_entrega: null,
+    pagamento_ativo: 1,
+    boleto_ativo: 1,
+    carrinho_ativo: 1,
+    rastreio_ativo: 1,
+    pos_entrega_ativo: 1,
+    parado_ativo: 1
   };
 }
 
 function salvarConfig(storeId, dados) {
   const cfg = getConfig(storeId);
   const merged = { ...cfg, ...dados, store_id: storeId };
+  const b = v => (v === 0 || v === false) ? 0 : 1;
   db.prepare(`
     INSERT INTO configuracoes (store_id, silencio_inicio, silencio_fim, relatorio_ativo,
-      alerta_parado_dias, template_carrinho, template_boleto, template_confirmacao, template_pos_entrega)
-    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+      alerta_parado_dias, template_carrinho, template_boleto, template_confirmacao, template_pos_entrega,
+      pagamento_ativo, boleto_ativo, carrinho_ativo, rastreio_ativo, pos_entrega_ativo, parado_ativo)
+    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
     ON CONFLICT(store_id) DO UPDATE SET
       silencio_inicio      = excluded.silencio_inicio,
       silencio_fim         = excluded.silencio_fim,
@@ -338,12 +352,20 @@ function salvarConfig(storeId, dados) {
       template_carrinho    = excluded.template_carrinho,
       template_boleto      = excluded.template_boleto,
       template_confirmacao = excluded.template_confirmacao,
-      template_pos_entrega = excluded.template_pos_entrega
+      template_pos_entrega = excluded.template_pos_entrega,
+      pagamento_ativo      = excluded.pagamento_ativo,
+      boleto_ativo         = excluded.boleto_ativo,
+      carrinho_ativo       = excluded.carrinho_ativo,
+      rastreio_ativo       = excluded.rastreio_ativo,
+      pos_entrega_ativo    = excluded.pos_entrega_ativo,
+      parado_ativo         = excluded.parado_ativo
   `).run(
     storeId,
     merged.silencio_inicio, merged.silencio_fim, merged.relatorio_ativo,
     merged.alerta_parado_dias, merged.template_carrinho, merged.template_boleto,
-    merged.template_confirmacao, merged.template_pos_entrega
+    merged.template_confirmacao, merged.template_pos_entrega,
+    b(merged.pagamento_ativo), b(merged.boleto_ativo), b(merged.carrinho_ativo),
+    b(merged.rastreio_ativo), b(merged.pos_entrega_ativo), b(merged.parado_ativo)
   );
 }
 
@@ -464,6 +486,13 @@ function migrar() {
   `);
   // Adiciona coluna device_id se não existir
   try { db.exec("ALTER TABLE licencas ADD COLUMN device_id TEXT"); } catch(e) {}
+  // Flags de liga/desliga por automação (bancos existentes) — padrão ligado
+  try { db.exec("ALTER TABLE configuracoes ADD COLUMN pagamento_ativo INTEGER DEFAULT 1"); } catch(e) {}
+  try { db.exec("ALTER TABLE configuracoes ADD COLUMN boleto_ativo INTEGER DEFAULT 1"); } catch(e) {}
+  try { db.exec("ALTER TABLE configuracoes ADD COLUMN carrinho_ativo INTEGER DEFAULT 1"); } catch(e) {}
+  try { db.exec("ALTER TABLE configuracoes ADD COLUMN rastreio_ativo INTEGER DEFAULT 1"); } catch(e) {}
+  try { db.exec("ALTER TABLE configuracoes ADD COLUMN pos_entrega_ativo INTEGER DEFAULT 1"); } catch(e) {}
+  try { db.exec("ALTER TABLE configuracoes ADD COLUMN parado_ativo INTEGER DEFAULT 1"); } catch(e) {}
   console.log('[DB] Migração concluída.');
 }
 
