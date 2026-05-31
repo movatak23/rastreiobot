@@ -1293,6 +1293,23 @@ app.post('/webhook/zapi', async (req, res) => {
   } catch(e) { console.error('[ZAPI] Erro no webhook:', e.message); }
 });
 
+// ── Páginas públicas de privacidade ───────────────────────────────────────────
+app.get('/privacidade', (req, res) => {
+  res.sendFile(path.join(__dirname, 'public', 'privacidade.html'));
+});
+
+app.get('/politica-de-privacidade', (req, res) => {
+  res.sendFile(path.join(__dirname, 'public', 'privacidade.html'));
+});
+
+app.get('/privacy', (req, res) => {
+  res.sendFile(path.join(__dirname, 'public', 'privacidade.html'));
+});
+
+app.get('/privacy-policy', (req, res) => {
+  res.sendFile(path.join(__dirname, 'public', 'privacidade.html'));
+});
+
 app.listen(PORT, () => {
   console.log(`RastreioBot v2.5.1 rodando na porta ${PORT}`);
   console.log('Cron ativo: verificação a cada 30 minutos');
