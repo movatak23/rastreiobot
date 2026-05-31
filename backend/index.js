@@ -426,8 +426,7 @@ app.get('/auth/install', (req, res) => {
   const { store_id, session_code } = req.query;
   const state = session_code ? `ext_${session_code}` : (store_id || 'manual');
   if (session_code) { try { db.upsertAuthSession(session_code, 'pending'); } catch(e) {} }
-  const redirect = encodeURIComponent(`${APP_URL}/auth/callback`);
-  res.redirect(`https://www.nuvemshop.com.br/apps/${NUVEM_CLIENT_ID}/authorize?state=${state}&redirect_uri=${redirect}`);
+  res.redirect(`https://www.nuvemshop.com.br/apps/${NUVEM_CLIENT_ID}/authorize?state=${state}`);
 });
 
 app.get('/auth/callback', async (req, res) => {
@@ -1293,6 +1292,23 @@ app.post('/webhook/zapi', async (req, res) => {
   } catch(e) { console.error('[ZAPI] Erro no webhook:', e.message); }
 });
 
+// ── Páginas públicas de privacidade ───────────────────────────────────────────
+app.get('/privacidade', (req, res) => {
+  res.sendFile(path.join(__dirname, 'public', 'privacidade.html'));
+});
+
+app.get('/politica-de-privacidade', (req, res) => {
+  res.sendFile(path.join(__dirname, 'public', 'privacidade.html'));
+});
+
+app.get('/privacy', (req, res) => {
+  res.sendFile(path.join(__dirname, 'public', 'privacidade.html'));
+});
+
+app.get('/privacy-policy', (req, res) => {
+  res.sendFile(path.join(__dirname, 'public', 'privacidade.html'));
+});
+
 
 // ── Webhooks LGPD / Nuvemshop ────────────────────────────────────────────────
 app.post('/webhooks/lgpd/store-redact', async (req, res) => {
@@ -1323,23 +1339,6 @@ app.post('/webhooks/lgpd/customers-data-request', async (req, res) => {
     console.error('[LGPD] erro customers data request:', e.message);
     return res.status(500).json({ success: false });
   }
-});
-
-// ── Páginas públicas de privacidade ───────────────────────────────────────────
-app.get('/privacidade', (req, res) => {
-  res.sendFile(path.join(__dirname, 'public', 'privacidade.html'));
-});
-
-app.get('/politica-de-privacidade', (req, res) => {
-  res.sendFile(path.join(__dirname, 'public', 'privacidade.html'));
-});
-
-app.get('/privacy', (req, res) => {
-  res.sendFile(path.join(__dirname, 'public', 'privacidade.html'));
-});
-
-app.get('/privacy-policy', (req, res) => {
-  res.sendFile(path.join(__dirname, 'public', 'privacidade.html'));
 });
 
 app.listen(PORT, () => {
