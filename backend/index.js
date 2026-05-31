@@ -16,6 +16,146 @@ app.use(express.json());
 app.use(cors({ origin: '*' }));
 app.use(express.static(path.join(__dirname, 'public')));
 
+
+// ── Logs operacionais seguros / LoggZap ──────────────────────────────────────
+// Este bloco é aditivo: se algo falhar no log, a automação principal continua.
+const LOGGZAP_LOG_DIR = path.join(__dirname, 'data');
+const LOGGZAP_LOG_FILE = path.join(LOGGZAP_LOG_DIR, 'automacoes-loggzap.json');
+
+function ensureLoggzapLogFile() {
+  try {
+    if (!fs.existsSync(LOGGZAP_LOG_DIR)) fs.mkdirSync(LOGGZAP_LOG_DIR, { recursive: true });
+    if (!fs.existsSync(LOGGZAP_LOG_FILE)) fs.writeFileSync(LOGGZAP_LOG_FILE, JSON.stringify({ logs: [] }, null, 2));
+  } catch(e) {}
+}
+
+function readLoggzapLogs() {
+  try {
+    ensureLoggzapLogFile();
+    const raw = fs.readFileSync(LOGGZAP_LOG_FILE, 'utf8');
+    const data = JSON.parse(raw || '{}');
+    return Array.isArray(data.logs) ? data.logs : [];
+  } catch(e) {
+    return [];
+  }
+}
+
+function writeLoggzapLogs(logs) {
+  try {
+    ensureLoggzapLogFile();
+    const limited = logs.slice(-1200);
+    fs.writeFileSync(LOGGZAP_LOG_FILE, JSON.stringify({ logs: limited }, null, 2));
+  } catch(e) {}
+}
+
+function safeLogAutomacao(evento) {
+  try {
+    const logs = readLoggzapLogs();
+    logs.push({
+      id: crypto.randomBytes(8).toString('hex'),
+      created_at: new Date().toISOString(),
+      ...evento
+    });
+    writeLoggzapLogs(logs);
+  } catch(e) {
+    console.error('[LoggZap Logs] Falha ao registrar log:', e.message);
+  }
+}
+
+function adminLoggzapHtml() {
+  return `<!DOCTYPE html>
+<html lang="pt-BR">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width,initial-scale=1.0">
+<title>Admin LoggZap</title>
+<style>
+  *{box-sizing:border-box}body{margin:0;background:#07090e;color:#eef0f8;font-family:Arial,sans-serif}
+  .wrap{max-width:1120px;margin:0 auto;padding:32px 22px}
+  .top{display:flex;justify-content:space-between;gap:16px;align-items:center;margin-bottom:20px}
+  .logo{font-size:24px;font-weight:800}.logo span{color:#00d084}
+  .card{background:#0c0f16;border:1px solid rgba(255,255,255,.08);border-radius:14px;padding:20px;margin-bottom:16px}
+  input{background:#11151e;border:1px solid rgba(255,255,255,.12);border-radius:8px;color:#eef0f8;padding:10px 12px;width:100%;font:inherit}
+  button{border:0;border-radius:8px;padding:10px 14px;font-weight:700;cursor:pointer;background:#00d084;color:#000}
+  .btn2{background:#1e2430;color:#eef0f8;border:1px solid rgba(255,255,255,.12)}
+  table{width:100%;border-collapse:collapse;margin-top:12px}th,td{border-bottom:1px solid rgba(255,255,255,.08);padding:10px;text-align:left;font-size:13px;vertical-align:top}
+  th{color:#8b93a8;text-transform:uppercase;font-size:11px}pre{white-space:pre-wrap;margin:0;color:#8b93a8;max-height:160px;overflow:auto}
+  .grid{display:grid;grid-template-columns:1fr 1fr 1fr;gap:12px}.metric{background:#11151e;border-radius:10px;padding:14px}
+  .metric strong{display:block;font-size:24px}.metric span{color:#8b93a8;font-size:12px}
+  .err{background:rgba(224,90,90,.12);border:1px solid rgba(224,90,90,.35);color:#ff8f8f;border-radius:8px;padding:12px;margin:12px 0;display:none}
+  .hidden{display:none}
+</style>
+</head>
+<body>
+<div class="wrap">
+  <div class="top"><div class="logo">Admin <span>LoggZap</span></div><button class="btn2" onclick="location.reload()">Atualizar</button></div>
+  <div id="auth" class="card">
+    <h2>Acesso interno</h2>
+    <p style="color:#8b93a8">Use a mesma chave interna do backend para visualizar logs operacionais.</p>
+    <input id="secret" type="password" placeholder="EXTENSION_SECRET">
+    <div class="err" id="err"></div>
+    <br><br><button onclick="entrar()">Entrar</button>
+  </div>
+  <div id="painel" class="hidden">
+    <div class="grid">
+      <div class="metric"><strong id="mTotal">--</strong><span>logs registrados</span></div>
+      <div class="metric"><strong id="mHoje">--</strong><span>envios hoje</span></div>
+      <div class="metric"><strong id="mLojas">--</strong><span>lojas com logs</span></div>
+    </div>
+    <div class="card">
+      <h2>Últimos eventos</h2>
+      <input id="filtro" placeholder="Filtrar por loja, pedido, telefone ou tipo" oninput="render()">
+      <div style="overflow:auto">
+        <table><thead><tr><th>Data</th><th>Loja</th><th>Tipo</th><th>Pedido</th><th>Telefone</th><th>Mensagem / erro</th></tr></thead><tbody id="tbody"></tbody></table>
+      </div>
+    </div>
+  </div>
+</div>
+<script>
+let logs=[];
+let secret='';
+async function entrar(){
+  secret=document.getElementById('secret').value.trim();
+  if(!secret){document.getElementById('err').textContent='Informe a chave.';document.getElementById('err').style.display='block';return;}
+  const r=await fetch('/admin-loggzap/api/logs',{headers:{'x-secret':secret}});
+  const d=await r.json().catch(()=>({}));
+  if(!r.ok){document.getElementById('err').textContent=d.error||'Acesso negado.';document.getElementById('err').style.display='block';return;}
+  logs=d.logs||[];
+  document.getElementById('auth').classList.add('hidden');
+  document.getElementById('painel').classList.remove('hidden');
+  render();
+}
+function render(){
+  const f=(document.getElementById('filtro').value||'').toLowerCase();
+  const today=new Date().toISOString().slice(0,10);
+  document.getElementById('mTotal').textContent=logs.length;
+  document.getElementById('mHoje').textContent=logs.filter(l=>(l.created_at||'').slice(0,10)===today).length;
+  document.getElementById('mLojas').textContent=new Set(logs.map(l=>l.store_id).filter(Boolean)).size;
+  const rows=logs.slice().reverse().filter(l=>JSON.stringify(l).toLowerCase().includes(f)).slice(0,250);
+  document.getElementById('tbody').innerHTML=rows.map(l=>'<tr>'+
+    '<td>'+new Date(l.created_at).toLocaleString('pt-BR')+'</td>'+
+    '<td>'+(l.store_id||'')+'</td>'+
+    '<td>'+(l.tipo||'')+'</td>'+
+    '<td>'+(l.pedido||'')+'</td>'+
+    '<td>'+(l.telefone||'')+'</td>'+
+    '<td><pre>'+(l.erro?('ERRO: '+l.erro):(l.mensagem||'')).replace(/[<>&]/g,s=>({'<':'&lt;','>':'&gt;','&':'&amp;'}[s]))+'</pre></td>'+
+  '</tr>').join('');
+}
+</script>
+</body>
+</html>`;
+}
+
+app.get('/admin-loggzap', (req, res) => {
+  res.send(adminLoggzapHtml());
+});
+
+app.get('/admin-loggzap/api/logs', auth, (req, res) => {
+  const logs = readLoggzapLogs();
+  res.json({ success: true, total: logs.length, logs });
+});
+
+
 // ── Painel administrativo Premium / Templates por loja ───────────────────────
 const fs = require('fs');
 
@@ -784,8 +924,10 @@ async function verificarBoletosPendentes(storeId) {
         db.marcarBoletoEnviado(id, storeId, etapa);
         db.registrarMensagem(telefone);
         console.log(`[Boleto/Manual] Etapa ${etapa}min → ${nome} pedido #${o.number} (${metodoLabel || 'manual'})`);
+        safeLogAutomacao({ store_id: storeId, tipo: 'pagamento_pendente', pedido: o.number, telefone, mensagem });
       } catch(e) {
         console.error(`[Boleto/Manual] Falha para #${o.number}:`, e.message);
+        safeLogAutomacao({ store_id: storeId, tipo: 'pagamento_pendente', pedido: o.number, telefone, erro: e.message });
       }
       await new Promise(r => setTimeout(r, 500));
     }
@@ -829,8 +971,10 @@ async function verificarCarrinhosAbandonados(storeId) {
         db.marcarCarrinhoEnviado(id, storeId, etapa, telefone);
         db.registrarMensagem(telefone);
         console.log(`[Carrinho] Etapa ${etapa}min enviada para ${nome} — carrinho #${id}`);
+        safeLogAutomacao({ store_id: storeId, tipo: 'carrinho_abandonado', pedido: id, telefone, mensagem });
       } catch(e) {
         console.error(`[Carrinho] Falha etapa ${etapa}min para #${id}:`, e.message);
+        safeLogAutomacao({ store_id: storeId, tipo: 'carrinho_abandonado', pedido: id, telefone, erro: e.message });
       }
       await new Promise(r => setTimeout(r, 500));
     }
@@ -872,8 +1016,10 @@ async function verificarPagamentos(storeId) {
         db.marcarConfirmacaoEnviada(String(o.id), storeId);
         db.registrarClienteAtivo(telefone, storeId);
         console.log(`[Pagamento] WhatsApp enviado para pedido #${o.number}`);
+        safeLogAutomacao({ store_id: storeId, tipo: 'pagamento_confirmado', pedido: o.number, telefone, mensagem: 'Confirmação de pagamento enviada.' });
       } catch(e) {
         console.error(`[Pagamento] Falha para #${o.number}:`, e.message);
+        safeLogAutomacao({ store_id: storeId, tipo: 'pagamento_confirmado', pedido: o.number, telefone, erro: e.message });
       }
       await new Promise(r => setTimeout(r, 500));
     }
@@ -914,6 +1060,7 @@ async function verificarRastreios(storeId) {
           db.registrarMensagem(telefone);
           db.registrarClienteAtivo(telefone, storeId);
           console.log(`[Rastreio] WhatsApp enviado para #${o.number}`);
+          safeLogAutomacao({ store_id: storeId, tipo: 'rastreio', pedido: o.number, telefone, mensagem: evento.descricao || evento.status || 'Atualização de rastreio enviada.' });
           if (evento.entregue && !db.jaSatisfacaoEnviada(String(o.id))) {
             await new Promise(r => setTimeout(r, 3000));
             if (await podEnviar(telefone)) {
@@ -925,6 +1072,7 @@ async function verificarRastreios(storeId) {
               db.marcarSatisfacaoEnviada(String(o.id), storeId);
               db.registrarMensagem(telefone);
               console.log(`[Satisfação] Pesquisa enviada para #${o.number}`);
+              safeLogAutomacao({ store_id: storeId, tipo: 'pesquisa_satisfacao', pedido: o.number, telefone, mensagem: 'Pesquisa de satisfação enviada.' });
             }
           }
         } catch(e) { console.error(`[Rastreio] Falha para #${o.number}:`, e.message); }
@@ -1724,6 +1872,7 @@ async function verificarPosEntrega(storeId) {
         db.marcarPosEntregaEnviado(String(o.id), storeId);
         db.registrarMensagem(telefone);
         console.log(`[PósEntrega] Enviado para ${nome} — pedido #${o.number}`);
+        safeLogAutomacao({ store_id: storeId, tipo: 'pos_entrega', pedido: o.number, telefone, mensagem });
       } catch(e) { console.error(`[PósEntrega] Falha #${o.number}:`, e.message); }
       await new Promise(r => setTimeout(r, 500));
     }
