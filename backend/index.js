@@ -48,6 +48,7 @@ function safeLogAutomacao(evento) {
   }
 }
 
+
 function adminLoggzapHtml() {
   return `<!DOCTYPE html>
 <html lang="pt-BR">
@@ -57,75 +58,166 @@ function adminLoggzapHtml() {
 <title>Admin LoggZap</title>
 <style>
   *{box-sizing:border-box}body{margin:0;background:#07090e;color:#eef0f8;font-family:Arial,sans-serif}
-  .wrap{max-width:1120px;margin:0 auto;padding:32px 22px}
+  .wrap{max-width:1220px;margin:0 auto;padding:32px 22px}
   .top{display:flex;justify-content:space-between;gap:16px;align-items:center;margin-bottom:20px}
   .logo{font-size:24px;font-weight:800}.logo span{color:#00d084}
   .card{background:#0c0f16;border:1px solid rgba(255,255,255,.08);border-radius:14px;padding:20px;margin-bottom:16px}
-  input{background:#11151e;border:1px solid rgba(255,255,255,.12);border-radius:8px;color:#eef0f8;padding:10px 12px;width:100%;font:inherit}
+  input,select{background:#11151e;border:1px solid rgba(255,255,255,.12);border-radius:8px;color:#eef0f8;padding:10px 12px;width:100%;font:inherit}
   button{border:0;border-radius:8px;padding:10px 14px;font-weight:700;cursor:pointer;background:#00d084;color:#000}
   .btn2{background:#1e2430;color:#eef0f8;border:1px solid rgba(255,255,255,.12)}
-  table{width:100%;border-collapse:collapse;margin-top:12px}th,td{border-bottom:1px solid rgba(255,255,255,.08);padding:10px;text-align:left;font-size:13px;vertical-align:top}
-  th{color:#8b93a8;text-transform:uppercase;font-size:11px}pre{white-space:pre-wrap;margin:0;color:#8b93a8;max-height:160px;overflow:auto}
-  .grid{display:grid;grid-template-columns:1fr 1fr 1fr;gap:12px}.metric{background:#11151e;border-radius:10px;padding:14px}
+  .btnDanger{background:#3a1d24;color:#ff9ca7;border:1px solid rgba(255,100,120,.32)}
+  table{width:100%;border-collapse:collapse;margin-top:12px}th,td{border-bottom:1px solid rgba(255,255,255,.08);padding:10px;text-align:left;font-size:12px;vertical-align:top}
+  th{color:#8b93a8;text-transform:uppercase;font-size:10px}pre{white-space:pre-wrap;margin:0;color:#8b93a8;max-height:160px;overflow:auto}
+  .grid{display:grid;grid-template-columns:repeat(4,1fr);gap:12px}.metric{background:#11151e;border-radius:10px;padding:14px}
   .metric strong{display:block;font-size:24px}.metric span{color:#8b93a8;font-size:12px}
   .err{background:rgba(224,90,90,.12);border:1px solid rgba(224,90,90,.35);color:#ff8f8f;border-radius:8px;padding:12px;margin:12px 0;display:none}
-  .hidden{display:none}
+  .ok{background:rgba(0,208,132,.12);border:1px solid rgba(0,208,132,.35);color:#00d084;border-radius:8px;padding:12px;margin:12px 0;display:none}
+  .hidden{display:none}.badge{display:inline-block;padding:3px 8px;border-radius:999px;font-size:10px;font-weight:800}.bOk{background:rgba(0,208,132,.14);color:#00d084}.bWarn{background:rgba(232,160,48,.14);color:#f6c167}.bErr{background:rgba(224,90,90,.14);color:#ff8f8f}
+  .actions{display:flex;gap:6px;flex-wrap:wrap}.two{display:grid;grid-template-columns:1fr 1fr;gap:12px}.muted{color:#8b93a8;font-size:12px;line-height:1.5}
+  @media(max-width:900px){.grid,.two{grid-template-columns:1fr}.top{align-items:flex-start;flex-direction:column}}
 </style>
 </head>
 <body>
 <div class="wrap">
-  <div class="top"><div class="logo">Admin <span>LoggZap</span></div><button class="btn2" onclick="location.reload()">Atualizar</button></div>
+  <div class="top"><div class="logo">Admin <span>LoggZap</span></div><button class="btn2" onclick="carregar()">Atualizar</button></div>
+
   <div id="auth" class="card">
     <h2>Acesso interno</h2>
-    <p style="color:#8b93a8">Use a mesma chave interna do backend para visualizar logs operacionais.</p>
+    <p class="muted">Use a mesma chave interna do backend para visualizar clientes, logs e status operacional.</p>
     <input id="secret" type="password" placeholder="EXTENSION_SECRET">
     <div class="err" id="err"></div>
     <br><br><button onclick="entrar()">Entrar</button>
   </div>
+
   <div id="painel" class="hidden">
     <div class="grid">
-      <div class="metric"><strong id="mTotal">--</strong><span>logs registrados</span></div>
-      <div class="metric"><strong id="mHoje">--</strong><span>envios hoje</span></div>
-      <div class="metric"><strong id="mLojas">--</strong><span>lojas com logs</span></div>
+      <div class="metric"><strong id="mClientes">--</strong><span>lojas conectadas</span></div>
+      <div class="metric"><strong id="mPremium">--</strong><span>clientes Premium</span></div>
+      <div class="metric"><strong id="mProntos">--</strong><span>Premium prontos</span></div>
+      <div class="metric"><strong id="mErros">--</strong><span>clientes com erro</span></div>
     </div>
+
     <div class="card">
-      <h2>Últimos eventos</h2>
-      <input id="filtro" placeholder="Filtrar por loja, pedido, telefone ou tipo" oninput="render()">
+      <h2>Clientes / lojas</h2>
+      <input id="filtroCliente" placeholder="Filtrar por loja, cliente, plano ou erro" oninput="renderClientes()">
       <div style="overflow:auto">
-        <table><thead><tr><th>Data</th><th>Loja</th><th>Tipo</th><th>Pedido</th><th>Telefone</th><th>Mensagem / erro</th></tr></thead><tbody id="tbody"></tbody></table>
+        <table><thead><tr><th>Loja</th><th>Plano</th><th>Z-API</th><th>Painel</th><th>Templates</th><th>Última automação</th><th>Erro</th><th>Ações</th></tr></thead><tbody id="clientesBody"></tbody></table>
       </div>
+    </div>
+
+    <div class="card">
+      <h2>Últimos logs</h2>
+      <input id="filtroLog" placeholder="Filtrar por loja, pedido, telefone ou tipo" oninput="renderLogs()">
+      <div style="overflow:auto">
+        <table><thead><tr><th>Data</th><th>Loja</th><th>Tipo</th><th>Pedido</th><th>Telefone</th><th>Mensagem / erro</th></tr></thead><tbody id="logsBody"></tbody></table>
+      </div>
+    </div>
+
+    <div class="card">
+      <h2>Ações de suporte</h2>
+      <div class="two">
+        <div>
+          <label>Store ID</label><input id="acaoStore" placeholder="Store ID">
+          <label>Telefone para teste</label><input id="acaoTelefone" placeholder="5581999999999">
+          <label>Tipo de teste</label>
+          <select id="acaoTipo">
+            <option value="pagamento_confirmado">Pagamento confirmado</option>
+            <option value="pedido_postado">Código de rastreio</option>
+            <option value="rastreio_atualizado">Movimentação de entrega</option>
+            <option value="boleto_pix_pendente">Pix/boleto pendente</option>
+            <option value="pesquisa_satisfacao">Pesquisa de satisfação</option>
+          </select>
+          <br><br>
+          <button onclick="testarWhatsApp()">Enviar teste real</button>
+          <button class="btn2" onclick="statusZapi()">Consultar Z-API</button>
+        </div>
+        <div>
+          <label>Resetar login do cliente</label><input id="resetLogin" placeholder="Novo login">
+          <label>Nova senha</label><input id="resetSenha" type="password" placeholder="Nova senha">
+          <br><br><button class="btn2" onclick="resetarSenha()">Resetar senha do painel</button>
+          <hr style="border-color:rgba(255,255,255,.08);margin:18px 0">
+          <label>Chave para desvincular dispositivo</label><input id="chaveDesvincular" placeholder="LZP-XXXX-XXXX-XXXX">
+          <br><br><button class="btnDanger" onclick="desvincular()">Desvincular dispositivo</button>
+        </div>
+      </div>
+      <div class="err" id="acaoErr"></div><div class="ok" id="acaoOk"></div>
     </div>
   </div>
 </div>
+
 <script>
-let logs=[];
-let secret='';
-async function entrar(){
-  secret=document.getElementById('secret').value.trim();
-  if(!secret){document.getElementById('err').textContent='Informe a chave.';document.getElementById('err').style.display='block';return;}
-  const r=await fetch('/admin-loggzap/api/logs',{headers:{'x-secret':secret}});
+let secret='', clientes=[], logs=[];
+function esc(v){return String(v??'').replace(/[<>&]/g,s=>({'<':'&lt;','>':'&gt;','&':'&amp;'}[s]));}
+function show(id,msg){const el=document.getElementById(id);el.innerHTML=msg;el.style.display='block';}
+function hide(id){document.getElementById(id).style.display='none';}
+async function api(path, opts={}){
+  const r=await fetch(path,{...opts,headers:{'Content-Type':'application/json','x-secret':secret,...(opts.headers||{})}});
   const d=await r.json().catch(()=>({}));
-  if(!r.ok){document.getElementById('err').textContent=d.error||'Acesso negado.';document.getElementById('err').style.display='block';return;}
-  logs=d.logs||[];
-  document.getElementById('auth').classList.add('hidden');
-  document.getElementById('painel').classList.remove('hidden');
-  render();
+  if(!r.ok||d.error) throw new Error(d.error||'Erro na solicitação.');
+  return d;
 }
-function render(){
-  const f=(document.getElementById('filtro').value||'').toLowerCase();
-  const today=new Date().toISOString().slice(0,10);
-  document.getElementById('mTotal').textContent=logs.length;
-  document.getElementById('mHoje').textContent=logs.filter(l=>(l.created_at||'').slice(0,10)===today).length;
-  document.getElementById('mLojas').textContent=new Set(logs.map(l=>l.store_id).filter(Boolean)).size;
-  const rows=logs.slice().reverse().filter(l=>JSON.stringify(l).toLowerCase().includes(f)).slice(0,250);
-  document.getElementById('tbody').innerHTML=rows.map(l=>'<tr>'+
+async function entrar(){secret=document.getElementById('secret').value.trim(); if(!secret)return show('err','Informe a chave.'); await carregar(true);}
+async function carregar(first=false){
+  try{
+    const d=await api('/admin-loggzap/api/resumo');
+    clientes=d.clientes||[]; logs=d.logs||[];
+    document.getElementById('auth').classList.add('hidden');
+    document.getElementById('painel').classList.remove('hidden');
+    renderClientes(); renderLogs();
+  }catch(e){show(first?'err':'acaoErr',e.message);}
+}
+function badge(ok,label){return '<span class="badge '+(ok?'bOk':'bErr')+'">'+label+'</span>';}
+function renderClientes(){
+  const f=(document.getElementById('filtroCliente').value||'').toLowerCase();
+  const rows=clientes.filter(c=>JSON.stringify(c).toLowerCase().includes(f));
+  document.getElementById('mClientes').textContent=clientes.length;
+  document.getElementById('mPremium').textContent=clientes.filter(c=>c.plano==='premium').length;
+  document.getElementById('mProntos').textContent=clientes.filter(c=>c.premium_pronto).length;
+  document.getElementById('mErros').textContent=clientes.filter(c=>c.ultimo_erro).length;
+  document.getElementById('clientesBody').innerHTML=rows.map(c=>{
+    const plano=c.plano?c.plano:'trial/free';
+    return '<tr>'+
+      '<td><strong>'+esc(c.nome_cliente||c.store_id)+'</strong><br><span class="muted">'+esc(c.store_id)+'</span></td>'+
+      '<td>'+esc(plano)+'<br><span class="muted">'+esc(c.expira_em||'')+'</span></td>'+
+      '<td>'+badge(c.zapi_configurada,'Z-API')+'</td>'+
+      '<td>'+badge(c.painel_configurado,'Painel')+'</td>'+
+      '<td>'+badge(c.templates_ok,(c.templates_configurados||0)+'/8')+'</td>'+
+      '<td>'+esc(c.ultimo_tipo||'—')+'<br><span class="muted">'+esc(c.ultimo_log_em||'')+'</span></td>'+
+      '<td>'+(c.ultimo_erro?'<span class="badge bErr">erro</span><br><span class="muted">'+esc(c.ultimo_erro)+'</span>':'<span class="badge bOk">sem erro</span>')+'</td>'+
+      '<td><div class="actions"><button class="btn2" onclick="setStore(\\''+esc(c.store_id)+'\\')">Selecionar</button><button class="btn2" onclick="abrirWhats(\\''+esc(c.store_id)+'\\')">Suporte</button></div></td>'+
+    '</tr>';
+  }).join('');
+}
+function renderLogs(){
+  const f=(document.getElementById('filtroLog').value||'').toLowerCase();
+  const rows=logs.filter(l=>JSON.stringify(l).toLowerCase().includes(f)).slice().reverse().slice(0,250);
+  document.getElementById('logsBody').innerHTML=rows.map(l=>'<tr>'+
     '<td>'+new Date(l.created_at).toLocaleString('pt-BR')+'</td>'+
-    '<td>'+(l.store_id||'')+'</td>'+
-    '<td>'+(l.tipo||'')+'</td>'+
-    '<td>'+(l.pedido||'')+'</td>'+
-    '<td>'+(l.telefone||'')+'</td>'+
-    '<td><pre>'+(l.erro?('ERRO: '+l.erro):(l.mensagem||'')).replace(/[<>&]/g,s=>({'<':'&lt;','>':'&gt;','&':'&amp;'}[s]))+'</pre></td>'+
+    '<td>'+esc(l.store_id||'')+'</td>'+
+    '<td>'+esc(l.tipo||'')+'</td>'+
+    '<td>'+esc(l.pedido||'')+'</td>'+
+    '<td>'+esc(l.telefone||'')+'</td>'+
+    '<td><pre>'+(l.erro?('ERRO: '+esc(l.erro)):esc(l.mensagem||''))+'</pre></td>'+
   '</tr>').join('');
+}
+function setStore(store){document.getElementById('acaoStore').value=store;}
+function abrirWhats(store){window.open('https://wa.me/5581976041948?text='+encodeURIComponent('Preciso verificar o suporte da loja '+store),'_blank');}
+async function testarWhatsApp(){
+  hide('acaoErr');hide('acaoOk');
+  try{const d=await api('/admin-loggzap/api/teste-whatsapp',{method:'POST',body:JSON.stringify({store_id:acaoStore.value,telefone:acaoTelefone.value,tipo:acaoTipo.value})});show('acaoOk','✅ Teste enviado.'); await carregar();}catch(e){show('acaoErr',e.message);}
+}
+async function statusZapi(){
+  hide('acaoErr');hide('acaoOk');
+  try{const d=await api('/admin-loggzap/api/zapi-status/'+encodeURIComponent(acaoStore.value));show('acaoOk','Status Z-API: '+JSON.stringify(d.status));}catch(e){show('acaoErr',e.message);}
+}
+async function resetarSenha(){
+  hide('acaoErr');hide('acaoOk');
+  try{await api('/admin-loggzap/api/reset-senha',{method:'POST',body:JSON.stringify({store_id:acaoStore.value,login:resetLogin.value,senha:resetSenha.value})});show('acaoOk','✅ Senha/login atualizados.'); await carregar();}catch(e){show('acaoErr',e.message);}
+}
+async function desvincular(){
+  hide('acaoErr');hide('acaoOk');
+  if(!confirm('Tem certeza que deseja desvincular o dispositivo desta chave?'))return;
+  try{await api('/admin-loggzap/api/desvincular-dispositivo',{method:'POST',body:JSON.stringify({chave:chaveDesvincular.value})});show('acaoOk','✅ Dispositivo desvinculado.');}catch(e){show('acaoErr',e.message);}
 }
 </script>
 </body>
@@ -140,6 +232,7 @@ app.get('/admin-loggzap/api/logs', auth, (req, res) => {
   const logs = readLoggzapLogs();
   res.json({ success: true, total: logs.length, logs });
 });
+
 
 
 // ── Painel administrativo Premium / Templates por loja ───────────────────────
@@ -409,6 +502,30 @@ function painelHtml() {
       </div>
     </div>
 
+
+    <div class="card" id="premiumChecklistBox">
+      <h2>Checklist Premium</h2>
+      <p>Antes de considerar a automação pronta, confira se todos os itens estão verdes.</p>
+      <div id="checklistStatus" class="info">Carregando checklist...</div>
+      <button class="btn2" onclick="loadChecklist()">Atualizar checklist</button>
+    </div>
+
+    <div class="card">
+      <h2>Teste real de WhatsApp</h2>
+      <p>Envie uma mensagem real para validar se a automação e a Z-API estão funcionando. Faça isso antes de liberar o Premium ao cliente.</p>
+      <label>Telefone para teste</label><input id="realTestPhone" placeholder="5581999999999">
+      <label>Tipo de mensagem</label>
+      <select id="realTestType">
+        <option value="pagamento_confirmado">Pagamento confirmado</option>
+        <option value="pedido_postado">Código de rastreio</option>
+        <option value="rastreio_atualizado">Movimentação de entrega</option>
+        <option value="boleto_pix_pendente">Pix/boleto pendente</option>
+        <option value="pesquisa_satisfacao">Pesquisa de satisfação</option>
+      </select>
+      <br><br><button class="btn2" onclick="sendRealWhatsAppTest()">Enviar teste real</button>
+      <div class="err" id="realTestErr"></div><div class="ok" id="realTestOk"></div>
+    </div>
+
     <div class="card">
       <h2>Alterar login e senha</h2>
       <p>Use esta área apenas se o cliente pedir para trocar o acesso administrativo.</p>
@@ -447,6 +564,7 @@ async function login(){
   try{
     await api('/painel/api/login',{store_id:loginStore.value,login:loginUser.value,senha:loginPass.value});
     await loadPanel();
+    await loadChecklist();
   }catch(e){show('loginErr',e.message);}
 }
 async function register(){
@@ -493,6 +611,22 @@ async function sendTest(){
     show('validateOk','✅ Teste simulado gerado com sucesso:<br><br><pre style="white-space:pre-wrap">'+d.preview+'</pre>');
   }catch(e){show('validateErr',e.message);}
 }
+
+async function loadChecklist(){
+  try{
+    const d = await apiGet('/painel/api/checklist');
+    const html = d.items.map(i => (i.ok ? '✅ ' : '⚠️ ') + i.label + (i.detalhe ? ' — ' + i.detalhe : '')).join('<br>');
+    document.getElementById('checklistStatus').innerHTML = (d.pronto ? '<strong>✅ Premium pronto para operar</strong><br>' : '<strong>⚠️ Premium ainda precisa de atenção</strong><br>') + html;
+  }catch(e){ document.getElementById('checklistStatus').innerHTML = 'Erro ao carregar checklist: '+e.message; }
+}
+async function sendRealWhatsAppTest(){
+  hide('realTestErr'); hide('realTestOk');
+  try{
+    await api('/painel/api/test-whatsapp-real',{telefone:realTestPhone.value,tipo:realTestType.value});
+    show('realTestOk','✅ Teste real enviado com sucesso.');
+  }catch(e){show('realTestErr',e.message);}
+}
+
 async function changeCredentials(){
   hide('credErr'); hide('credOk');
   try{
@@ -501,7 +635,7 @@ async function changeCredentials(){
   }catch(e){show('credErr',e.message);}
 }
 document.getElementById('logoutBtn').onclick = async ()=>{ await api('/painel/api/logout',{}).catch(()=>{}); location.reload(); };
-apiGet('/painel/api/me').then(loadPanel).catch(()=>{});
+apiGet('/painel/api/me').then(loadPanel).then(loadChecklist).catch(()=>{});
 </script>
 </body>
 </html>`;
@@ -610,6 +744,38 @@ app.post('/painel/api/test-templates', painelAuth, (req, res) => {
 
   res.json({ success: true, preview });
 });
+
+
+app.get('/painel/api/checklist', painelAuth, async (req, res) => {
+  try {
+    const checklist = checklistPremium(String(req.painel.store_id));
+    const zapi = await getZapiStatusForStore(String(req.painel.store_id));
+    const items = checklist.items.map(i => i.key === 'zapi_config' ? { ...i, ok: !!zapi.conectado, detalhe: zapi.erro || zapi.estado || '' } : i);
+    res.json({ success: true, pronto: items.every(i => i.ok), items, zapi });
+  } catch(e) {
+    res.status(500).json({ error: e.message });
+  }
+});
+
+app.post('/painel/api/test-whatsapp-real', painelAuth, async (req, res) => {
+  const { telefone, tipo } = req.body || {};
+  if (!telefone) return res.status(400).json({ error: 'Informe um telefone para teste.' });
+
+  const storeId = String(req.painel.store_id);
+  const status = await getZapiStatusForStore(storeId);
+  if (!status.conectado) return res.status(400).json({ error: 'WhatsApp/Z-API ainda não está conectado. Peça ajuda ao suporte.', status });
+
+  const mensagem = renderTemplateTeste(storeId, tipo || 'pagamento_confirmado');
+  try {
+    const result = await sendWhatsApp(telefone, mensagem, storeId);
+    safeLogAutomacao({ store_id: storeId, tipo: 'teste_cliente_' + (tipo || 'pagamento_confirmado'), telefone, mensagem });
+    res.json({ success: true, result });
+  } catch(e) {
+    safeLogAutomacao({ store_id: storeId, tipo: 'teste_cliente_' + (tipo || 'pagamento_confirmado'), telefone, erro: e.message });
+    res.status(500).json({ error: e.response?.data?.message || e.message });
+  }
+});
+
 
 app.post('/painel/api/credentials', painelAuth, (req, res) => {
   try {

@@ -750,12 +750,124 @@ function listarLogsAutomacao(limit = 1200) {
   `).all(lim).reverse();
 }
 
+
+function listarClientesOperacionais() {
+  const stores = db.prepare(`
+    SELECT
+      t.store_id,
+      t.created_at AS loja_conectada_em,
+      i.nome_cliente,
+      i.zapi_instance,
+      i.created_at AS instancia_criada_em,
+      u.login AS painel_login,
+      u.created_at AS painel_criado_em,
+      (
+        SELECT plano FROM licencas l
+        WHERE l.store_id = t.store_id AND l.status = 'ativa'
+        ORDER BY datetime(l.expira_em) DESC
+        LIMIT 1
+      ) AS plano,
+      (
+        SELECT chave FROM licencas l
+        WHERE l.store_id = t.store_id AND l.status = 'ativa'
+        ORDER BY datetime(l.expira_em) DESC
+        LIMIT 1
+      ) AS chave,
+      (
+        SELECT expira_em FROM licencas l
+        WHERE l.store_id = t.store_id AND l.status = 'ativa'
+        ORDER BY datetime(l.expira_em) DESC
+        LIMIT 1
+      ) AS expira_em,
+      (
+        SELECT COUNT(*) FROM painel_templates pt
+        WHERE pt.store_id = t.store_id
+      ) AS templates_configurados,
+      (
+        SELECT COUNT(*) FROM automacao_logs al
+        WHERE al.store_id = t.store_id
+      ) AS total_logs,
+      (
+        SELECT COUNT(*) FROM automacao_logs al
+        WHERE al.store_id = t.store_id AND date(al.created_at) = date('now')
+      ) AS logs_hoje,
+      (
+        SELECT created_at FROM automacao_logs al
+        WHERE al.store_id = t.store_id
+        ORDER BY datetime(al.created_at) DESC
+        LIMIT 1
+      ) AS ultimo_log_em,
+      (
+        SELECT tipo FROM automacao_logs al
+        WHERE al.store_id = t.store_id
+        ORDER BY datetime(al.created_at) DESC
+        LIMIT 1
+      ) AS ultimo_tipo,
+      (
+        SELECT erro FROM automacao_logs al
+        WHERE al.store_id = t.store_id AND al.erro IS NOT NULL AND al.erro != ''
+        ORDER BY datetime(al.created_at) DESC
+        LIMIT 1
+      ) AS ultimo_erro
+    FROM tokens t
+    LEFT JOIN instancias i ON i.store_id = t.store_id
+    LEFT JOIN painel_usuarios u ON u.store_id = t.store_id
+    ORDER BY datetime(t.created_at) DESC
+  `).all();
+
+  return stores.map(s => ({
+    ...s,
+    premium_pronto: !!(s.store_id && s.plano === 'premium' && s.zapi_instance && s.painel_login && Number(s.templates_configurados || 0) >= 8),
+    zapi_configurada: !!s.zapi_instance,
+    painel_configurado: !!s.painel_login,
+    licenca_ativa: !!s.plano,
+    templates_ok: Number(s.templates_configurados || 0) >= 8
+  }));
+}
+
+function getClienteOperacional(storeId) {
+  return listarClientesOperacionais().find(c => String(c.store_id) === String(storeId)) || null;
+}
+
+function listarLogsPorStore(storeId, limit = 100) {
+  const lim = Math.max(1, Math.min(Number(limit) || 100, 500));
+  return db.prepare(`
+    SELECT id, store_id, tipo, pedido, telefone, mensagem, erro, created_at
+    FROM automacao_logs
+    WHERE store_id = ?
+    ORDER BY datetime(created_at) DESC
+    LIMIT ?
+  `).all(String(storeId), lim).reverse();
+}
+
+function getResumoAutomacoesStore(storeId) {
+  const total = db.prepare('SELECT COUNT(*) as n FROM automacao_logs WHERE store_id = ?').get(String(storeId))?.n || 0;
+  const hoje = db.prepare("SELECT COUNT(*) as n FROM automacao_logs WHERE store_id = ? AND date(created_at) = date('now')").get(String(storeId))?.n || 0;
+  const erros = db.prepare("SELECT COUNT(*) as n FROM automacao_logs WHERE store_id = ? AND erro IS NOT NULL AND erro != ''").get(String(storeId))?.n || 0;
+  const porTipo = db.prepare(`
+    SELECT tipo, COUNT(*) as total
+    FROM automacao_logs
+    WHERE store_id = ?
+    GROUP BY tipo
+    ORDER BY total DESC
+  `).all(String(storeId));
+  const ultimo = db.prepare(`
+    SELECT * FROM automacao_logs
+    WHERE store_id = ?
+    ORDER BY datetime(created_at) DESC
+    LIMIT 1
+  `).get(String(storeId));
+  return { total, hoje, erros, porTipo, ultimo };
+}
+
+
 function limparSessoesPainelExpiradas() {
   db.prepare('DELETE FROM painel_sessoes WHERE expires_at < ?').run(Date.now());
 }
 
 
 module.exports = {
+  listarClientesOperacionais, getClienteOperacional, listarLogsPorStore, getResumoAutomacoesStore,
   criarPainelUsuario, getPainelUsuario, atualizarPainelCredenciais,
   criarPainelSessao, getPainelSessao, deletarPainelSessao,
   getPainelTemplates, salvarPainelTemplates,
