@@ -611,9 +611,6 @@
       const d = await r.json();
       if (d.success) {
         document.getElementById('modal-cadastro').style.display = 'none';
-        if (planoSelecionado === 'trial') {
-          window.open('https://chromewebstore.google.com/detail/loggzap-dashboard/dpfnpaepnholpjgbblljpinbkfoldlpp', '_blank');
-        }
         document.getElementById('modal-sucesso').style.display = 'flex';
       } else {
         erro.textContent = d.error || 'Erro ao enviar. Tente novamente.';
