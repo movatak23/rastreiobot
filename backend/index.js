@@ -237,6 +237,56 @@ app.get('/admin-loggzap/api/logs', auth, (req, res) => {
 
 
 // ── Admin LoggZap Nota 9 — resumo operacional ────────────────────────────────
+
+// ── Admin LoggZap — teste real de WhatsApp ───────────────────────────────────
+app.post('/admin-loggzap/api/teste-whatsapp', auth, async (req, res) => {
+  const { store_id, telefone, tipo } = req.body || {};
+
+  if (!store_id) return res.status(400).json({ error: 'Informe o Store ID.' });
+  if (!telefone) return res.status(400).json({ error: 'Informe o telefone para teste.' });
+
+  const telefoneLimpo = String(telefone).replace(/\D/g, '');
+  if (telefoneLimpo.length < 12) {
+    return res.status(400).json({ error: 'Telefone inválido. Use o formato com DDI, por exemplo: 5581976041948.' });
+  }
+
+  try {
+    const status = await getZapiStatusForStoreSafe(String(store_id));
+    if (!status.conectado) {
+      return res.status(400).json({
+        error: 'Z-API não conectada ou não configurada para esta loja.',
+        status
+      });
+    }
+
+    const mensagem = renderTemplateTesteAdmin(String(store_id), tipo || 'pagamento_confirmado');
+    const result = await sendWhatsApp(telefoneLimpo, mensagem, String(store_id));
+
+    if (typeof safeLogAutomacao === 'function') {
+      safeLogAutomacao({
+        store_id: String(store_id),
+        tipo: 'teste_real_' + (tipo || 'pagamento_confirmado'),
+        telefone: telefoneLimpo,
+        mensagem
+      });
+    }
+
+    return res.json({ success: true, result });
+  } catch(e) {
+    if (typeof safeLogAutomacao === 'function') {
+      safeLogAutomacao({
+        store_id: String(store_id),
+        tipo: 'teste_real_' + (tipo || 'pagamento_confirmado'),
+        telefone: telefoneLimpo,
+        erro: e.response?.data?.message || e.message
+      });
+    }
+
+    return res.status(500).json({ error: e.response?.data?.message || e.message });
+  }
+});
+
+
 app.get('/admin-loggzap/api/resumo', auth, async (req, res) => {
   try {
     let clientes = [];
@@ -311,6 +361,70 @@ app.post('/admin-loggzap/api/desvincular-dispositivo', auth, (req, res) => {
     res.status(500).json({ error: e.message });
   }
 });
+
+
+
+// ── Admin LoggZap — helpers de teste WhatsApp/Z-API ──────────────────────────
+async function getZapiStatusForStoreSafe(storeId) {
+  const inst = db.getInstancia ? (db.getInstancia(storeId) || {}) : {};
+  const instance = inst.zapi_instance || process.env.ZAPI_INSTANCE;
+  const token = inst.zapi_token || process.env.ZAPI_TOKEN;
+  const client = inst.zapi_client_token || process.env.ZAPI_CLIENT_TOKEN;
+
+  if (!instance || !token || !client) {
+    return { conectado: false, erro: 'Z-API não configurada para esta loja.' };
+  }
+
+  try {
+    const r = await axios.get(
+      `https://api.z-api.io/instances/${instance}/token/${token}/status`,
+      { headers: { 'Client-Token': client }, timeout: 7000 }
+    );
+    return {
+      conectado: r.data?.connected === true || r.data?.status === 'connected' || r.data?.value === true,
+      estado: r.data?.status || r.data?.state || 'unknown',
+      data: r.data
+    };
+  } catch(e) {
+    return { conectado: false, erro: e.response?.data?.message || e.message };
+  }
+}
+
+function renderTemplateTesteAdmin(storeId, tipo) {
+  const sample = {
+    nome: 'Cliente Teste',
+    numero: '12345',
+    codigo: 'AB123456789BR',
+    link: 'https://rastreamento.correios.com.br/app/index.php?objeto=AB123456789BR',
+    transportadora: 'Correios',
+    status: 'Objeto em trânsito para a unidade de distribuição',
+    data: '31/05/2026',
+    hora: '14:30',
+    gateway: 'PIX',
+    etapa: '24h'
+  };
+
+  const key = tipo || 'pagamento_confirmado';
+  let template = null;
+
+  try {
+    const templates = typeof getStoreTemplates === 'function' ? getStoreTemplates(storeId) : {};
+    template = templates[key];
+  } catch(e) {}
+
+  const fallbackMap = typeof DEFAULT_AUTOMATION_TEMPLATES !== 'undefined' ? DEFAULT_AUTOMATION_TEMPLATES : {
+    pagamento_confirmado: 'Olá, {nome}! Seu pagamento do pedido #{numero} foi confirmado.',
+    pedido_postado: 'Olá, {nome}! Seu pedido #{numero} foi postado. Código: {codigo}. Rastreie: {link}',
+    rastreio_atualizado: 'Olá, {nome}! Seu pedido #{numero} teve uma nova movimentação: {status}. Rastreie: {link}',
+    boleto_pix_pendente: 'Olá, {nome}! Seu pedido #{numero} ainda está aguardando pagamento.',
+    pesquisa_satisfacao: 'Como foi sua experiência com o pedido #{numero}, {nome}?'
+  };
+
+  const finalTemplate = template || fallbackMap[key] || fallbackMap.pagamento_confirmado;
+  if (typeof renderTemplate === 'function') return renderTemplate(finalTemplate, sample);
+
+  return String(finalTemplate).replace(/\{([a-zA-Z0-9_]+)\}/g, (_, k) => sample[k] || '');
+}
 
 
 // ── Painel administrativo Premium / Templates por loja ───────────────────────
