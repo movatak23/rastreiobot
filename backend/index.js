@@ -16,6 +16,521 @@ app.use(express.json());
 app.use(cors({ origin: '*' }));
 app.use(express.static(path.join(__dirname, 'public')));
 
+// ── Painel administrativo Premium / Templates por loja ───────────────────────
+const fs = require('fs');
+
+const ADMIN_DATA_DIR = path.join(__dirname, 'data');
+const ADMIN_DATA_FILE = path.join(ADMIN_DATA_DIR, 'loggzap-admin.json');
+
+const DEFAULT_AUTOMATION_TEMPLATES = {
+  pagamento_confirmado:
+    '👏👏👏 #Parabéns, {nome}!👏👏👏\nSeu pagamento do pedido *#{numero}* foi confirmado!\n\nNosso prazo de produção é de 3 dias úteis. Sua estampa entrou na fila de impressão agora e segue a sequência de pedidos.',
+  pedido_postado:
+    '📮 Olá, {nome}! Seu pedido *#{numero}* foi postado!\n\nCódigo de rastreio: *{codigo}*\n🔗 Rastreie: {link}\n\nEm breve chegará até você! 😊',
+  rastreio_atualizado:
+    '🚚 Boa notícia, {nome}! Seu pedido *#{numero}* teve uma nova movimentação.\n\n📍 Status: *{status}*\n📅 {data} às {hora}\n\n🔗 Rastreie: {link}',
+  saiu_para_entrega:
+    '🎉 {nome}, seu pedido *#{numero}* saiu para entrega hoje!\n\nFique de olho, o entregador está a caminho! 📦\n🔗 Rastreie: {link}',
+  pedido_entregue:
+    '✅ {nome}, seu pedido *#{numero}* foi entregue!\n\nEsperamos que você goste! Qualquer dúvida é só chamar. 😊',
+  carrinho_abandonado:
+    'Olá, {nome}! 👋\n\nPercebemos que você deixou alguns itens no carrinho da nossa loja.\n\nAinda está interessado? Finalize sua compra aqui:\n🛒 {link}\n\nQualquer dúvida é só chamar! 😊',
+  boleto_pix_pendente:
+    'Olá, {nome}! 😊\n\nIdentificamos que seu pedido *#{numero}* ainda está aguardando pagamento.\n\nFinalize seu pagamento para garantir seu pedido!\n\nQualquer dúvida é só chamar. 💬\n\n_Se você já efetuou o pagamento por outros métodos, desconsidere esta mensagem._',
+  pesquisa_satisfacao:
+    'Como foi a sua experiência com o pedido *#{numero}*, {nome}? 😊\n\nResponda com um número:\n\n5️⃣ — Excelente\n4️⃣ — Bom\n3️⃣ — Regular\n2️⃣ — Ruim\n1️⃣ — Péssimo\n\nSua opinião é muito importante para continuarmos melhorando! 🙏'
+};
+
+const TEMPLATE_RULES = {
+  pagamento_confirmado: ['{nome}', '{numero}'],
+  pedido_postado: ['{nome}', '{numero}', '{codigo}', '{link}'],
+  rastreio_atualizado: ['{nome}', '{numero}', '{status}', '{link}'],
+  saiu_para_entrega: ['{nome}', '{numero}', '{link}'],
+  pedido_entregue: ['{nome}', '{numero}'],
+  carrinho_abandonado: ['{nome}', '{link}'],
+  boleto_pix_pendente: ['{nome}', '{numero}'],
+  pesquisa_satisfacao: ['{nome}', '{numero}']
+};
+
+const TEMPLATE_LABELS = {
+  pagamento_confirmado: 'Pagamento confirmado',
+  pedido_postado: 'Pedido postado / código de rastreio',
+  rastreio_atualizado: 'Acompanhamento da entrega / movimentação',
+  saiu_para_entrega: 'Saiu para entrega',
+  pedido_entregue: 'Pedido entregue',
+  carrinho_abandonado: 'Carrinho abandonado',
+  boleto_pix_pendente: 'Pix, boleto ou pagamento pendente',
+  pesquisa_satisfacao: 'Pesquisa de satisfação'
+};
+
+function ensureAdminData() {
+  if (!fs.existsSync(ADMIN_DATA_DIR)) fs.mkdirSync(ADMIN_DATA_DIR, { recursive: true });
+  if (!fs.existsSync(ADMIN_DATA_FILE)) {
+    fs.writeFileSync(ADMIN_DATA_FILE, JSON.stringify({ users: {}, sessions: {}, templates: {} }, null, 2));
+  }
+}
+
+function readAdminData() {
+  ensureAdminData();
+  try {
+    const raw = fs.readFileSync(ADMIN_DATA_FILE, 'utf8');
+    return JSON.parse(raw || '{}');
+  } catch(e) {
+    return { users: {}, sessions: {}, templates: {} };
+  }
+}
+
+function writeAdminData(data) {
+  ensureAdminData();
+  fs.writeFileSync(ADMIN_DATA_FILE, JSON.stringify(data, null, 2));
+}
+
+function hashPassword(password, salt = crypto.randomBytes(16).toString('hex')) {
+  const hash = crypto.scryptSync(String(password), salt, 64).toString('hex');
+  return `${salt}:${hash}`;
+}
+
+function verifyPassword(password, stored) {
+  if (!stored || !stored.includes(':')) return false;
+  const [salt, expected] = stored.split(':');
+  const actual = crypto.scryptSync(String(password), salt, 64).toString('hex');
+  try {
+    return crypto.timingSafeEqual(Buffer.from(actual, 'hex'), Buffer.from(expected, 'hex'));
+  } catch(e) {
+    return false;
+  }
+}
+
+function getCookie(req, name) {
+  const raw = req.headers.cookie || '';
+  const parts = raw.split(';').map(p => p.trim());
+  const item = parts.find(p => p.startsWith(name + '='));
+  return item ? decodeURIComponent(item.slice(name.length + 1)) : null;
+}
+
+function painelAuth(req, res, next) {
+  const token = getCookie(req, 'lz_admin_session') || (req.headers.authorization || '').replace(/^Bearer\s+/i, '');
+  if (!token) return res.status(401).json({ error: 'Sessão expirada. Faça login novamente.' });
+  const data = readAdminData();
+  const session = data.sessions?.[token];
+  if (!session || !session.store_id || Date.now() > session.expires_at) {
+    return res.status(401).json({ error: 'Sessão expirada. Faça login novamente.' });
+  }
+  req.painel = session;
+  next();
+}
+
+function createPainelSession(storeId, login) {
+  const data = readAdminData();
+  const token = crypto.randomBytes(32).toString('hex');
+  data.sessions = data.sessions || {};
+  data.sessions[token] = {
+    store_id: String(storeId),
+    login,
+    created_at: Date.now(),
+    expires_at: Date.now() + 1000 * 60 * 60 * 24 * 7
+  };
+  writeAdminData(data);
+  return token;
+}
+
+function renderTemplate(text, vars = {}) {
+  return String(text || '').replace(/\{([a-zA-Z0-9_]+)\}/g, (m, key) => {
+    const value = vars[key];
+    return value === undefined || value === null ? '' : String(value);
+  });
+}
+
+function getStoreTemplates(storeId) {
+  const data = readAdminData();
+  return { ...DEFAULT_AUTOMATION_TEMPLATES, ...(data.templates?.[String(storeId)] || {}) };
+}
+
+function getMensagemTemplate(storeId, key, fallback, vars = {}) {
+  try {
+    const templates = getStoreTemplates(storeId);
+    const template = templates[key] || fallback;
+    return renderTemplate(template, vars);
+  } catch(e) {
+    return renderTemplate(fallback, vars);
+  }
+}
+
+function getRastreioTemplateKey(evento) {
+  const desc = (evento?.descricao || '').toLowerCase();
+  if (evento?.entregue) return 'pedido_entregue';
+  if (desc.includes('saiu para entrega') || desc.includes('saiu para a entrega') || desc.includes('entrega prevista')) return 'saiu_para_entrega';
+  if (desc.includes('postado') || desc.includes('objeto postado') || desc.includes('coletado')) return 'pedido_postado';
+  return 'rastreio_atualizado';
+}
+
+function validateTemplatesPayload(templates = {}) {
+  const erros = [];
+  const avisos = [];
+  const out = {};
+
+  for (const key of Object.keys(DEFAULT_AUTOMATION_TEMPLATES)) {
+    const label = TEMPLATE_LABELS[key] || key;
+    const value = String(templates[key] ?? DEFAULT_AUTOMATION_TEMPLATES[key] ?? '').trim();
+
+    if (!value) {
+      erros.push(`${label}: a mensagem não pode ficar vazia.`);
+      continue;
+    }
+
+    if (value.length > 900) {
+      erros.push(`${label}: reduza o texto para até 900 caracteres.`);
+    }
+
+    const obrigatorias = TEMPLATE_RULES[key] || [];
+    for (const variable of obrigatorias) {
+      if (!value.includes(variable)) {
+        erros.push(`${label}: mantenha a variável obrigatória ${variable}.`);
+      }
+    }
+
+    const found = value.match(/\{[a-zA-Z0-9_]+\}/g) || [];
+    const allowed = new Set(['{nome}', '{numero}', '{codigo}', '{link}', '{transportadora}', '{status}', '{data}', '{hora}', '{gateway}', '{etapa}']);
+    for (const variable of found) {
+      if (!allowed.has(variable)) {
+        avisos.push(`${label}: a variável ${variable} não é reconhecida e pode ficar vazia no envio.`);
+      }
+    }
+
+    out[key] = value;
+  }
+
+  return { ok: erros.length === 0, erros, avisos, templates: out };
+}
+
+function painelHtml() {
+  const templateFields = Object.keys(DEFAULT_AUTOMATION_TEMPLATES).map(key => {
+    const req = (TEMPLATE_RULES[key] || []).join(' ');
+    return `
+      <div class="template-card" data-key="${key}">
+        <div class="template-head">
+          <strong>${TEMPLATE_LABELS[key]}</strong>
+          <span>Obrigatório: ${req}</span>
+        </div>
+        <div class="warning">Atenção: não remova as variáveis obrigatórias. Elas são substituídas automaticamente pelos dados reais do pedido.</div>
+        <textarea id="tpl_${key}" rows="7"></textarea>
+      </div>`;
+  }).join('');
+
+  return `<!DOCTYPE html>
+<html lang="pt-BR">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width,initial-scale=1.0">
+<title>Painel Premium LoggZap</title>
+<style>
+  *{box-sizing:border-box}body{margin:0;background:#07090e;color:#eef0f8;font-family:Arial,sans-serif}
+  .wrap{max-width:1040px;margin:0 auto;padding:32px 22px}
+  .top{display:flex;justify-content:space-between;align-items:center;gap:16px;margin-bottom:22px}
+  .logo{font-size:24px;font-weight:800}.logo span{color:#00d084}
+  .card{background:#0c0f16;border:1px solid rgba(255,255,255,.08);border-radius:14px;padding:24px;margin-bottom:18px}
+  h1{font-size:26px;margin:0 0 8px}h2{font-size:20px;margin:0 0 14px}p{color:#8b93a8;line-height:1.6}
+  label{display:block;font-size:12px;font-weight:700;color:#8b93a8;text-transform:uppercase;margin:12px 0 6px}
+  input,textarea{width:100%;background:#11151e;border:1px solid rgba(255,255,255,.12);border-radius:8px;color:#eef0f8;padding:12px;font:inherit}
+  textarea{resize:vertical;min-height:130px;line-height:1.5}
+  button{border:0;border-radius:9px;padding:12px 16px;font-weight:700;cursor:pointer}
+  .btn{background:#00d084;color:#000}.btn2{background:#1e2430;color:#eef0f8;border:1px solid rgba(255,255,255,.12)}
+  .btn:disabled{opacity:.45;cursor:not-allowed}
+  .grid{display:grid;grid-template-columns:1fr 1fr;gap:18px}
+  .template-card{background:#11151e;border:1px solid rgba(255,255,255,.08);border-radius:12px;padding:16px;margin-bottom:14px}
+  .template-head{display:flex;justify-content:space-between;gap:12px;margin-bottom:10px}
+  .template-head span{font-size:12px;color:#4f8ef7;text-align:right}
+  .warning{background:rgba(232,160,48,.12);border:1px solid rgba(232,160,48,.35);color:#f6c167;border-radius:8px;padding:10px;font-size:13px;margin-bottom:10px}
+  .info{background:rgba(79,142,247,.10);border:1px solid rgba(79,142,247,.28);color:#a9c7ff;border-radius:8px;padding:12px;margin:12px 0}
+  .ok{background:rgba(0,208,132,.12);border:1px solid rgba(0,208,132,.35);color:#00d084;border-radius:8px;padding:12px;margin:12px 0;display:none}
+  .err{background:rgba(224,90,90,.12);border:1px solid rgba(224,90,90,.35);color:#ff8f8f;border-radius:8px;padding:12px;margin:12px 0;display:none}
+  .actions{display:flex;gap:10px;flex-wrap:wrap;align-items:center;position:sticky;bottom:0;background:#07090e;padding:14px 0;border-top:1px solid rgba(255,255,255,.08)}
+  .muted{font-size:13px;color:#8b93a8}.hidden{display:none!important}
+  @media(max-width:760px){.grid{grid-template-columns:1fr}.top{align-items:flex-start;flex-direction:column}}
+</style>
+</head>
+<body>
+<div class="wrap">
+  <div class="top">
+    <div class="logo">Logg<span>Zap</span> Premium</div>
+    <button class="btn2 hidden" id="logoutBtn">Sair</button>
+  </div>
+
+  <div id="authArea" class="grid">
+    <div class="card">
+      <h1>Entrar no painel</h1>
+      <p>Acesse para configurar mensagens automáticas, trocar login e senha e testar os textos antes de salvar.</p>
+      <label>Store ID</label><input id="loginStore" placeholder="Ex: 4757590">
+      <label>Login</label><input id="loginUser" placeholder="Seu login">
+      <label>Senha</label><input id="loginPass" type="password" placeholder="Sua senha">
+      <div class="err" id="loginErr"></div>
+      <button class="btn" onclick="login()">Entrar</button>
+    </div>
+    <div class="card">
+      <h1>Primeiro acesso</h1>
+      <p>Crie o acesso administrativo da loja. Para segurança, informe a chave Premium recebida por e-mail.</p>
+      <label>Store ID</label><input id="regStore" placeholder="Ex: 4757590">
+      <label>Chave Premium</label><input id="regKey" placeholder="LZP-XXXX-XXXX-XXXX">
+      <label>Login desejado</label><input id="regUser" placeholder="Ex: minha-loja">
+      <label>Senha</label><input id="regPass" type="password" placeholder="Mínimo 6 caracteres">
+      <div class="warning">Guarde esse acesso. Depois você poderá alterar login e senha dentro do painel.</div>
+      <div class="err" id="regErr"></div>
+      <button class="btn" onclick="register()">Criar acesso</button>
+    </div>
+  </div>
+
+  <div id="panelArea" class="hidden">
+    <div class="card">
+      <h1>Mensagens automáticas</h1>
+      <p>Edite as mensagens usadas nas automações Premium. Antes de salvar, clique em <strong>Verificar mensagens</strong>. O sistema só permitirá salvar se a verificação estiver 100% OK.</p>
+      <div class="info">
+        Variáveis disponíveis: <strong>{nome}</strong>, <strong>{numero}</strong>, <strong>{codigo}</strong>, <strong>{link}</strong>, <strong>{transportadora}</strong>, <strong>{status}</strong>, <strong>{data}</strong>, <strong>{hora}</strong>, <strong>{gateway}</strong>, <strong>{etapa}</strong>.
+      </div>
+      ${templateFields}
+      <div class="err" id="validateErr"></div>
+      <div class="ok" id="validateOk"></div>
+      <div class="actions">
+        <button class="btn2" onclick="validateTemplates()">Verificar mensagens</button>
+        <button class="btn" id="saveBtn" onclick="saveTemplates()" disabled>Salvar mensagens</button>
+        <button class="btn2" onclick="sendTest()">Enviar teste simulado</button>
+        <span class="muted">Recomendado: verifique tudo antes de salvar. O salvamento só libera se não houver erro.</span>
+      </div>
+    </div>
+
+    <div class="card">
+      <h2>Alterar login e senha</h2>
+      <p>Use esta área apenas se o cliente pedir para trocar o acesso administrativo.</p>
+      <label>Novo login</label><input id="newLogin" placeholder="Novo login">
+      <label>Nova senha</label><input id="newPass" type="password" placeholder="Nova senha">
+      <div class="err" id="credErr"></div><div class="ok" id="credOk"></div>
+      <button class="btn2" onclick="changeCredentials()">Atualizar acesso</button>
+    </div>
+  </div>
+</div>
+
+<script>
+let canSave = false;
+const keys = ${JSON.stringify(Object.keys(DEFAULT_AUTOMATION_TEMPLATES))};
+
+function show(id, msg) { const el=document.getElementById(id); el.innerHTML=msg; el.style.display='block'; }
+function hide(id) { const el=document.getElementById(id); el.style.display='none'; }
+function collectTemplates(){ const out={}; keys.forEach(k=>out[k]=document.getElementById('tpl_'+k).value); return out; }
+function markDirty(){ canSave=false; document.getElementById('saveBtn').disabled=true; hide('validateOk'); }
+
+async function api(path, body){
+  const r = await fetch(path,{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(body||{})});
+  const d = await r.json().catch(()=>({}));
+  if(!r.ok || d.error) throw new Error(d.error || 'Erro na solicitação.');
+  return d;
+}
+async function apiGet(path){
+  const r = await fetch(path);
+  const d = await r.json().catch(()=>({}));
+  if(!r.ok || d.error) throw new Error(d.error || 'Erro na solicitação.');
+  return d;
+}
+
+async function login(){
+  hide('loginErr');
+  try{
+    await api('/painel/api/login',{store_id:loginStore.value,login:loginUser.value,senha:loginPass.value});
+    await loadPanel();
+  }catch(e){show('loginErr',e.message);}
+}
+async function register(){
+  hide('regErr');
+  try{
+    await api('/painel/api/register',{store_id:regStore.value,chave:regKey.value,login:regUser.value,senha:regPass.value});
+    await loadPanel();
+  }catch(e){show('regErr',e.message);}
+}
+async function loadPanel(){
+  const data = await apiGet('/painel/api/templates');
+  document.getElementById('authArea').classList.add('hidden');
+  document.getElementById('panelArea').classList.remove('hidden');
+  document.getElementById('logoutBtn').classList.remove('hidden');
+  keys.forEach(k=>{ const el=document.getElementById('tpl_'+k); el.value=data.templates[k] || ''; el.addEventListener('input',markDirty); });
+  markDirty();
+}
+async function validateTemplates(){
+  hide('validateErr'); hide('validateOk');
+  try{
+    const d = await api('/painel/api/validate-templates',{templates:collectTemplates()});
+    if(d.ok){
+      canSave=true; document.getElementById('saveBtn').disabled=false;
+      show('validateOk','✅ Verificação concluída. Tudo está pronto para salvar.' + (d.avisos?.length ? '<br><br>Avisos:<br>'+d.avisos.join('<br>') : ''));
+    } else {
+      canSave=false; document.getElementById('saveBtn').disabled=true;
+      show('validateErr','Corrija antes de salvar:<br>'+d.erros.join('<br>'));
+    }
+  }catch(e){show('validateErr',e.message);}
+}
+async function saveTemplates(){
+  hide('validateErr'); hide('validateOk');
+  if(!canSave) return show('validateErr','Faça a verificação e corrija os erros antes de salvar.');
+  try{
+    const d = await api('/painel/api/templates',{templates:collectTemplates()});
+    canSave=false; document.getElementById('saveBtn').disabled=true;
+    show('validateOk','✅ Mensagens salvas com sucesso.');
+  }catch(e){show('validateErr',e.message);}
+}
+async function sendTest(){
+  hide('validateErr'); hide('validateOk');
+  try{
+    const d = await api('/painel/api/test-templates',{templates:collectTemplates()});
+    show('validateOk','✅ Teste simulado gerado com sucesso:<br><br><pre style="white-space:pre-wrap">'+d.preview+'</pre>');
+  }catch(e){show('validateErr',e.message);}
+}
+async function changeCredentials(){
+  hide('credErr'); hide('credOk');
+  try{
+    await api('/painel/api/credentials',{login:newLogin.value,senha:newPass.value});
+    show('credOk','✅ Login e senha atualizados.');
+  }catch(e){show('credErr',e.message);}
+}
+document.getElementById('logoutBtn').onclick = async ()=>{ await api('/painel/api/logout',{}).catch(()=>{}); location.reload(); };
+apiGet('/painel/api/me').then(loadPanel).catch(()=>{});
+</script>
+</body>
+</html>`;
+}
+
+app.get('/painel', (req, res) => {
+  res.send(painelHtml());
+});
+
+app.get('/painel/api/me', painelAuth, (req, res) => {
+  res.json({ success: true, store_id: req.painel.store_id, login: req.painel.login });
+});
+
+app.post('/painel/api/register', (req, res) => {
+  try {
+    const { store_id, chave, login, senha } = req.body || {};
+    if (!store_id || !chave || !login || !senha) return res.status(400).json({ error: 'Preencha Store ID, chave Premium, login e senha.' });
+    if (String(senha).length < 6) return res.status(400).json({ error: 'A senha precisa ter pelo menos 6 caracteres.' });
+
+    const validacao = db.validarLicenca(String(chave).trim(), String(store_id).trim());
+    if (!validacao?.valida || validacao.plano !== 'premium') {
+      return res.status(403).json({ error: 'Chave Premium inválida para esta loja.' });
+    }
+
+    const data = readAdminData();
+    data.users = data.users || {};
+    if (data.users[String(store_id)]) return res.status(409).json({ error: 'Esta loja já possui acesso. Use a tela de login ou altere a senha dentro do painel.' });
+
+    data.users[String(store_id)] = {
+      store_id: String(store_id),
+      login: String(login).trim(),
+      password_hash: hashPassword(String(senha)),
+      created_at: new Date().toISOString()
+    };
+    data.templates = data.templates || {};
+    data.templates[String(store_id)] = { ...DEFAULT_AUTOMATION_TEMPLATES };
+    writeAdminData(data);
+
+    const token = createPainelSession(store_id, String(login).trim());
+    res.setHeader('Set-Cookie', `lz_admin_session=${encodeURIComponent(token)}; HttpOnly; Path=/; Max-Age=${60*60*24*7}; SameSite=Lax; Secure`);
+    res.json({ success: true });
+  } catch(e) {
+    console.error('[Painel] register:', e.message);
+    res.status(500).json({ error: 'Erro ao criar acesso.' });
+  }
+});
+
+app.post('/painel/api/login', (req, res) => {
+  try {
+    const { store_id, login, senha } = req.body || {};
+    if (!store_id || !login || !senha) return res.status(400).json({ error: 'Preencha Store ID, login e senha.' });
+    const data = readAdminData();
+    const user = data.users?.[String(store_id)];
+    if (!user || user.login !== String(login).trim() || !verifyPassword(String(senha), user.password_hash)) {
+      return res.status(401).json({ error: 'Login, senha ou Store ID inválidos.' });
+    }
+    const token = createPainelSession(store_id, user.login);
+    res.setHeader('Set-Cookie', `lz_admin_session=${encodeURIComponent(token)}; HttpOnly; Path=/; Max-Age=${60*60*24*7}; SameSite=Lax; Secure`);
+    res.json({ success: true });
+  } catch(e) {
+    console.error('[Painel] login:', e.message);
+    res.status(500).json({ error: 'Erro ao fazer login.' });
+  }
+});
+
+app.post('/painel/api/logout', painelAuth, (req, res) => {
+  const token = getCookie(req, 'lz_admin_session');
+  const data = readAdminData();
+  if (token && data.sessions) delete data.sessions[token];
+  writeAdminData(data);
+  res.setHeader('Set-Cookie', 'lz_admin_session=; HttpOnly; Path=/; Max-Age=0; SameSite=Lax; Secure');
+  res.json({ success: true });
+});
+
+app.get('/painel/api/templates', painelAuth, (req, res) => {
+  res.json({ success: true, templates: getStoreTemplates(req.painel.store_id), labels: TEMPLATE_LABELS, rules: TEMPLATE_RULES });
+});
+
+app.post('/painel/api/validate-templates', painelAuth, (req, res) => {
+  const result = validateTemplatesPayload(req.body?.templates || {});
+  res.json(result);
+});
+
+app.post('/painel/api/templates', painelAuth, (req, res) => {
+  const result = validateTemplatesPayload(req.body?.templates || {});
+  if (!result.ok) return res.status(400).json(result);
+  const data = readAdminData();
+  data.templates = data.templates || {};
+  data.templates[String(req.painel.store_id)] = result.templates;
+  writeAdminData(data);
+  res.json({ success: true });
+});
+
+app.post('/painel/api/test-templates', painelAuth, (req, res) => {
+  const result = validateTemplatesPayload(req.body?.templates || {});
+  if (!result.ok) return res.status(400).json(result);
+
+  const sample = {
+    nome: 'Cliente Teste',
+    numero: '12345',
+    codigo: 'AB123456789BR',
+    link: 'https://rastreamento.correios.com.br/app/index.php?objeto=AB123456789BR',
+    transportadora: 'Correios',
+    status: 'Objeto em trânsito para a unidade de distribuição',
+    data: '31/05/2026',
+    hora: '14:30',
+    gateway: 'PIX',
+    etapa: '24h'
+  };
+
+  const preview = Object.entries(result.templates)
+    .map(([key, value]) => `### ${TEMPLATE_LABELS[key] || key}\n${renderTemplate(value, sample)}`)
+    .join('\n\n--------------------------\n\n');
+
+  res.json({ success: true, preview });
+});
+
+app.post('/painel/api/credentials', painelAuth, (req, res) => {
+  try {
+    const { login, senha } = req.body || {};
+    if (!login || !senha) return res.status(400).json({ error: 'Informe novo login e nova senha.' });
+    if (String(senha).length < 6) return res.status(400).json({ error: 'A senha precisa ter pelo menos 6 caracteres.' });
+
+    const data = readAdminData();
+    const user = data.users?.[String(req.painel.store_id)];
+    if (!user) return res.status(404).json({ error: 'Usuário não encontrado.' });
+
+    user.login = String(login).trim();
+    user.password_hash = hashPassword(String(senha));
+    user.updated_at = new Date().toISOString();
+    writeAdminData(data);
+
+    res.json({ success: true });
+  } catch(e) {
+    console.error('[Painel] credentials:', e.message);
+    res.status(500).json({ error: 'Erro ao atualizar login e senha.' });
+  }
+});
+
+
+
 const {
   NUVEM_CLIENT_ID, NUVEM_CLIENT_SECRET, APP_URL, EXTENSION_SECRET,
   PORT = 3000, MP_ACCESS_TOKEN, ZAPI_INSTANCE, ZAPI_TOKEN, ZAPI_CLIENT_TOKEN
@@ -260,7 +775,7 @@ async function verificarBoletosPendentes(storeId) {
       if (db.jaBoletoEnviado(id, etapa)) continue;
 
       const metodoLabel = gw.includes('pix') ? 'PIX' : gw === '' ? 'link de pagamento' : 'boleto';
-      const mensagem = montarMensagemBoleto(etapa, nome, o.number, metodoLabel);
+      const mensagem = getMensagemTemplate(storeId, 'boleto_pix_pendente', montarMensagemBoleto(etapa, nome, o.number, metodoLabel), { nome, numero: o.number, gateway: metodoLabel, etapa });
       if (!mensagem) continue;
 
       try {
@@ -306,7 +821,7 @@ async function verificarCarrinhosAbandonados(storeId) {
       if (minutos >= 2880 && minutos < 2940) etapa = 2880;
       if (!etapa) continue;
       if (db.jaCarrinhoEnviado(id, etapa)) continue;
-      const mensagem = montarMensagemCarrinho(etapa, nome, link);
+      const mensagem = getMensagemTemplate(storeId, 'carrinho_abandonado', montarMensagemCarrinho(etapa, nome, link), { nome, link, etapa });
       if (!mensagem) continue;
       try {
         if (!await podEnviar(telefone, storeId)) continue;
@@ -353,7 +868,7 @@ async function verificarPagamentos(storeId) {
       const telefone = formatTel(o.contact_phone);
       if (!telefone) continue;
       try {
-        await sendWhatsApp(telefone, montarMensagemPagamento(o.contact_name || 'Cliente', o.number));
+        await sendWhatsApp(telefone, getMensagemTemplate(storeId, 'pagamento_confirmado', montarMensagemPagamento(o.contact_name || 'Cliente', o.number), { nome: o.contact_name || 'Cliente', numero: o.number }), storeId);
         db.marcarConfirmacaoEnviada(String(o.id), storeId);
         db.registrarClienteAtivo(telefone, storeId);
         console.log(`[Pagamento] WhatsApp enviado para pedido #${o.number}`);
@@ -395,7 +910,7 @@ async function verificarRastreios(storeId) {
         const pedido = { cliente: o.contact_name, numero: o.number, rastreio };
         try {
           if (!await podEnviar(telefone, storeId)) continue;
-          await sendWhatsApp(telefone, montarMensagemRastreio(pedido, evento), storeId);
+          await sendWhatsApp(telefone, getMensagemTemplate(storeId, getRastreioTemplateKey(evento), montarMensagemRastreio(pedido, evento), { nome: o.contact_name || 'Cliente', numero: o.number, codigo: rastreio, link: `https://rastreamento.correios.com.br/app/index.php?objeto=${rastreio}`, transportadora: 'Correios', status: evento.descricao || evento.status || '', data: evento.data || '', hora: evento.hora || '' }), storeId);
           db.registrarMensagem(telefone);
           db.registrarClienteAtivo(telefone, storeId);
           console.log(`[Rastreio] WhatsApp enviado para #${o.number}`);
@@ -406,7 +921,7 @@ async function verificarRastreios(storeId) {
                 `Como foi a sua experiência com o pedido *#${o.number}*, ${o.contact_name || 'Cliente'}? 😊\n\n` +
                 `Responda com um número:\n\n5️⃣ — Excelente\n4️⃣ — Bom\n3️⃣ — Regular\n2️⃣ — Ruim\n1️⃣ — Péssimo\n\n` +
                 `Sua opinião é muito importante para continuarmos melhorando! 🙏`;
-              await sendWhatsApp(telefone, msgSatisfacao, storeId);
+              await sendWhatsApp(telefone, getMensagemTemplate(storeId, 'pesquisa_satisfacao', msgSatisfacao, { nome: o.contact_name || 'Cliente', numero: o.number }), storeId);
               db.marcarSatisfacaoEnviada(String(o.id), storeId);
               db.registrarMensagem(telefone);
               console.log(`[Satisfação] Pesquisa enviada para #${o.number}`);
@@ -824,7 +1339,7 @@ app.post('/checkout/criar', async (req, res) => {
     const { data } = await axios.post('https://api.mercadopago.com/checkout/preferences', {
       items: [{ title: nomes[plano], quantity: 1, unit_price: precos[plano], currency_id: 'BRL' }],
       payer: { email },
-      back_urls: { success: BACKEND_URL + '/checkout/sucesso', failure: BACKEND_URL + '/checkout/erro', pending: BACKEND_URL + '/checkout/pendente' },
+      back_urls: { success: BACKEND_URL + '/checkout/sucesso?plano=' + plano, failure: BACKEND_URL + '/checkout/erro?plano=' + plano, pending: BACKEND_URL + '/checkout/pendente?plano=' + plano },
       auto_return: 'approved',
       external_reference: JSON.stringify({ plano, email, meses }),
       notification_url: BACKEND_URL + '/webhook/mp'
@@ -1025,7 +1540,58 @@ app.get('/download/extensao', (req, res) => {
 
 app.get('/manual', (req, res) => { res.sendFile(path.join(__dirname, 'public', 'manual-loggzap.html')); });
 
-app.get('/checkout/sucesso', (req, res) => { res.send('<!DOCTYPE html><html><head><meta charset="UTF-8"></head><body style="background:#0d0d10;color:#fff;font-family:sans-serif;text-align:center;padding:3rem"><h2 style="color:#00d084">Pagamento aprovado!</h2><p>Sua chave sera enviada para o seu email em instantes.</p></body></html>'); });
+app.get('/checkout/sucesso', (req, res) => {
+  const plano = String(req.query.plano || '').toLowerCase();
+  const isPremium = plano === 'premium';
+  res.send(`<!DOCTYPE html>
+<html lang="pt-BR">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Pagamento aprovado - LoggZap</title>
+<style>
+  *,*::before,*::after{box-sizing:border-box;margin:0;padding:0}
+  body{background:#07090e;color:#eef0f8;font-family:Arial,sans-serif;min-height:100vh;display:flex;align-items:center;justify-content:center;padding:24px}
+  .card{background:#0c0f16;border:1px solid rgba(0,208,132,.22);border-radius:18px;padding:42px 34px;max-width:560px;width:100%;text-align:center;box-shadow:0 24px 90px rgba(0,0,0,.45)}
+  .logo{font-size:26px;font-weight:800;margin-bottom:18px}.logo span{color:#00d084}
+  .icon{font-size:54px;margin-bottom:16px}
+  h1{font-size:26px;line-height:1.2;margin-bottom:12px;color:#00d084}
+  p{font-size:15px;color:#a0a6ba;line-height:1.7;margin-bottom:18px}
+  .box{background:#11151e;border:1px solid rgba(255,255,255,.08);border-radius:12px;padding:18px;text-align:left;margin:22px 0}
+  .box strong{color:#eef0f8}.box ul{list-style:none;padding:0;margin:10px 0 0}.box li{font-size:14px;color:#a0a6ba;line-height:1.8}
+  .btn{display:inline-block;background:#00d084;color:#000;text-decoration:none;font-weight:800;border-radius:10px;padding:13px 22px;margin-top:8px}
+  .muted{font-size:12px;color:#555568;margin-top:16px;margin-bottom:0}
+</style>
+</head>
+<body>
+  <div class="card">
+    <div class="logo">Logg<span>Zap</span></div>
+    <div class="icon">✅</div>
+    <h1>Pagamento aprovado!</h1>
+    <p>Sua compra foi confirmada. A chave de ativação será enviada automaticamente para o e-mail informado no pagamento.</p>
+    ${isPremium ? `
+    <div class="box">
+      <strong>Próximo passo - configuração Premium</strong>
+      <ul>
+        <li>✅ Nosso suporte entrará em contato em até 24h.</li>
+        <li>✅ A equipe vai ativar a licença Premium junto com você.</li>
+        <li>✅ Também vamos configurar a automação, Z-API e testes de envio.</li>
+      </ul>
+    </div>
+    <p>Enquanto isso, mantenha acesso ao painel da Nuvemshop e ao WhatsApp que será usado na automação.</p>` : `
+    <div class="box">
+      <strong>Próximo passo</strong>
+      <ul>
+        <li>✅ Verifique seu e-mail para copiar a chave de ativação.</li>
+        <li>✅ Abra a extensão LoggZap e cole a chave na área de plano.</li>
+      </ul>
+    </div>`}
+    <a class="btn" href="https://cliente.loggzap.com.br/manual">Ver manual de instalação</a>
+    <p class="muted">Caso não receba o e-mail em alguns minutos, fale com o suporte: contato@loggzap.com.br</p>
+  </div>
+</body>
+</html>`);
+});
 app.get('/checkout/erro',    (req, res) => { res.send('<!DOCTYPE html><html><head><meta charset="UTF-8"></head><body style="background:#0d0d10;color:#fff;font-family:sans-serif;text-align:center;padding:3rem"><h2 style="color:#e05a5a">Pagamento nao aprovado</h2><p>Tente novamente ou entre em contato: contato@loggzap.com.br</p></body></html>'); });
 app.get('/checkout/pendente',(req, res) => { res.send('<!DOCTYPE html><html><head><meta charset="UTF-8"></head><body style="background:#0d0d10;color:#fff;font-family:sans-serif;text-align:center;padding:3rem"><h2 style="color:#e8a030">Pagamento em processamento</h2><p>Voce recebera a chave por email assim que o pagamento for confirmado.</p></body></html>'); });
 
