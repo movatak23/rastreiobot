@@ -2069,6 +2069,93 @@ app.post('/webhook/mp', async (req, res) => {
   }
 });
 
+
+// ── App LoggZap Mobile — login por chave de licença ──────────────────────────
+// Rota usada pelo app nativo Android/iOS.
+// Não altera o fluxo da extensão: apenas valida a chave, identifica a loja vinculada
+// e devolve os dados necessários para o app carregar Dashboard/Pedidos/Metas.
+app.post('/licenca/login-app', auth, (req, res) => {
+  try {
+    const { chave } = req.body || {};
+    const chaveLimpa = String(chave || '').trim();
+
+    if (!chaveLimpa) {
+      return res.status(400).json({
+        success: false,
+        valida: false,
+        error: 'Informe a chave de licença.'
+      });
+    }
+
+    const lic = db.getLicencaPorChave
+      ? db.getLicencaPorChave(chaveLimpa)
+      : db.getLicenca(chaveLimpa);
+
+    if (!lic) {
+      return res.status(404).json({
+        success: false,
+        valida: false,
+        error: 'Chave não encontrada.'
+      });
+    }
+
+    if (lic.status && lic.status !== 'ativa') {
+      return res.status(403).json({
+        success: false,
+        valida: false,
+        error: 'Licença inativa.'
+      });
+    }
+
+    if (lic.expira_em && new Date(lic.expira_em) < new Date()) {
+      return res.status(403).json({
+        success: false,
+        valida: false,
+        error: 'Licença expirada.'
+      });
+    }
+
+    if (!lic.store_id) {
+      return res.status(409).json({
+        success: false,
+        valida: false,
+        error: 'Esta chave ainda não está vinculada a uma loja. Ative a licença na extensão ou peça suporte para vincular.'
+      });
+    }
+
+    const storeId = String(lic.store_id);
+    const token = db.getToken ? db.getToken(storeId) : null;
+
+    if (!token) {
+      return res.status(409).json({
+        success: false,
+        valida: false,
+        error: 'A loja vinculada ainda não está autenticada na Nuvemshop.'
+      });
+    }
+
+    const instancia = db.getInstancia ? db.getInstancia(storeId) : null;
+
+    return res.json({
+      success: true,
+      valida: true,
+      plano: lic.plano,
+      store_id: storeId,
+      expira_em: lic.expira_em,
+      zapi_configurada: !!instancia,
+      premium_pronto: lic.plano === 'premium' ? !!instancia : true
+    });
+
+  } catch (e) {
+    console.error('[Licenca Login App]', e.message);
+    return res.status(500).json({
+      success: false,
+      valida: false,
+      error: e.message
+    });
+  }
+});
+
 app.post('/licenca/validar', auth, (req, res) => {
   const { chave, store_id } = req.body;
   if (!chave || !store_id) return res.status(400).json({ error: 'chave e store_id obrigatorios' });
