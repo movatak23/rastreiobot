@@ -536,29 +536,6 @@ app.get('/diag/notificados', auth, (req, res) => {
   } catch(e) { res.status(500).json({ error: e.message }); }
 });
 
-// ── TEMPORÁRIO: verificação do teto de boleto (remover depois) ───────────────
-app.get('/diag/boleto/:storeId', async (req, res) => {
-  try {
-    const orders = await nuvemGet(req.params.storeId, '/orders', { per_page: 100, payment_status: 'pending' });
-    const agora = Date.now();
-    let enviaveisAgora = 0, cortadosPorIdade = 0;
-    for (const o of orders) {
-      if (o.status === 'cancelled') continue;
-      const minutos = Math.floor((agora - new Date(o.created_at).getTime()) / 60000);
-      if (minutos > 10080) { cortadosPorIdade++; continue; }
-      const gw = (o.gateway || '').toLowerCase();
-      if (gw.includes('credit') || gw.includes('credito') || gw.includes('debit') || gw.includes('debito') || gw.includes('card')) continue;
-      if (!formatTel(o.contact_phone)) continue;
-      let etapa = null;
-      if (minutos >= 300  && minutos < 1440)  etapa = 300;
-      if (minutos >= 1440 && minutos < 4320)  etapa = 1440;
-      if (minutos >= 4320 && minutos < 10080) etapa = 4320;
-      if (etapa && !db.jaBoletoEnviado(String(o.id), etapa)) enviaveisAgora++;
-    }
-    res.json({ total: orders.length, cortadosPorIdade, enviaveisAgora });
-  } catch(e) { res.json({ erro: e.response?.data?.description || e.message }); }
-});
-
 // ── Verificar se telefone já é cliente ativo (consultado pelo Movatak) ────────
 app.get('/cliente-ativo/:telefone', async (req, res) => {
   try {
