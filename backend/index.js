@@ -724,21 +724,86 @@ app.get('/teste/email', async (req, res) => {
   } catch(e) { console.error('[Teste Email]', e.message); res.status(500).json({ error: e.message }); }
 });
 
+// ── Assinatura ────────────────────────────────────────────────────────────────
+const SUBSCRIPTION_PREMIUM_ID = '69189cab6a0f41579bb1e5bbd49bc860';
+const SUBSCRIPTION_PREMIUM_URL = 'https://www.mercadopago.com.br/subscriptions/checkout?preapproval_plan_id=' + SUBSCRIPTION_PREMIUM_ID;
+const BACKEND_URL = 'https://cliente.loggzap.com.br';
+
+app.get('/assinar', (req, res) => {
+  const plano = (req.query.plano || '').toLowerCase();
+  if (!['basic', 'premium'].includes(plano)) return res.status(400).send('Plano inválido.');
+  if (plano === 'premium') return res.redirect(SUBSCRIPTION_PREMIUM_URL);
+  res.send(`<!DOCTYPE html>
+<html lang="pt-BR">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>LoggZap — Assinar Plano Basic</title>
+<style>
+  *,*::before,*::after{box-sizing:border-box;margin:0;padding:0}
+  body{background:#07090e;color:#eef0f8;font-family:Arial,sans-serif;min-height:100vh;display:flex;align-items:center;justify-content:center;padding:24px}
+  .card{background:#0c0f16;border:1px solid rgba(255,255,255,0.07);border-radius:16px;padding:40px 36px;max-width:420px;width:100%;text-align:center}
+  .logo{font-size:26px;font-weight:800;margin-bottom:8px}
+  .logo span{color:#00d084}
+  .badge{display:inline-block;background:rgba(0,208,132,0.1);border:1px solid rgba(0,208,132,0.25);color:#00d084;font-size:12px;font-weight:700;padding:4px 14px;border-radius:100px;margin-bottom:24px;letter-spacing:.5px}
+  h2{font-size:20px;font-weight:700;margin-bottom:8px}
+  p{font-size:14px;color:#8b93a8;margin-bottom:28px;line-height:1.65}
+  label{display:block;font-size:11px;font-weight:700;letter-spacing:1px;color:#8b93a8;text-align:left;margin-bottom:6px;text-transform:uppercase}
+  input{width:100%;background:#11151e;border:1px solid rgba(255,255,255,0.08);border-radius:8px;padding:12px 16px;color:#eef0f8;font-size:15px;outline:none;margin-bottom:16px;font-family:inherit}
+  input:focus{border-color:#00d084}
+  button{width:100%;background:#00d084;color:#000;border:none;border-radius:10px;padding:14px;font-size:15px;font-weight:700;cursor:pointer;font-family:inherit}
+  button:hover{opacity:.88}
+  button:disabled{opacity:.5;cursor:not-allowed}
+  .erro{background:rgba(220,38,38,.1);border:1px solid rgba(220,38,38,.3);color:#f87171;border-radius:8px;padding:12px;font-size:13px;display:none;margin-bottom:12px}
+</style>
+</head>
+<body>
+<div class="card">
+  <div class="logo">Logg<span>Zap</span></div>
+  <div class="badge">PLANO BASIC</div>
+  <h2>Informe seu email</h2>
+  <p>Sua chave de ativação será enviada para esse email após o pagamento.</p>
+  <div class="erro" id="erro"></div>
+  <label for="email">Email</label>
+  <input type="email" id="email" placeholder="seu@email.com" autocomplete="email">
+  <button id="btn" onclick="pagar()">Ir para o pagamento →</button>
+</div>
+<script>
+async function pagar() {
+  const email = document.getElementById('email').value.trim();
+  const erro = document.getElementById('erro');
+  const btn = document.getElementById('btn');
+  erro.style.display = 'none';
+  if (!email || !email.includes('@')) { erro.textContent = 'Informe um email válido.'; erro.style.display = 'block'; return; }
+  btn.textContent = 'Aguarde...'; btn.disabled = true;
+  try {
+    const r = await fetch('/checkout/criar', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ plano: 'basic', email }) });
+    const d = await r.json();
+    if (d.url) { window.location.href = d.url; }
+    else { erro.textContent = d.error || 'Erro ao gerar checkout.'; erro.style.display = 'block'; btn.textContent = 'Ir para o pagamento →'; btn.disabled = false; }
+  } catch { erro.textContent = 'Erro de conexão. Tente novamente.'; erro.style.display = 'block'; btn.textContent = 'Ir para o pagamento →'; btn.disabled = false; }
+}
+document.getElementById('email').addEventListener('keydown', e => { if (e.key === 'Enter') pagar(); });
+</script>
+</body>
+</html>`);
+});
+
 app.post('/checkout/criar', async (req, res) => {
   const { plano, email } = req.body;
   if (!plano || !email) return res.status(400).json({ error: 'plano e email obrigatorios' });
   if (!MP_ACCESS_TOKEN) return res.status(500).json({ error: 'MP_ACCESS_TOKEN nao configurado' });
-  const precos = { basic: 29, premium: 397 };
+  const precos = { basic: 97, premium: 297 };
   const nomes  = { basic: 'LoggZap Basic', premium: 'LoggZap Premium' };
   if (!precos[plano]) return res.status(400).json({ error: 'plano invalido' });
   try {
     const { data } = await axios.post('https://api.mercadopago.com/checkout/preferences', {
       items: [{ title: nomes[plano], quantity: 1, unit_price: precos[plano], currency_id: 'BRL' }],
       payer: { email },
-      back_urls: { success: APP_URL + '/checkout/sucesso', failure: APP_URL + '/checkout/erro', pending: APP_URL + '/checkout/pendente' },
+      back_urls: { success: BACKEND_URL + '/checkout/sucesso', failure: BACKEND_URL + '/checkout/erro', pending: BACKEND_URL + '/checkout/pendente' },
       auto_return: 'approved',
       external_reference: JSON.stringify({ plano, email, meses: 1 }),
-      notification_url: APP_URL + '/webhook/mp'
+      notification_url: BACKEND_URL + '/webhook/mp'
     }, { headers: { 'Authorization': 'Bearer ' + MP_ACCESS_TOKEN, 'Content-Type': 'application/json' } });
     res.json({ success: true, url: data.init_point, id: data.id });
   } catch(e) { console.error('[Checkout MP]', e.response?.data || e.message); res.status(500).json({ error: e.message }); }
@@ -747,21 +812,44 @@ app.post('/checkout/criar', async (req, res) => {
 app.post('/webhook/mp', async (req, res) => {
   res.sendStatus(200);
   const { type, data } = req.body;
-  if (type !== 'payment') return;
-  try {
-    const { data: pagamento } = await axios.get('https://api.mercadopago.com/v1/payments/' + data.id, { headers: { 'Authorization': 'Bearer ' + MP_ACCESS_TOKEN } });
-    if (pagamento.status !== 'approved') return;
-    const ref = JSON.parse(pagamento.external_reference || '{}');
-    const { plano, email, meses = 1 } = ref;
-    if (!plano || !email) return;
-    const jaProcessado = db.getLicencasPorPayment(String(data.id));
-    if (jaProcessado) return;
-    const chave = gerarChave(plano);
-    db.criarLicenca(chave, plano, null, meses);
-    db.salvarPaymentId(chave, String(data.id));
-    await enviarChavePorEmail(email, chave, plano, new Date(Date.now() + meses * 30 * 24 * 60 * 60 * 1000).toISOString());
-    console.log('[MP] Licenca ' + chave + ' gerada para ' + email + ' — plano ' + plano);
-  } catch(e) { console.error('[Webhook MP]', e.message); }
+
+  // Pagamento único — Basic
+  if (type === 'payment') {
+    try {
+      const { data: pagamento } = await axios.get('https://api.mercadopago.com/v1/payments/' + data.id, { headers: { 'Authorization': 'Bearer ' + MP_ACCESS_TOKEN } });
+      if (pagamento.status !== 'approved') return;
+      const ref = JSON.parse(pagamento.external_reference || '{}');
+      const { plano, email, meses = 12 } = ref;
+      if (!plano || !email) return;
+      const jaProcessado = db.getLicencasPorPayment(String(data.id));
+      if (jaProcessado) return;
+      const chave = gerarChave(plano);
+      db.criarLicenca(chave, plano, null, meses);
+      db.salvarPaymentId(chave, String(data.id));
+      await enviarChavePorEmail(email, chave, plano, new Date(Date.now() + meses * 30 * 24 * 60 * 60 * 1000).toISOString());
+      console.log('[MP] Licenca ' + chave + ' gerada para ' + email + ' — plano ' + plano);
+    } catch(e) { console.error('[Webhook MP]', e.message); }
+  }
+
+  // Assinatura recorrente — Premium
+  if (type === 'subscription_authorized_payment') {
+    try {
+      const { data: apData } = await axios.get('https://api.mercadopago.com/authorized_payments/' + data.id, { headers: { 'Authorization': 'Bearer ' + MP_ACCESS_TOKEN } });
+      const preapprovalId = apData.preapproval_id;
+      if (!preapprovalId) return;
+      const { data: subData } = await axios.get('https://api.mercadopago.com/preapproval/' + preapprovalId, { headers: { 'Authorization': 'Bearer ' + MP_ACCESS_TOKEN } });
+      if (subData.preapproval_plan_id !== SUBSCRIPTION_PREMIUM_ID) return;
+      const email = subData.payer_email;
+      if (!email) return;
+      const jaProcessado = db.getLicencasPorPayment(String(data.id));
+      if (jaProcessado) return;
+      const chave = gerarChave('premium');
+      db.criarLicenca(chave, 'premium', null, 1);
+      db.salvarPaymentId(chave, String(data.id));
+      await enviarChavePorEmail(email, chave, 'premium', new Date(Date.now() + 30 * 24 * 60 * 60 * 1000).toISOString());
+      console.log('[MP Sub] Licenca ' + chave + ' gerada para ' + email + ' — Premium');
+    } catch(e) { console.error('[Webhook Subscription]', e.message); }
+  }
 });
 
 app.post('/licenca/validar', auth, (req, res) => {
