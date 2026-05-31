@@ -692,7 +692,7 @@ async function enviarChavePorEmail(email, chave, plano, expiraEm) {
       '<h2 style="color:#4f8ef7">LoggZap Dashboard</h2><p>Seu pagamento foi confirmado! Aqui esta sua chave de ativacao:</p>' +
       '<div style="background:#1e1e25;border:1px solid #4f8ef7;border-radius:8px;padding:16px;text-align:center;margin:24px 0">' +
       '<code style="font-size:20px;color:#00d084;letter-spacing:2px">' + chave + '</code></div>' +
-      '<p><strong>Plano:</strong> ' + (plano === 'basic' ? 'Basic - R$29/mes' : 'Premium - R$397/mes') + '</p>' +
+      '<p><strong>Plano:</strong> ' + (plano === 'basic' ? 'Basic - R$97/ano' : 'Premium - R$297/mês') + '</p>' +
       '<p><strong>Valido ate:</strong> ' + expira + '</p>' +
       '<p style="margin-top:24px">Para ativar: abra a extensao → Configuracoes → Cole a chave → Ativar chave.</p>' +
       '<hr style="border-color:#2a2a35;margin:24px 0">' +
@@ -731,52 +731,76 @@ const BACKEND_URL = 'https://cliente.loggzap.com.br';
 app.get('/assinar', (req, res) => {
   const plano = (req.query.plano || '').toLowerCase();
   if (!['basic', 'premium'].includes(plano)) return res.status(400).send('Plano inválido.');
-  if (plano === 'premium') return res.redirect(SUBSCRIPTION_PREMIUM_URL);
+
+  const dadosPlano = {
+    basic: {
+      nome: 'Basic',
+      preco: 'R$ 97/ano',
+      titulo: 'Assinar Plano Basic',
+      descricao: 'Dashboard completo para acompanhar sua loja em tempo real.',
+      badge: 'PLANO BASIC'
+    },
+    premium: {
+      nome: 'Premium',
+      preco: 'R$ 297/mês',
+      titulo: 'Assinar Plano Premium',
+      descricao: 'Dashboard completo com automações via WhatsApp.',
+      badge: 'PLANO PREMIUM'
+    }
+  };
+
+  const p = dadosPlano[plano];
+
   res.send(`<!DOCTYPE html>
 <html lang="pt-BR">
 <head>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
-<title>LoggZap — Assinar Plano Basic</title>
+<title>LoggZap — ${p.titulo}</title>
 <style>
   *,*::before,*::after{box-sizing:border-box;margin:0;padding:0}
   body{background:#07090e;color:#eef0f8;font-family:Arial,sans-serif;min-height:100vh;display:flex;align-items:center;justify-content:center;padding:24px}
-  .card{background:#0c0f16;border:1px solid rgba(255,255,255,0.07);border-radius:16px;padding:40px 36px;max-width:420px;width:100%;text-align:center}
+  .card{background:#0c0f16;border:1px solid rgba(255,255,255,0.07);border-radius:16px;padding:40px 36px;max-width:440px;width:100%;text-align:center;box-shadow:0 24px 80px rgba(0,0,0,.35)}
   .logo{font-size:26px;font-weight:800;margin-bottom:8px}
   .logo span{color:#00d084}
-  .badge{display:inline-block;background:rgba(0,208,132,0.1);border:1px solid rgba(0,208,132,0.25);color:#00d084;font-size:12px;font-weight:700;padding:4px 14px;border-radius:100px;margin-bottom:24px;letter-spacing:.5px}
-  h2{font-size:20px;font-weight:700;margin-bottom:8px}
-  p{font-size:14px;color:#8b93a8;margin-bottom:28px;line-height:1.65}
+  .badge{display:inline-block;background:rgba(0,208,132,0.1);border:1px solid rgba(0,208,132,0.25);color:#00d084;font-size:12px;font-weight:700;padding:4px 14px;border-radius:100px;margin-bottom:22px;letter-spacing:.5px}
+  h2{font-size:22px;font-weight:800;margin-bottom:8px}
+  .preco{font-size:30px;font-weight:800;color:#00d084;margin-bottom:8px}
+  p{font-size:14px;color:#8b93a8;margin-bottom:24px;line-height:1.65}
   label{display:block;font-size:11px;font-weight:700;letter-spacing:1px;color:#8b93a8;text-align:left;margin-bottom:6px;text-transform:uppercase}
   input{width:100%;background:#11151e;border:1px solid rgba(255,255,255,0.08);border-radius:8px;padding:12px 16px;color:#eef0f8;font-size:15px;outline:none;margin-bottom:16px;font-family:inherit}
   input:focus{border-color:#00d084}
-  button{width:100%;background:#00d084;color:#000;border:none;border-radius:10px;padding:14px;font-size:15px;font-weight:700;cursor:pointer;font-family:inherit}
+  button{width:100%;background:#00d084;color:#000;border:none;border-radius:10px;padding:14px;font-size:15px;font-weight:800;cursor:pointer;font-family:inherit}
   button:hover{opacity:.88}
   button:disabled{opacity:.5;cursor:not-allowed}
-  .erro{background:rgba(220,38,38,.1);border:1px solid rgba(220,38,38,.3);color:#f87171;border-radius:8px;padding:12px;font-size:13px;display:none;margin-bottom:12px}
+  .erro{background:rgba(220,38,38,.1);border:1px solid rgba(220,38,38,.3);color:#f87171;border-radius:8px;padding:12px;font-size:13px;display:none;margin-bottom:12px;text-align:left}
+  .nota{font-size:12px;color:#555568;margin-top:14px;margin-bottom:0}
 </style>
 </head>
 <body>
 <div class="card">
   <div class="logo">Logg<span>Zap</span></div>
-  <div class="badge">PLANO BASIC</div>
-  <h2>Informe seu email</h2>
-  <p>Sua chave de ativação será enviada para esse email após o pagamento.</p>
+  <div class="badge">${p.badge}</div>
+  <h2>${p.titulo}</h2>
+  <div class="preco">${p.preco}</div>
+  <p>${p.descricao}<br>Sua chave de ativação será enviada automaticamente para o email informado após a confirmação do pagamento.</p>
   <div class="erro" id="erro"></div>
-  <label for="email">Email</label>
+  <label for="email">Email para receber a chave</label>
   <input type="email" id="email" placeholder="seu@email.com" autocomplete="email">
   <button id="btn" onclick="pagar()">Ir para o pagamento →</button>
+  <p class="nota">Pagamento processado pelo Mercado Pago.</p>
 </div>
 <script>
+const PLANO = '${plano}';
 async function pagar() {
   const email = document.getElementById('email').value.trim();
   const erro = document.getElementById('erro');
   const btn = document.getElementById('btn');
   erro.style.display = 'none';
-  if (!email || !email.includes('@')) { erro.textContent = 'Informe um email válido.'; erro.style.display = 'block'; return; }
-  btn.textContent = 'Aguarde...'; btn.disabled = true;
+  if (!email || !email.includes('@')) { erro.textContent = 'Informe um email válido para receber sua chave.'; erro.style.display = 'block'; return; }
+  btn.textContent = 'Gerando pagamento...'; btn.disabled = true;
   try {
-    const r = await fetch('/checkout/criar', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ plano: 'basic', email }) });
+    const r = await fetch('/checkout/criar', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ plano: PLANO, email }) });
     const d = await r.json();
     if (d.url) { window.location.href = d.url; }
     else { erro.textContent = d.error || 'Erro ao gerar checkout.'; erro.style.display = 'block'; btn.textContent = 'Ir para o pagamento →'; btn.disabled = false; }
@@ -794,6 +818,7 @@ app.post('/checkout/criar', async (req, res) => {
   if (!MP_ACCESS_TOKEN) return res.status(500).json({ error: 'MP_ACCESS_TOKEN nao configurado' });
   const precos = { basic: 97, premium: 297 };
   const nomes  = { basic: 'LoggZap Basic', premium: 'LoggZap Premium' };
+  const meses  = plano === 'basic' ? 12 : 1;
   if (!precos[plano]) return res.status(400).json({ error: 'plano invalido' });
   try {
     const { data } = await axios.post('https://api.mercadopago.com/checkout/preferences', {
@@ -801,7 +826,7 @@ app.post('/checkout/criar', async (req, res) => {
       payer: { email },
       back_urls: { success: BACKEND_URL + '/checkout/sucesso', failure: BACKEND_URL + '/checkout/erro', pending: BACKEND_URL + '/checkout/pendente' },
       auto_return: 'approved',
-      external_reference: JSON.stringify({ plano, email, meses: 1 }),
+      external_reference: JSON.stringify({ plano, email, meses }),
       notification_url: BACKEND_URL + '/webhook/mp'
     }, { headers: { 'Authorization': 'Bearer ' + MP_ACCESS_TOKEN, 'Content-Type': 'application/json' } });
     res.json({ success: true, url: data.init_point, id: data.id });
