@@ -152,8 +152,10 @@ function show(id,msg){const el=document.getElementById(id);el.innerHTML=msg;el.s
 function hide(id){document.getElementById(id).style.display='none';}
 async function api(path, opts={}){
   const r=await fetch(path,{...opts,headers:{'Content-Type':'application/json','x-secret':secret,...(opts.headers||{})}});
-  const d=await r.json().catch(()=>({}));
-  if(!r.ok||d.error) throw new Error(d.error||'Erro na solicitação.');
+  const raw = await r.text();
+  let d = {};
+  try { d = raw ? JSON.parse(raw) : {}; } catch(e) { d = { error: raw || ('HTTP ' + r.status) }; }
+  if(!r.ok||d.error) throw new Error(d.error||('Erro na solicitação. HTTP '+r.status));
   return d;
 }
 async function entrar(){secret=document.getElementById('secret').value.trim(); if(!secret)return show('err','Informe a chave.'); await carregar(true);}
