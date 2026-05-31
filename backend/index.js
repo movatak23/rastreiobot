@@ -819,7 +819,7 @@ app.post('/cadastro', async (req, res) => {
               <div style="background:#11151e;border-radius:10px;padding:20px;margin-bottom:24px">
                 <div style="font-size:12px;font-weight:700;letter-spacing:2px;color:#00d084;text-transform:uppercase;margin-bottom:12px">Passo 2 — Leia o manual</div>
                 <p style="color:#8b93a8;font-size:14px;margin:0 0 16px">O manual completo de instalação está disponível online:</p>
-                <a href="${process.env.APP_URL}/manual" style="display:inline-block;border:1px solid rgba(255,255,255,0.15);color:#eef0f8;padding:12px 28px;border-radius:8px;text-decoration:none;font-weight:600;font-size:14px">📖 Ver manual de instalação</a>
+                <a href="https://cliente.loggzap.com.br/manual" style="display:inline-block;border:1px solid rgba(255,255,255,0.15);color:#eef0f8;padding:12px 28px;border-radius:8px;text-decoration:none;font-weight:600;font-size:14px">📖 Ver manual de instalação</a>
               </div>
 
               <div style="background:#11151e;border-radius:10px;padding:20px">
