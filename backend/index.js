@@ -236,6 +236,82 @@ app.get('/admin-loggzap/api/logs', auth, (req, res) => {
 });
 
 
+// ── Admin LoggZap Nota 9 — resumo operacional ────────────────────────────────
+app.get('/admin-loggzap/api/resumo', auth, async (req, res) => {
+  try {
+    let clientes = [];
+
+    if (db.listarClientesOperacionais) {
+      clientes = db.listarClientesOperacionais();
+    } else {
+      // Fallback seguro caso o db.js novo ainda não tenha sido publicado.
+      const stores = db.getAllStores ? db.getAllStores() : [];
+      const instancias = db.listarInstancias ? db.listarInstancias() : [];
+
+      clientes = stores.map(s => {
+        const storeId = String(s.store_id);
+        const inst = instancias.find(i => String(i.store_id) === storeId) || {};
+        const lic = db.getLicencaPorStore ? db.getLicencaPorStore(storeId) : null;
+
+        return {
+          store_id: storeId,
+          nome_cliente: inst.nome_cliente || null,
+          zapi_instance: inst.zapi_instance || null,
+          plano: lic?.plano || null,
+          chave: lic?.chave || null,
+          expira_em: lic?.expira_em || null,
+          templates_configurados: 0,
+          total_logs: 0,
+          logs_hoje: 0,
+          ultimo_log_em: null,
+          ultimo_tipo: null,
+          ultimo_erro: null,
+          premium_pronto: false,
+          zapi_configurada: !!inst.zapi_instance,
+          painel_configurado: false,
+          licenca_ativa: !!lic,
+          templates_ok: false
+        };
+      });
+    }
+
+    const logs = readLoggzapLogs ? readLoggzapLogs() : [];
+    res.json({ success: true, clientes, logs });
+  } catch(e) {
+    console.error('[Admin LoggZap resumo]', e);
+    res.status(500).json({ error: e.message || 'Erro interno ao carregar resumo.' });
+  }
+});
+
+
+
+
+
+// ── Admin LoggZap Nota 9 — rotas auxiliares seguras ──────────────────────────
+app.get('/admin-loggzap/api/zapi-status/:storeId', auth, async (req, res) => {
+  try {
+    if (typeof getZapiStatusForStore === 'function') {
+      const status = await getZapiStatusForStore(req.params.storeId);
+      return res.json({ success: true, status });
+    }
+    return res.json({ success: false, status: { conectado: false, erro: 'Função de status Z-API não disponível nesta versão.' } });
+  } catch(e) {
+    res.status(500).json({ error: e.message });
+  }
+});
+
+app.post('/admin-loggzap/api/desvincular-dispositivo', auth, (req, res) => {
+  const { chave } = req.body || {};
+  if (!chave) return res.status(400).json({ error: 'Informe a chave.' });
+  try {
+    if (!db.desvincularDispositivo) return res.status(500).json({ error: 'Função de desvincular dispositivo não disponível no db.js.' });
+    db.desvincularDispositivo(String(chave).trim());
+    res.json({ success: true });
+  } catch(e) {
+    res.status(500).json({ error: e.message });
+  }
+});
+
 
 // ── Painel administrativo Premium / Templates por loja ───────────────────────
 const fs = require('fs');
