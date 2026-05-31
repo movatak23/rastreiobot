@@ -1293,6 +1293,38 @@ app.post('/webhook/zapi', async (req, res) => {
   } catch(e) { console.error('[ZAPI] Erro no webhook:', e.message); }
 });
 
+
+// ── Webhooks LGPD / Nuvemshop ────────────────────────────────────────────────
+app.post('/webhooks/lgpd/store-redact', async (req, res) => {
+  try {
+    console.log('[LGPD] store redact recebido:', req.body);
+    return res.status(200).json({ success: true });
+  } catch (e) {
+    console.error('[LGPD] erro store redact:', e.message);
+    return res.status(500).json({ success: false });
+  }
+});
+
+app.post('/webhooks/lgpd/customers-redact', async (req, res) => {
+  try {
+    console.log('[LGPD] customers redact recebido:', req.body);
+    return res.status(200).json({ success: true });
+  } catch (e) {
+    console.error('[LGPD] erro customers redact:', e.message);
+    return res.status(500).json({ success: false });
+  }
+});
+
+app.post('/webhooks/lgpd/customers-data-request', async (req, res) => {
+  try {
+    console.log('[LGPD] customers data request recebido:', req.body);
+    return res.status(200).json({ success: true });
+  } catch (e) {
+    console.error('[LGPD] erro customers data request:', e.message);
+    return res.status(500).json({ success: false });
+  }
+});
+
 // ── Páginas públicas de privacidade ───────────────────────────────────────────
 app.get('/privacidade', (req, res) => {
   res.sendFile(path.join(__dirname, 'public', 'privacidade.html'));
