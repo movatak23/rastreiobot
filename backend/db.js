@@ -132,6 +132,43 @@ db.exec(`
     store_id   TEXT,
     updated_at TEXT DEFAULT (datetime('now'))
   );
+
+  CREATE TABLE IF NOT EXISTS painel_usuarios (
+    store_id      TEXT PRIMARY KEY,
+    login         TEXT NOT NULL,
+    password_hash TEXT NOT NULL,
+    created_at    TEXT DEFAULT (datetime('now')),
+    updated_at    TEXT
+  );
+
+  CREATE TABLE IF NOT EXISTS painel_sessoes (
+    token      TEXT PRIMARY KEY,
+    store_id   TEXT NOT NULL,
+    login      TEXT NOT NULL,
+    created_at INTEGER NOT NULL,
+    expires_at INTEGER NOT NULL
+  );
+
+  CREATE TABLE IF NOT EXISTS painel_templates (
+    store_id   TEXT NOT NULL,
+    chave      TEXT NOT NULL,
+    conteudo   TEXT NOT NULL,
+    updated_at TEXT DEFAULT (datetime('now')),
+    PRIMARY KEY (store_id, chave)
+  );
+
+  CREATE TABLE IF NOT EXISTS automacao_logs (
+    id         TEXT PRIMARY KEY,
+    store_id   TEXT,
+    tipo       TEXT,
+    pedido     TEXT,
+    telefone   TEXT,
+    mensagem   TEXT,
+    erro       TEXT,
+    extra_json TEXT,
+    created_at TEXT DEFAULT (datetime('now'))
+  );
+
 `);
 
 function saveToken(storeId, accessToken) {
@@ -483,6 +520,39 @@ function migrar() {
       status     TEXT DEFAULT 'pending',
       created_at TEXT DEFAULT (datetime('now'))
     );
+
+    CREATE TABLE IF NOT EXISTS painel_usuarios (
+      store_id      TEXT PRIMARY KEY,
+      login         TEXT NOT NULL,
+      password_hash TEXT NOT NULL,
+      created_at    TEXT DEFAULT (datetime('now')),
+      updated_at    TEXT
+    );
+    CREATE TABLE IF NOT EXISTS painel_sessoes (
+      token      TEXT PRIMARY KEY,
+      store_id   TEXT NOT NULL,
+      login      TEXT NOT NULL,
+      created_at INTEGER NOT NULL,
+      expires_at INTEGER NOT NULL
+    );
+    CREATE TABLE IF NOT EXISTS painel_templates (
+      store_id   TEXT NOT NULL,
+      chave      TEXT NOT NULL,
+      conteudo   TEXT NOT NULL,
+      updated_at TEXT DEFAULT (datetime('now')),
+      PRIMARY KEY (store_id, chave)
+    );
+    CREATE TABLE IF NOT EXISTS automacao_logs (
+      id         TEXT PRIMARY KEY,
+      store_id   TEXT,
+      tipo       TEXT,
+      pedido     TEXT,
+      telefone   TEXT,
+      mensagem   TEXT,
+      erro       TEXT,
+      extra_json TEXT,
+      created_at TEXT DEFAULT (datetime('now'))
+    );
   `);
   // Adiciona coluna device_id se não existir
   try { db.exec("ALTER TABLE licencas ADD COLUMN device_id TEXT"); } catch(e) {}
@@ -587,7 +657,109 @@ function deleteAuthSession(code) {
   db.prepare('DELETE FROM auth_sessions WHERE code = ?').run(code);
 }
 
+
+// ── Premium: painel administrativo e logs persistentes ───────────────────────
+function criarPainelUsuario(storeId, login, passwordHash) {
+  db.prepare(`
+    INSERT INTO painel_usuarios (store_id, login, password_hash)
+    VALUES (?, ?, ?)
+  `).run(String(storeId), String(login), String(passwordHash));
+}
+
+function getPainelUsuario(storeId) {
+  return db.prepare('SELECT * FROM painel_usuarios WHERE store_id = ?').get(String(storeId));
+}
+
+function atualizarPainelCredenciais(storeId, login, passwordHash) {
+  db.prepare(`
+    UPDATE painel_usuarios
+    SET login = ?, password_hash = ?, updated_at = datetime('now')
+    WHERE store_id = ?
+  `).run(String(login), String(passwordHash), String(storeId));
+}
+
+function criarPainelSessao(token, storeId, login, expiresAt) {
+  db.prepare(`
+    INSERT OR REPLACE INTO painel_sessoes (token, store_id, login, created_at, expires_at)
+    VALUES (?, ?, ?, ?, ?)
+  `).run(String(token), String(storeId), String(login), Date.now(), Number(expiresAt));
+}
+
+function getPainelSessao(token) {
+  if (!token) return null;
+  const row = db.prepare('SELECT * FROM painel_sessoes WHERE token = ?').get(String(token));
+  if (!row) return null;
+  if (Date.now() > Number(row.expires_at)) {
+    db.prepare('DELETE FROM painel_sessoes WHERE token = ?').run(String(token));
+    return null;
+  }
+  return row;
+}
+
+function deletarPainelSessao(token) {
+  if (!token) return;
+  db.prepare('DELETE FROM painel_sessoes WHERE token = ?').run(String(token));
+}
+
+function getPainelTemplates(storeId) {
+  const rows = db.prepare('SELECT chave, conteudo FROM painel_templates WHERE store_id = ?').all(String(storeId));
+  const out = {};
+  for (const r of rows) out[r.chave] = r.conteudo;
+  return out;
+}
+
+function salvarPainelTemplates(storeId, templates) {
+  const tx = db.transaction((entries) => {
+    for (const [chave, conteudo] of entries) {
+      db.prepare(`
+        INSERT INTO painel_templates (store_id, chave, conteudo, updated_at)
+        VALUES (?, ?, ?, datetime('now'))
+        ON CONFLICT(store_id, chave) DO UPDATE SET
+          conteudo = excluded.conteudo,
+          updated_at = excluded.updated_at
+      `).run(String(storeId), String(chave), String(conteudo));
+    }
+  });
+  tx(Object.entries(templates || {}));
+}
+
+function registrarLogAutomacao(evento) {
+  const e = evento || {};
+  db.prepare(`
+    INSERT INTO automacao_logs (id, store_id, tipo, pedido, telefone, mensagem, erro, extra_json)
+    VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+  `).run(
+    e.id || require('crypto').randomBytes(8).toString('hex'),
+    e.store_id ? String(e.store_id) : null,
+    e.tipo ? String(e.tipo) : null,
+    e.pedido ? String(e.pedido) : null,
+    e.telefone ? String(e.telefone) : null,
+    e.mensagem ? String(e.mensagem) : null,
+    e.erro ? String(e.erro) : null,
+    JSON.stringify(e.extra || {})
+  );
+}
+
+function listarLogsAutomacao(limit = 1200) {
+  const lim = Math.max(1, Math.min(Number(limit) || 1200, 5000));
+  return db.prepare(`
+    SELECT id, store_id, tipo, pedido, telefone, mensagem, erro, created_at
+    FROM automacao_logs
+    ORDER BY datetime(created_at) DESC
+    LIMIT ?
+  `).all(lim).reverse();
+}
+
+function limparSessoesPainelExpiradas() {
+  db.prepare('DELETE FROM painel_sessoes WHERE expires_at < ?').run(Date.now());
+}
+
+
 module.exports = {
+  criarPainelUsuario, getPainelUsuario, atualizarPainelCredenciais,
+  criarPainelSessao, getPainelSessao, deletarPainelSessao,
+  getPainelTemplates, salvarPainelTemplates,
+  registrarLogAutomacao, listarLogsAutomacao, limparSessoesPainelExpiradas,
   saveToken, getToken, getAllStores,
   marcarNotificado, jaNotificado,
   statusRastreio, atualizarStatusRastreio,

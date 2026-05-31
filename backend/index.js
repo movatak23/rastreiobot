@@ -22,41 +22,27 @@ app.use(express.static(path.join(__dirname, 'public')));
 const LOGGZAP_LOG_DIR = path.join(__dirname, 'data');
 const LOGGZAP_LOG_FILE = path.join(LOGGZAP_LOG_DIR, 'automacoes-loggzap.json');
 
+
 function ensureLoggzapLogFile() {
-  try {
-    if (!fs.existsSync(LOGGZAP_LOG_DIR)) fs.mkdirSync(LOGGZAP_LOG_DIR, { recursive: true });
-    if (!fs.existsSync(LOGGZAP_LOG_FILE)) fs.writeFileSync(LOGGZAP_LOG_FILE, JSON.stringify({ logs: [] }, null, 2));
-  } catch(e) {}
+  // Mantido por compatibilidade. A persistência Premium agora usa SQLite via db.js.
 }
 
 function readLoggzapLogs() {
   try {
-    ensureLoggzapLogFile();
-    const raw = fs.readFileSync(LOGGZAP_LOG_FILE, 'utf8');
-    const data = JSON.parse(raw || '{}');
-    return Array.isArray(data.logs) ? data.logs : [];
+    return db.listarLogsAutomacao ? db.listarLogsAutomacao(1200) : [];
   } catch(e) {
+    console.error('[LoggZap Logs] Falha ao ler logs do banco:', e.message);
     return [];
   }
 }
 
 function writeLoggzapLogs(logs) {
-  try {
-    ensureLoggzapLogFile();
-    const limited = logs.slice(-1200);
-    fs.writeFileSync(LOGGZAP_LOG_FILE, JSON.stringify({ logs: limited }, null, 2));
-  } catch(e) {}
+  // Mantido por compatibilidade. Novos logs são gravados diretamente no banco.
 }
 
 function safeLogAutomacao(evento) {
   try {
-    const logs = readLoggzapLogs();
-    logs.push({
-      id: crypto.randomBytes(8).toString('hex'),
-      created_at: new Date().toISOString(),
-      ...evento
-    });
-    writeLoggzapLogs(logs);
+    if (db.registrarLogAutomacao) db.registrarLogAutomacao(evento || {});
   } catch(e) {
     console.error('[LoggZap Logs] Falha ao registrar log:', e.message);
   }
@@ -203,26 +189,18 @@ const TEMPLATE_LABELS = {
   pesquisa_satisfacao: 'Pesquisa de satisfação'
 };
 
+
 function ensureAdminData() {
-  if (!fs.existsSync(ADMIN_DATA_DIR)) fs.mkdirSync(ADMIN_DATA_DIR, { recursive: true });
-  if (!fs.existsSync(ADMIN_DATA_FILE)) {
-    fs.writeFileSync(ADMIN_DATA_FILE, JSON.stringify({ users: {}, sessions: {}, templates: {} }, null, 2));
-  }
+  // Mantido por compatibilidade. O painel Premium agora usa SQLite via db.js.
 }
 
 function readAdminData() {
-  ensureAdminData();
-  try {
-    const raw = fs.readFileSync(ADMIN_DATA_FILE, 'utf8');
-    return JSON.parse(raw || '{}');
-  } catch(e) {
-    return { users: {}, sessions: {}, templates: {} };
-  }
+  // Mantido para compatibilidade com código legado. Novas operações usam funções específicas do db.js.
+  return { users: {}, sessions: {}, templates: {} };
 }
 
 function writeAdminData(data) {
-  ensureAdminData();
-  fs.writeFileSync(ADMIN_DATA_FILE, JSON.stringify(data, null, 2));
+  // Mantido para compatibilidade. Não grava mais JSON.
 }
 
 function hashPassword(password, salt = crypto.randomBytes(16).toString('hex')) {
@@ -251,26 +229,20 @@ function getCookie(req, name) {
 function painelAuth(req, res, next) {
   const token = getCookie(req, 'lz_admin_session') || (req.headers.authorization || '').replace(/^Bearer\s+/i, '');
   if (!token) return res.status(401).json({ error: 'Sessão expirada. Faça login novamente.' });
-  const data = readAdminData();
-  const session = data.sessions?.[token];
-  if (!session || !session.store_id || Date.now() > session.expires_at) {
+
+  const session = db.getPainelSessao ? db.getPainelSessao(token) : null;
+  if (!session || !session.store_id) {
     return res.status(401).json({ error: 'Sessão expirada. Faça login novamente.' });
   }
+
   req.painel = session;
   next();
 }
 
 function createPainelSession(storeId, login) {
-  const data = readAdminData();
   const token = crypto.randomBytes(32).toString('hex');
-  data.sessions = data.sessions || {};
-  data.sessions[token] = {
-    store_id: String(storeId),
-    login,
-    created_at: Date.now(),
-    expires_at: Date.now() + 1000 * 60 * 60 * 24 * 7
-  };
-  writeAdminData(data);
+  const expiresAt = Date.now() + 1000 * 60 * 60 * 24 * 7;
+  if (db.criarPainelSessao) db.criarPainelSessao(token, String(storeId), String(login), expiresAt);
   return token;
 }
 
@@ -282,8 +254,8 @@ function renderTemplate(text, vars = {}) {
 }
 
 function getStoreTemplates(storeId) {
-  const data = readAdminData();
-  return { ...DEFAULT_AUTOMATION_TEMPLATES, ...(data.templates?.[String(storeId)] || {}) };
+  const custom = db.getPainelTemplates ? db.getPainelTemplates(String(storeId)) : {};
+  return { ...DEFAULT_AUTOMATION_TEMPLATES, ...(custom || {}) };
 }
 
 function getMensagemTemplate(storeId, key, fallback, vars = {}) {
@@ -554,19 +526,16 @@ app.post('/painel/api/register', (req, res) => {
       return res.status(403).json({ error: 'Chave Premium inválida para esta loja.' });
     }
 
-    const data = readAdminData();
-    data.users = data.users || {};
-    if (data.users[String(store_id)]) return res.status(409).json({ error: 'Esta loja já possui acesso. Use a tela de login ou altere a senha dentro do painel.' });
+    if (db.getPainelUsuario && db.getPainelUsuario(String(store_id))) {
+      return res.status(409).json({ error: 'Esta loja já possui acesso. Use a tela de login ou altere a senha dentro do painel.' });
+    }
 
-    data.users[String(store_id)] = {
-      store_id: String(store_id),
-      login: String(login).trim(),
-      password_hash: hashPassword(String(senha)),
-      created_at: new Date().toISOString()
-    };
-    data.templates = data.templates || {};
-    data.templates[String(store_id)] = { ...DEFAULT_AUTOMATION_TEMPLATES };
-    writeAdminData(data);
+    if (!db.criarPainelUsuario || !db.salvarPainelTemplates) {
+      return res.status(500).json({ error: 'Banco do painel Premium não está disponível.' });
+    }
+
+    db.criarPainelUsuario(String(store_id), String(login).trim(), hashPassword(String(senha)));
+    db.salvarPainelTemplates(String(store_id), { ...DEFAULT_AUTOMATION_TEMPLATES });
 
     const token = createPainelSession(store_id, String(login).trim());
     res.setHeader('Set-Cookie', `lz_admin_session=${encodeURIComponent(token)}; HttpOnly; Path=/; Max-Age=${60*60*24*7}; SameSite=Lax; Secure`);
@@ -581,8 +550,7 @@ app.post('/painel/api/login', (req, res) => {
   try {
     const { store_id, login, senha } = req.body || {};
     if (!store_id || !login || !senha) return res.status(400).json({ error: 'Preencha Store ID, login e senha.' });
-    const data = readAdminData();
-    const user = data.users?.[String(store_id)];
+    const user = db.getPainelUsuario ? db.getPainelUsuario(String(store_id)) : null;
     if (!user || user.login !== String(login).trim() || !verifyPassword(String(senha), user.password_hash)) {
       return res.status(401).json({ error: 'Login, senha ou Store ID inválidos.' });
     }
@@ -597,9 +565,7 @@ app.post('/painel/api/login', (req, res) => {
 
 app.post('/painel/api/logout', painelAuth, (req, res) => {
   const token = getCookie(req, 'lz_admin_session');
-  const data = readAdminData();
-  if (token && data.sessions) delete data.sessions[token];
-  writeAdminData(data);
+  if (token && db.deletarPainelSessao) db.deletarPainelSessao(token);
   res.setHeader('Set-Cookie', 'lz_admin_session=; HttpOnly; Path=/; Max-Age=0; SameSite=Lax; Secure');
   res.json({ success: true });
 });
@@ -616,10 +582,8 @@ app.post('/painel/api/validate-templates', painelAuth, (req, res) => {
 app.post('/painel/api/templates', painelAuth, (req, res) => {
   const result = validateTemplatesPayload(req.body?.templates || {});
   if (!result.ok) return res.status(400).json(result);
-  const data = readAdminData();
-  data.templates = data.templates || {};
-  data.templates[String(req.painel.store_id)] = result.templates;
-  writeAdminData(data);
+  if (!db.salvarPainelTemplates) return res.status(500).json({ error: 'Banco de templates não disponível.' });
+  db.salvarPainelTemplates(String(req.painel.store_id), result.templates);
   res.json({ success: true });
 });
 
@@ -653,14 +617,11 @@ app.post('/painel/api/credentials', painelAuth, (req, res) => {
     if (!login || !senha) return res.status(400).json({ error: 'Informe novo login e nova senha.' });
     if (String(senha).length < 6) return res.status(400).json({ error: 'A senha precisa ter pelo menos 6 caracteres.' });
 
-    const data = readAdminData();
-    const user = data.users?.[String(req.painel.store_id)];
+    const user = db.getPainelUsuario ? db.getPainelUsuario(String(req.painel.store_id)) : null;
     if (!user) return res.status(404).json({ error: 'Usuário não encontrado.' });
 
-    user.login = String(login).trim();
-    user.password_hash = hashPassword(String(senha));
-    user.updated_at = new Date().toISOString();
-    writeAdminData(data);
+    if (!db.atualizarPainelCredenciais) return res.status(500).json({ error: 'Banco do painel não disponível.' });
+    db.atualizarPainelCredenciais(String(req.painel.store_id), String(login).trim(), hashPassword(String(senha)));
 
     res.json({ success: true });
   } catch(e) {
