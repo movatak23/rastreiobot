@@ -113,6 +113,35 @@ function adminLoggzapHtml() {
       </div>
     </div>
 
+
+    <div class="card">
+      <h2>Inteligência de mercado</h2>
+      <p class="muted">Analise as lojas que acessam o LoggZap Free/Premium para identificar nichos com maior adesão, maior volume de pedidos e maior faturamento estimado. Os dados vêm da API da Nuvemshop e são usados apenas no painel interno.</p>
+      <div class="actions">
+        <button onclick="carregarInsights()">Atualizar insights de mercado</button>
+        <button class="btn2" onclick="exportarInsights()">Exportar CSV</button>
+      </div>
+      <div class="err" id="insightsErr"></div><div class="ok" id="insightsOk"></div>
+
+      <div class="grid" style="margin-top:12px">
+        <div class="metric"><strong id="iLojas">--</strong><span>lojas analisadas</span></div>
+        <div class="metric"><strong id="iNichos">--</strong><span>nichos identificados</span></div>
+        <div class="metric"><strong id="iPedidos">--</strong><span>pedidos na amostra</span></div>
+        <div class="metric"><strong id="iFaturamento">--</strong><span>faturamento estimado</span></div>
+      </div>
+
+      <h3>Nichos com maior potencial</h3>
+      <div style="overflow:auto">
+        <table><thead><tr><th>Nicho</th><th>Lojas</th><th>Pedidos</th><th>Faturamento estimado</th><th>Ticket médio</th><th>Prioridade</th></tr></thead><tbody id="nichosBody"></tbody></table>
+      </div>
+
+      <h3>Lojas analisadas</h3>
+      <input id="filtroInsight" placeholder="Filtrar por loja, nicho, domínio ou Store ID" oninput="renderInsights()">
+      <div style="overflow:auto">
+        <table><thead><tr><th>Loja</th><th>Nicho</th><th>Domínio</th><th>Pedidos</th><th>Faturamento estimado</th><th>Ticket médio</th><th>Ações</th></tr></thead><tbody id="lojasInsightsBody"></tbody></table>
+      </div>
+    </div>
+
     <div class="card">
       <h2>Ações de suporte</h2>
       <div class="two">
@@ -425,6 +454,188 @@ function renderTemplateTesteAdmin(storeId, tipo) {
 
   return String(finalTemplate).replace(/\{([a-zA-Z0-9_]+)\}/g, (_, k) => sample[k] || '');
 }
+
+
+
+// ── Admin LoggZap — inteligência de mercado / nichos ─────────────────────────
+function normalizarTexto(v) {
+  if (!v) return '';
+  if (typeof v === 'object') {
+    return v.pt || v.en || v.es || Object.values(v).find(Boolean) || '';
+  }
+  return String(v);
+}
+
+function numeroMoeda(v) {
+  if (v === null || v === undefined) return 0;
+  if (typeof v === 'number') return v;
+  const s = String(v).replace(/[^\d,.-]/g, '').replace(/\./g, '').replace(',', '.');
+  const n = Number(s);
+  return Number.isFinite(n) ? n : 0;
+}
+
+function classificarNicho(store = {}, produtos = []) {
+  const bruto = [
+    store.type,
+    normalizarTexto(store.name),
+    normalizarTexto(store.description),
+    ...(produtos || []).slice(0, 15).map(p => normalizarTexto(p.name) + ' ' + normalizarTexto(p.description))
+  ].join(' ').toLowerCase();
+
+  const mapa = [
+    ['Moda / vestuário', ['clothing','fashion','moda','roupa','vestuário','camiseta','blusa','calça','vestido','look','fashion']],
+    ['Beleza / cosméticos', ['beauty','beleza','cosmético','cosmetico','maquiagem','skin care','skincare','perfume','cabelo','unha']],
+    ['Casa / decoração', ['home','casa','decoração','decoracao','móveis','moveis','lar','cozinha','mesa posta']],
+    ['Eletrônicos / acessórios', ['electronic','eletrônico','eletronico','celular','fone','carregador','gadget','informática','informatica']],
+    ['Pet', ['pet','cachorro','gato','ração','racao','animal']],
+    ['Infantil / bebê', ['bebê','bebe','infantil','criança','crianca','kids','maternidade']],
+    ['Saúde / bem-estar', ['saúde','saude','bem-estar','fitness','suplemento','academia','treino']],
+    ['Alimentos / bebidas', ['food','alimento','bebida','café','cafe','doce','bolo','chocolate','gourmet']],
+    ['Papelaria / personalizados', ['papelaria','personalizado','brinde','sublimação','sublimacao','dtf','adesivo','caneca']],
+    ['Esporte / lazer', ['sports','esporte','bike','futebol','corrida','lazer']]
+  ];
+
+  for (const [nicho, termos] of mapa) {
+    if (termos.some(t => bruto.includes(t))) return nicho;
+  }
+
+  return store.type ? String(store.type) : 'Não identificado';
+}
+
+function dominioLoja(store = {}) {
+  if (Array.isArray(store.domains) && store.domains.length) return store.domains[0];
+  if (store.original_domain) return store.original_domain;
+  return null;
+}
+
+async function getStoreInfoSeguro(storeId) {
+  try {
+    return await nuvemGet(storeId, '/store');
+  } catch(e) {
+    return { id: storeId, erro_store: e.response?.data?.message || e.message };
+  }
+}
+
+async function getProdutosAmostraSeguro(storeId) {
+  try {
+    const produtos = await nuvemGet(storeId, '/products', { per_page: 30, page: 1 });
+    return Array.isArray(produtos) ? produtos : [];
+  } catch(e) {
+    return [];
+  }
+}
+
+async function getPedidosAmostraSeguro(storeId) {
+  try {
+    const pedidos = await nuvemGet(storeId, '/orders', { per_page: 30, page: 1 });
+    return Array.isArray(pedidos) ? pedidos : [];
+  } catch(e) {
+    return [];
+  }
+}
+
+function calcularMetricasPedidos(pedidos = []) {
+  let faturamento = 0;
+  let pedidosPagos = 0;
+
+  for (const o of pedidos || []) {
+    const status = String(o.payment_status || o.financial_status || o.status || '').toLowerCase();
+    const pago = !status || ['paid','closed','fulfilled','completed','pago','aprovado'].some(s => status.includes(s));
+    const total = numeroMoeda(o.total || o.total_paid || o.subtotal || o.total_price || o.price);
+    if (pago || total > 0) {
+      faturamento += total;
+      pedidosPagos++;
+    }
+  }
+
+  return {
+    pedidos: pedidos.length,
+    pedidosPagos,
+    faturamento,
+    ticketMedio: pedidos.length ? faturamento / pedidos.length : 0
+  };
+}
+
+function scoreNicho(n) {
+  // Peso simples: lojas + pedidos + faturamento amostral.
+  const lojas = Number(n.lojas || 0);
+  const pedidos = Number(n.pedidos || 0);
+  const fat = Number(n.faturamento || 0);
+  const raw = (lojas * 20) + (pedidos * 2) + Math.min(fat / 100, 50);
+  return Math.max(0, Math.min(100, Math.round(raw)));
+}
+
+app.get('/admin-loggzap/api/mercado-insights', auth, async (req, res) => {
+  try {
+    const stores = db.getAllStores ? db.getAllStores() : [];
+    const clientes = db.listarClientesOperacionais ? db.listarClientesOperacionais() : [];
+    const clientesMap = new Map(clientes.map(c => [String(c.store_id), c]));
+    const lojas = [];
+
+    for (const s of stores) {
+      const storeId = String(s.store_id);
+      const [store, produtos, pedidos] = await Promise.all([
+        getStoreInfoSeguro(storeId),
+        getProdutosAmostraSeguro(storeId),
+        getPedidosAmostraSeguro(storeId)
+      ]);
+
+      const metricas = calcularMetricasPedidos(pedidos);
+      const cliente = clientesMap.get(storeId) || {};
+      const nicho = classificarNicho(store, produtos);
+
+      lojas.push({
+        store_id: storeId,
+        nome: normalizarTexto(store.name) || cliente.nome_cliente || storeId,
+        nicho,
+        tipoOriginal: store.type || null,
+        urlPublica: dominioLoja(store),
+        planoNuvemshop: store.plan_name || null,
+        planoLoggZap: cliente.plano || 'free/trial',
+        pedidos: metricas.pedidos,
+        pedidosPagos: metricas.pedidosPagos,
+        faturamento: Number(metricas.faturamento.toFixed(2)),
+        ticketMedio: Number(metricas.ticketMedio.toFixed(2)),
+        produtosAmostra: produtos.length,
+        erro_store: store.erro_store || null
+      });
+    }
+
+    const porNicho = new Map();
+    for (const l of lojas) {
+      const key = l.nicho || 'Não identificado';
+      const acc = porNicho.get(key) || { nicho: key, lojas: 0, pedidos: 0, faturamento: 0 };
+      acc.lojas += 1;
+      acc.pedidos += Number(l.pedidos || 0);
+      acc.faturamento += Number(l.faturamento || 0);
+      porNicho.set(key, acc);
+    }
+
+    const nichos = [...porNicho.values()].map(n => ({
+      ...n,
+      faturamento: Number(n.faturamento.toFixed(2)),
+      ticketMedio: n.pedidos ? Number((n.faturamento / n.pedidos).toFixed(2)) : 0,
+      score: scoreNicho(n)
+    })).sort((a,b) => b.score - a.score || b.faturamento - a.faturamento);
+
+    const totalFaturamento = lojas.reduce((s,l) => s + Number(l.faturamento || 0), 0);
+    const totalPedidos = lojas.reduce((s,l) => s + Number(l.pedidos || 0), 0);
+
+    res.json({
+      success: true,
+      geradoEm: new Date().toISOString(),
+      observacao: 'Faturamento e pedidos são estimativas baseadas na amostra de pedidos recentes retornada pela API da Nuvemshop.',
+      totalLojas: lojas.length,
+      totalPedidos,
+      totalFaturamento: Number(totalFaturamento.toFixed(2)),
+      nichos,
+      lojas: lojas.sort((a,b) => Number(b.faturamento||0) - Number(a.faturamento||0))
+    });
+  } catch(e) {
+    console.error('[Admin Mercado Insights]', e);
+    res.status(500).json({ error: e.message || 'Erro ao gerar insights de mercado.' });
+  }
+});
 
 
 // ── Painel administrativo Premium / Templates por loja ───────────────────────
