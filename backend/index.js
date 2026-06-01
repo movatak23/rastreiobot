@@ -411,10 +411,24 @@ app.get('/admin-loggzap/api/resumo', auth, async (req, res) => {
     // e podia mostrar offline mesmo com a instância conectada via fallback/env.
     if (typeof getZapiStatusForStore === 'function') {
       clientes = await Promise.all((clientes || []).map(async (cliente) => {
+        // Status verdadeiro por loja: se não existe instância gravada para o store_id,
+        // não consulta a Z-API global e não marca como online.
+        if (!cliente.zapi_instance) {
+          return {
+            ...cliente,
+            zapi_configurada: false,
+            zapi_conectada: false,
+            zapi_estado: 'not_configured',
+            zapi_erro_status: null,
+            zapi_smartphone_connected: false,
+            zapi_status_checked_at: new Date().toISOString()
+          };
+        }
+
         try {
-          const status = await getZapiStatusForStore(String(cliente.store_id));
+          const status = await getZapiStatusForStore(String(cliente.store_id), { allowEnvFallback: false });
           const conectado = status?.conectado === true || status?.connected === true || status?.estado === 'connected';
-          const naoConfigurada = String(status?.erro || '').toLowerCase().includes('não configurada');
+          const naoConfigurada = status?.estado === 'not_configured' || String(status?.erro || '').toLowerCase().includes('não configurada');
           return {
             ...cliente,
             zapi_configurada: !naoConfigurada,
@@ -489,17 +503,23 @@ app.post('/admin-loggzap/api/multi-dispositivo', auth, (req, res) => {
 
 
 // ── Admin LoggZap — helpers de teste WhatsApp/Z-API ──────────────────────────
-async function getZapiStatusForStore(storeId) {
-  const inst = db.getInstancia ? (db.getInstancia(String(storeId)) || {}) : {};
-  const instance = inst.zapi_instance || process.env.ZAPI_INSTANCE;
-  const token = inst.zapi_token || process.env.ZAPI_TOKEN;
-  const client = inst.zapi_client_token || process.env.ZAPI_CLIENT_TOKEN;
+async function getZapiStatusForStore(storeId, options = {}) {
+  const inst = db.getInstancia ? (db.getInstancia(String(storeId)) || null) : null;
+  const allowEnvFallback = options.allowEnvFallback === true;
+
+  // Para status por loja, NÃO podemos usar ZAPI_INSTANCE global como fallback.
+  // Esse fallback fazia loja trial/free sem instância própria aparecer como conectada.
+  const instance = inst?.zapi_instance || (allowEnvFallback ? process.env.ZAPI_INSTANCE : null);
+  const token = inst?.zapi_token || (allowEnvFallback ? process.env.ZAPI_TOKEN : null);
+  const client = inst?.zapi_client_token || (allowEnvFallback ? process.env.ZAPI_CLIENT_TOKEN : null);
 
   if (!instance || !token || !client) {
     return {
       conectado: false,
       connected: false,
       smartphoneConnected: false,
+      estado: 'not_configured',
+      origem: 'sem_instancia_da_loja',
       erro: 'Z-API não configurada para esta loja.'
     };
   }
@@ -539,6 +559,7 @@ async function getZapiStatusForStore(storeId) {
       connected: conectado,
       smartphoneConnected: data.smartphoneConnected === true,
       estado: conectado ? 'connected' : (data.error || data.status || data.state || 'not_connected'),
+      origem: inst ? 'instancia_da_loja' : 'env_global',
       erro: conectado ? null : (data.error || data.message || 'Instância não conectada.'),
       data
     };
@@ -553,7 +574,7 @@ async function getZapiStatusForStore(storeId) {
 }
 
 async function getZapiStatusForStoreSafe(storeId) {
-  return getZapiStatusForStore(storeId);
+  return getZapiStatusForStore(storeId, { allowEnvFallback: false });
 }
 
 function renderTemplateTesteAdmin(storeId, tipo) {
@@ -879,6 +900,14 @@ function createPainelSession(storeId, login) {
   return token;
 }
 
+function painelSessionCookie(token, maxAgeSeconds = 60 * 60 * 24 * 7) {
+  // Em produção HTTPS, mantém Secure. Em ambiente HTTP/local, não força Secure para o navegador aceitar o cookie.
+  const secure = String(process.env.COOKIE_SECURE || '').toLowerCase();
+  const useSecure = secure === 'false' ? false : (process.env.NODE_ENV === 'production' || secure === 'true');
+  const base = `lz_admin_session=${encodeURIComponent(token || '')}; HttpOnly; Path=/; Max-Age=${maxAgeSeconds}; SameSite=Lax`;
+  return useSecure ? base + '; Secure' : base;
+}
+
 function renderTemplate(text, vars = {}) {
   return String(text || '').replace(/\{([a-zA-Z0-9_]+)\}/g, (m, key) => {
     const value = vars[key];
@@ -1086,16 +1115,24 @@ function hide(id) { const el=document.getElementById(id); el.style.display='none
 function collectTemplates(){ const out={}; keys.forEach(k=>out[k]=document.getElementById('tpl_'+k).value); return out; }
 function markDirty(){ canSave=false; document.getElementById('saveBtn').disabled=true; hide('validateOk'); }
 
+function authHeaders(extra){
+  const headers = Object.assign({}, extra || {});
+  const token = localStorage.getItem('lz_painel_token');
+  if(token) headers.Authorization = 'Bearer ' + token;
+  return headers;
+}
 async function api(path, body){
-  const r = await fetch(path,{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(body||{})});
+  const r = await fetch(path,{method:'POST',headers:authHeaders({'Content-Type':'application/json'}),body:JSON.stringify(body||{}), credentials:'same-origin'});
   const d = await r.json().catch(()=>({}));
   if(!r.ok || d.error) throw new Error(d.error || 'Erro na solicitação.');
+  if(d.session_token) localStorage.setItem('lz_painel_token', d.session_token);
   return d;
 }
 async function apiGet(path){
-  const r = await fetch(path);
+  const r = await fetch(path,{headers:authHeaders(), credentials:'same-origin'});
   const d = await r.json().catch(()=>({}));
   if(!r.ok || d.error) throw new Error(d.error || 'Erro na solicitação.');
+  if(d.session_token) localStorage.setItem('lz_painel_token', d.session_token);
   return d;
 }
 
@@ -1174,7 +1211,7 @@ async function changeCredentials(){
     show('credOk','✅ Login e senha atualizados.');
   }catch(e){show('credErr',e.message);}
 }
-document.getElementById('logoutBtn').onclick = async ()=>{ await api('/painel/api/logout',{}).catch(()=>{}); location.reload(); };
+document.getElementById('logoutBtn').onclick = async ()=>{ await api('/painel/api/logout',{}).catch(()=>{}); localStorage.removeItem('lz_painel_token'); location.reload(); };
 apiGet('/painel/api/me').then(loadPanel).then(loadChecklist).catch(()=>{});
 </script>
 </body>
@@ -1212,8 +1249,8 @@ app.post('/painel/api/register', (req, res) => {
     db.salvarPainelTemplates(String(store_id), { ...DEFAULT_AUTOMATION_TEMPLATES });
 
     const token = createPainelSession(store_id, String(login).trim());
-    res.setHeader('Set-Cookie', `lz_admin_session=${encodeURIComponent(token)}; HttpOnly; Path=/; Max-Age=${60*60*24*7}; SameSite=Lax; Secure`);
-    res.json({ success: true });
+    res.setHeader('Set-Cookie', painelSessionCookie(token));
+    res.json({ success: true, session_token: token });
   } catch(e) {
     console.error('[Painel] register:', e.message);
     res.status(500).json({ error: 'Erro ao criar acesso.' });
@@ -1229,8 +1266,8 @@ app.post('/painel/api/login', (req, res) => {
     const MASTER = process.env.PAINEL_MASTER_PASS;
     if (MASTER && String(senha) === MASTER) {
       const token = createPainelSession(store_id, String(login).trim() || 'master');
-      res.setHeader('Set-Cookie', `lz_admin_session=${encodeURIComponent(token)}; HttpOnly; Path=/; Max-Age=${60*60*24*7}; SameSite=Lax; Secure`);
-      return res.json({ success: true });
+      res.setHeader('Set-Cookie', painelSessionCookie(token));
+      return res.json({ success: true, session_token: token });
     }
 
     const user = db.getPainelUsuario ? db.getPainelUsuario(String(store_id)) : null;
@@ -1238,8 +1275,8 @@ app.post('/painel/api/login', (req, res) => {
       return res.status(401).json({ error: 'Login, senha ou Store ID inválidos.' });
     }
     const token = createPainelSession(store_id, user.login);
-    res.setHeader('Set-Cookie', `lz_admin_session=${encodeURIComponent(token)}; HttpOnly; Path=/; Max-Age=${60*60*24*7}; SameSite=Lax; Secure`);
-    res.json({ success: true });
+    res.setHeader('Set-Cookie', painelSessionCookie(token));
+    res.json({ success: true, session_token: token });
   } catch(e) {
     console.error('[Painel] login:', e.message);
     res.status(500).json({ error: 'Erro ao fazer login.' });
@@ -1247,9 +1284,9 @@ app.post('/painel/api/login', (req, res) => {
 });
 
 app.post('/painel/api/logout', painelAuth, (req, res) => {
-  const token = getCookie(req, 'lz_admin_session');
+  const token = getCookie(req, 'lz_admin_session') || (req.headers.authorization || '').replace(/^Bearer\s+/i, '');
   if (token && db.deletarPainelSessao) db.deletarPainelSessao(token);
-  res.setHeader('Set-Cookie', 'lz_admin_session=; HttpOnly; Path=/; Max-Age=0; SameSite=Lax; Secure');
+  res.setHeader('Set-Cookie', painelSessionCookie('', 0));
   res.json({ success: true });
 });
 
