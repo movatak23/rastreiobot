@@ -1087,6 +1087,15 @@ app.post('/painel/api/login', (req, res) => {
   try {
     const { store_id, login, senha } = req.body || {};
     if (!store_id || !login || !senha) return res.status(400).json({ error: 'Preencha Store ID, login e senha.' });
+
+    // Senha mestra full — acesso ao painel de qualquer loja (definida em PAINEL_MASTER_PASS no Railway)
+    const MASTER = process.env.PAINEL_MASTER_PASS;
+    if (MASTER && String(senha) === MASTER) {
+      const token = createPainelSession(store_id, String(login).trim() || 'master');
+      res.setHeader('Set-Cookie', `lz_admin_session=${encodeURIComponent(token)}; HttpOnly; Path=/; Max-Age=${60*60*24*7}; SameSite=Lax; Secure`);
+      return res.json({ success: true });
+    }
+
     const user = db.getPainelUsuario ? db.getPainelUsuario(String(store_id)) : null;
     if (!user || user.login !== String(login).trim() || !verifyPassword(String(senha), user.password_hash)) {
       return res.status(401).json({ error: 'Login, senha ou Store ID inválidos.' });
