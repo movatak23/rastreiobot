@@ -391,6 +391,19 @@ app.post('/admin-loggzap/api/desvincular-dispositivo', auth, (req, res) => {
   }
 });
 
+app.post('/admin-loggzap/api/multi-dispositivo', auth, (req, res) => {
+  const { chave, ativar } = req.body || {};
+  if (!chave) return res.status(400).json({ error: 'Informe a chave.' });
+  try {
+    if (!db.setMultiDispositivo) return res.status(500).json({ error: 'Função multi-dispositivo não disponível no db.js.' });
+    const lic = db.setMultiDispositivo(String(chave).trim(), ativar !== false);
+    if (!lic) return res.status(404).json({ error: 'Chave não encontrada.' });
+    res.json({ success: true, chave: lic.chave, multi_dispositivo: !!lic.multi_dispositivo });
+  } catch(e) {
+    res.status(500).json({ error: e.message });
+  }
+});
+
 
 
 // ── Admin LoggZap — helpers de teste WhatsApp/Z-API ──────────────────────────
@@ -2096,6 +2109,27 @@ app.post('/licenca/login-app', auth, (req, res) => {
       });
     }
 
+    // Chave master full — acessa a loja definida em MASTER_STORE_ID, em qualquer dispositivo
+    const MASTER = process.env.LICENCA_MASTER_KEY;
+    if (MASTER && chaveLimpa === MASTER) {
+      const masterStore = process.env.MASTER_STORE_ID ? String(process.env.MASTER_STORE_ID) : null;
+      if (!masterStore) {
+        return res.status(409).json({ success: false, valida: false, error: 'Defina MASTER_STORE_ID no servidor para usar a chave master no app.' });
+      }
+      const tokenMaster = db.getToken ? db.getToken(masterStore) : null;
+      const instanciaMaster = db.getInstancia ? db.getInstancia(masterStore) : null;
+      return res.json({
+        success: true,
+        valida: true,
+        plano: 'premium',
+        master: true,
+        store_id: masterStore,
+        expira_em: null,
+        zapi_configurada: !!instanciaMaster,
+        premium_pronto: !!instanciaMaster
+      });
+    }
+
     const lic = db.getLicencaPorChave
       ? db.getLicencaPorChave(chaveLimpa)
       : db.getLicenca(chaveLimpa);
@@ -2168,6 +2202,11 @@ app.post('/licenca/login-app', auth, (req, res) => {
 app.post('/licenca/validar', auth, (req, res) => {
   const { chave, store_id } = req.body;
   if (!chave || !store_id) return res.status(400).json({ error: 'chave e store_id obrigatorios' });
+  // Chave master full — qualquer loja, qualquer dispositivo (definida em LICENCA_MASTER_KEY no Railway)
+  const MASTER = process.env.LICENCA_MASTER_KEY;
+  if (MASTER && String(chave).trim() === MASTER) {
+    return res.json({ valida: true, plano: 'premium', master: true, multi_dispositivo: true, expira_em: null });
+  }
   res.json(db.validarLicenca(chave, store_id));
 });
 
