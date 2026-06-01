@@ -79,7 +79,7 @@ function adminLoggzapHtml() {
 </head>
 <body>
 <div class="wrap">
-  <div class="top"><div class="logo">Admin <span>LoggZap</span></div><button class="btn2" onclick="carregar()">Atualizar</button></div>
+  <div class="top"><div class="logo">Admin <span>LoggZap</span></div><div class="actions"><button class="btn2" onclick="carregar()">Atualizar</button><button id="adminLogout" class="btn2 hidden" onclick="sairAdmin()">Sair</button></div></div>
 
   <div id="auth" class="card">
     <h2>Acesso interno</h2>
@@ -175,7 +175,8 @@ function adminLoggzapHtml() {
 </div>
 
 <script>
-let secret='', clientes=[], logs=[];
+const ADMIN_SECRET_KEY = 'lz_admin_loggzap_secret';
+let secret = localStorage.getItem(ADMIN_SECRET_KEY) || '', clientes=[], logs=[];
 function esc(v){return String(v??'').replace(/[<>&]/g,s=>({'<':'&lt;','>':'&gt;','&':'&amp;'}[s]));}
 function show(id,msg){const el=document.getElementById(id);el.innerHTML=msg;el.style.display='block';}
 function hide(id){document.getElementById(id).style.display='none';}
@@ -187,15 +188,40 @@ async function api(path, opts={}){
   if(!r.ok||d.error) throw new Error(d.error||('Erro na solicitação. HTTP '+r.status));
   return d;
 }
-async function entrar(){secret=document.getElementById('secret').value.trim(); if(!secret)return show('err','Informe a chave.'); await carregar(true);}
+async function entrar(){
+  secret=document.getElementById('secret').value.trim();
+  if(!secret)return show('err','Informe a chave.');
+  localStorage.setItem(ADMIN_SECRET_KEY, secret);
+  await carregar(true);
+}
+function sairAdmin(){
+  localStorage.removeItem(ADMIN_SECRET_KEY);
+  secret='';
+  location.reload();
+}
 async function carregar(first=false){
   try{
+    if(!secret){
+      secret = localStorage.getItem(ADMIN_SECRET_KEY) || '';
+      if(!secret) throw new Error('Informe a chave interna para acessar o painel.');
+    }
     const d=await api('/admin-loggzap/api/resumo');
     clientes=d.clientes||[]; logs=d.logs||[];
+    localStorage.setItem(ADMIN_SECRET_KEY, secret);
     document.getElementById('auth').classList.add('hidden');
     document.getElementById('painel').classList.remove('hidden');
+    document.getElementById('adminLogout')?.classList.remove('hidden');
     renderClientes(); renderLogs();
-  }catch(e){show(first?'err':'acaoErr',e.message);}
+  }catch(e){
+    if(String(e.message||'').toLowerCase().includes('não autorizado')){
+      localStorage.removeItem(ADMIN_SECRET_KEY);
+      secret='';
+      document.getElementById('auth').classList.remove('hidden');
+      document.getElementById('painel').classList.add('hidden');
+      document.getElementById('adminLogout')?.classList.add('hidden');
+    }
+    show(first?'err':'acaoErr',e.message);
+  }
 }
 function badge(ok,label){return '<span class="badge '+(ok?'bOk':'bErr')+'">'+label+'</span>';}
 function badgeWarn(label){return '<span class="badge bWarn">'+label+'</span>';}
@@ -301,6 +327,14 @@ async function desvincular(){
   hide('acaoErr');hide('acaoOk');
   if(!confirm('Tem certeza que deseja desvincular o dispositivo desta chave?'))return;
   try{await api('/admin-loggzap/api/desvincular-dispositivo',{method:'POST',body:JSON.stringify({chave:chaveDesvincular.value})});show('acaoOk','✅ Dispositivo desvinculado.');}catch(e){show('acaoErr',e.message);}
+}
+
+// Mantém o acesso interno após F5. Se a chave estiver salva e válida,
+// o painel abre direto; se estiver inválida, volta para a tela de login.
+if(secret){
+  const inputSecret = document.getElementById('secret');
+  if(inputSecret) inputSecret.value = secret;
+  carregar(true);
 }
 </script>
 </body>
@@ -1223,7 +1257,8 @@ app.get('/painel', (req, res) => {
 });
 
 app.get('/painel/api/me', painelAuth, (req, res) => {
-  res.json({ success: true, store_id: req.painel.store_id, login: req.painel.login });
+  const token = getCookie(req, 'lz_admin_session') || (req.headers.authorization || '').replace(/^Bearer\s+/i, '');
+  res.json({ success: true, store_id: req.painel.store_id, login: req.painel.login, session_token: token });
 });
 
 app.post('/painel/api/register', (req, res) => {
@@ -1388,6 +1423,26 @@ const {
   NUVEM_CLIENT_ID, NUVEM_CLIENT_SECRET, APP_URL, EXTENSION_SECRET,
   PORT = 3000, MP_ACCESS_TOKEN, ZAPI_INSTANCE, ZAPI_TOKEN, ZAPI_CLIENT_TOKEN
 } = process.env;
+
+function ensureDefaultZapiStoreBinding() {
+  // Correção definitiva: a Z-API global do .env não deve ser usada como fallback
+  // para todas as lojas, porque isso gera falso positivo em trial/free.
+  // Porém, quando já existe uma instância global funcionando, ela precisa ficar
+  // vinculada explicitamente a uma loja premium. Por padrão usamos a loja atual
+  // informada pelo cliente; em produção, pode ser sobrescrita por ZAPI_DEFAULT_STORE_ID.
+  const storeId = String(process.env.ZAPI_DEFAULT_STORE_ID || process.env.ZAPI_STORE_ID || '4757590').trim();
+  if (!storeId || !ZAPI_INSTANCE || !ZAPI_TOKEN || !ZAPI_CLIENT_TOKEN) return;
+  try {
+    const atual = db.getInstancia ? db.getInstancia(storeId) : null;
+    if (!atual && db.salvarInstancia) {
+      db.salvarInstancia(storeId, ZAPI_INSTANCE, ZAPI_TOKEN, ZAPI_CLIENT_TOKEN, process.env.ZAPI_DEFAULT_STORE_NAME || 'Loja Premium');
+      console.log(`[ZAPI] Instância global vinculada explicitamente à loja ${storeId}.`);
+    }
+  } catch (e) {
+    console.error('[ZAPI] Falha ao vincular instância global à loja padrão:', e.message);
+  }
+}
+ensureDefaultZapiStoreBinding();
 
 function auth(req, res, next) {
   if (req.headers['x-secret'] !== EXTENSION_SECRET)
