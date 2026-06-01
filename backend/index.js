@@ -91,7 +91,7 @@ function adminLoggzapHtml() {
 
   <div id="painel" class="hidden">
     <div class="grid">
-      <div class="metric"><strong id="mClientes">--</strong><span>lojas conectadas</span></div>
+      <div class="metric"><strong id="mClientes">--</strong><span>Z-APIs online</span></div>
       <div class="metric"><strong id="mPremium">--</strong><span>clientes Premium</span></div>
       <div class="metric"><strong id="mProntos">--</strong><span>Premium prontos</span></div>
       <div class="metric"><strong id="mErros">--</strong><span>clientes com erro</span></div>
@@ -198,19 +198,26 @@ async function carregar(first=false){
   }catch(e){show(first?'err':'acaoErr',e.message);}
 }
 function badge(ok,label){return '<span class="badge '+(ok?'bOk':'bErr')+'">'+label+'</span>';}
+function badgeWarn(label){return '<span class="badge bWarn">'+label+'</span>';}
+function badgeZapi(c){
+  if(c.zapi_conectada === true) return '<span class="badge bOk" title="Z-API conectada e confirmada em tempo real">Z-API online</span>';
+  if(c.zapi_estado === 'not_configured' || c.zapi_configurada === false) return '<span class="badge bErr" title="Não há credenciais de Z-API para esta loja">sem Z-API</span>';
+  if(c.zapi_estado === 'check_failed') return '<span class="badge bWarn" title="Não foi possível confirmar o status agora">falha consulta</span>';
+  return '<span class="badge bErr" title="Z-API configurada, mas não confirmou conexão ativa">Z-API offline</span>';
+}
 function renderClientes(){
   const f=(document.getElementById('filtroCliente').value||'').toLowerCase();
   const rows=clientes.filter(c=>JSON.stringify(c).toLowerCase().includes(f));
-  document.getElementById('mClientes').textContent=clientes.length;
+  document.getElementById('mClientes').textContent=clientes.filter(c=>c.zapi_conectada===true).length;
   document.getElementById('mPremium').textContent=clientes.filter(c=>c.plano==='premium').length;
   document.getElementById('mProntos').textContent=clientes.filter(c=>c.premium_pronto).length;
-  document.getElementById('mErros').textContent=clientes.filter(c=>c.ultimo_erro).length;
+  document.getElementById('mErros').textContent=clientes.filter(c=>c.ultimo_erro || (c.zapi_configurada && c.zapi_conectada===false)).length;
   document.getElementById('clientesBody').innerHTML=rows.map(c=>{
     const plano=c.plano?c.plano:'trial/free';
     return '<tr>'+
       '<td><strong>'+esc(c.nome_cliente||c.store_id)+'</strong><br><span class="muted">'+esc(c.store_id)+'</span></td>'+
       '<td>'+esc(plano)+'<br><span class="muted">'+esc(c.expira_em||'')+'</span></td>'+
-      '<td>'+badge(c.zapi_configurada,'Z-API')+'</td>'+
+      '<td>'+badgeZapi(c)+(c.zapi_erro_status?'<br><span class="muted">'+esc(c.zapi_erro_status)+'</span>':'')+'</td>'+
       '<td>'+badge(c.painel_configurado,'Painel')+'</td>'+
       '<td>'+badge(c.templates_ok,(c.templates_configurados||0)+'/8')+'</td>'+
       '<td>'+esc(c.ultimo_tipo||'—')+'<br><span class="muted">'+esc(c.ultimo_log_em||'')+'</span></td>'+
@@ -397,6 +404,36 @@ app.get('/admin-loggzap/api/resumo', auth, async (req, res) => {
           templates_ok: false
         };
       });
+    }
+
+    // Enriquece a lista com o status REAL da Z-API.
+    // Antes o painel usava apenas "zapi_configurada", que só indica se existe credencial salva
+    // e podia mostrar offline mesmo com a instância conectada via fallback/env.
+    if (typeof getZapiStatusForStore === 'function') {
+      clientes = await Promise.all((clientes || []).map(async (cliente) => {
+        try {
+          const status = await getZapiStatusForStore(String(cliente.store_id));
+          const conectado = status?.conectado === true || status?.connected === true || status?.estado === 'connected';
+          const naoConfigurada = String(status?.erro || '').toLowerCase().includes('não configurada');
+          return {
+            ...cliente,
+            zapi_configurada: !naoConfigurada,
+            zapi_conectada: conectado,
+            zapi_estado: conectado ? 'connected' : (naoConfigurada ? 'not_configured' : (status?.estado || 'disconnected')),
+            zapi_erro_status: conectado ? null : (status?.erro || status?.error || null),
+            zapi_smartphone_connected: status?.smartphoneConnected === true || status?.data?.smartphoneConnected === true,
+            zapi_status_checked_at: new Date().toISOString()
+          };
+        } catch (e) {
+          return {
+            ...cliente,
+            zapi_conectada: false,
+            zapi_estado: 'check_failed',
+            zapi_erro_status: e.message || 'Falha ao consultar status da Z-API.',
+            zapi_status_checked_at: new Date().toISOString()
+          };
+        }
+      }));
     }
 
     const logs = readLoggzapLogs ? readLoggzapLogs() : [];
