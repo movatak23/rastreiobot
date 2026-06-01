@@ -556,6 +556,8 @@ function migrar() {
   `);
   // Adiciona coluna device_id se não existir
   try { db.exec("ALTER TABLE licencas ADD COLUMN device_id TEXT"); } catch(e) {}
+  // Licença multi-dispositivo (0 = trava em 1 aparelho, 1 = libera vários)
+  try { db.exec("ALTER TABLE licencas ADD COLUMN multi_dispositivo INTEGER DEFAULT 0"); } catch(e) {}
   // Flags de liga/desliga por automação (bancos existentes) — padrão ligado
   try { db.exec("ALTER TABLE configuracoes ADD COLUMN pagamento_ativo INTEGER DEFAULT 1"); } catch(e) {}
   try { db.exec("ALTER TABLE configuracoes ADD COLUMN boleto_ativo INTEGER DEFAULT 1"); } catch(e) {}
@@ -597,8 +599,8 @@ function validarLicenca(chave, storeId, deviceId) {
   if (lic.status !== 'ativa') return { valida: false, motivo: 'Licença inativa.' };
   if (new Date(lic.expira_em) < new Date()) return { valida: false, motivo: 'Licença expirada.' };
   if (lic.store_id && lic.store_id !== String(storeId)) return { valida: false, motivo: 'Chave vinculada a outra loja.' };
-  // Verificação de dispositivo
-  if (deviceId) {
+  // Verificação de dispositivo — ignorada em licenças multi-dispositivo
+  if (deviceId && !lic.multi_dispositivo) {
     if (lic.device_id && lic.device_id !== String(deviceId)) {
       return { valida: false, motivo: 'Esta chave já está vinculada a outro dispositivo. Adquira uma nova licença.' };
     }
@@ -607,7 +609,13 @@ function validarLicenca(chave, storeId, deviceId) {
     }
   }
   if (!lic.store_id) db.prepare('UPDATE licencas SET store_id = ? WHERE chave = ?').run(String(storeId), chave);
-  return { valida: true, plano: lic.plano, expira_em: lic.expira_em };
+  return { valida: true, plano: lic.plano, expira_em: lic.expira_em, multi_dispositivo: !!lic.multi_dispositivo };
+}
+
+// Marca/desmarca uma licença como multi-dispositivo (admin)
+function setMultiDispositivo(chave, valor) {
+  db.prepare('UPDATE licencas SET multi_dispositivo = ? WHERE chave = ?').run(valor ? 1 : 0, String(chave).trim());
+  return getLicenca(String(chave).trim());
 }
 
 // Desvincular dispositivo (admin — para trocar o computador do cliente)
@@ -891,6 +899,6 @@ module.exports = {
   getAdminStats, getLojistaStats,
   upsertAuthSession, getAuthSession, completeAuthSession, deleteAuthSession,
   criarLicenca, getLicenca, getLicencaPorStore, vincularLicenca, validarLicenca,
-  getLicencasPorPayment, salvarPaymentId, getLicencaPorChave, getMetas, salvarMetas, desvincularDispositivo,
+  getLicencasPorPayment, salvarPaymentId, getLicencaPorChave, getMetas, salvarMetas, desvincularDispositivo, setMultiDispositivo,
   migrar
 };
