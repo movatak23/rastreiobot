@@ -237,9 +237,54 @@ async function testarWhatsApp(){
   hide('acaoErr');hide('acaoOk');
   try{const d=await api('/admin-loggzap/api/teste-whatsapp',{method:'POST',body:JSON.stringify({store_id:acaoStore.value,telefone:acaoTelefone.value,tipo:acaoTipo.value})});show('acaoOk','✅ Teste enviado.'); await carregar();}catch(e){show('acaoErr',e.message);}
 }
+function resumoStatusZapi(status){
+  const s = status || {};
+  const conectado = s.conectado === true || s.connected === true || s.estado === 'connected';
+  const smartphone = s.smartphoneConnected === true || (s.data && s.data.smartphoneConnected === true);
+  const erro = s.erro || s.error || (s.data && (s.data.error || s.data.message || s.data.description)) || '';
+
+  if (conectado) {
+    return {
+      ok: true,
+      html: '✅ <strong>Z-API conectada</strong><br>' +
+        'A instância está online e o WhatsApp está pronto para receber os disparos da LoggZap.' +
+        (smartphone ? '<br><span class="muted">Celular/WhatsApp vinculado confirmado.</span>' : '<br><span class="muted">Status do celular não informado pela Z-API.</span>')
+    };
+  }
+
+  if (erro && String(erro).toLowerCase().includes('não configurada')) {
+    return {
+      ok: false,
+      html: '❌ <strong>Z-API não configurada para esta loja</strong><br>' +
+        'Confira se o Store ID está correto e se a loja possui Instance ID, Token e Client Token cadastrados.'
+    };
+  }
+
+  if (erro && String(erro).toLowerCase().includes('function')) {
+    return {
+      ok: false,
+      html: '❌ <strong>Consulta de status indisponível</strong><br>' +
+        'O backend não encontrou a função responsável por consultar o status da Z-API.'
+    };
+  }
+
+  return {
+    ok: false,
+    html: '⚠️ <strong>Z-API desconectada ou com falha</strong><br>' +
+      'A instância não está confirmando conexão ativa. Verifique o painel da Z-API, leia o QR Code novamente se necessário e confirme se os tokens estão corretos.' +
+      (erro ? '<br><span class="muted">Detalhe técnico: '+esc(erro)+'</span>' : '')
+  };
+}
 async function statusZapi(){
   hide('acaoErr');hide('acaoOk');
-  try{const d=await api('/admin-loggzap/api/zapi-status/'+encodeURIComponent(acaoStore.value));show('acaoOk','Status Z-API: '+JSON.stringify(d.status));}catch(e){show('acaoErr',e.message);}
+  try{
+    const d=await api('/admin-loggzap/api/zapi-status/'+encodeURIComponent(acaoStore.value));
+    const r=resumoStatusZapi(d.status);
+    const detalhes = '<details style="margin-top:8px"><summary>Ver retorno técnico</summary><pre>'+esc(JSON.stringify(d.status||{},null,2))+'</pre></details>';
+    show(r.ok?'acaoOk':'acaoErr', r.html + detalhes);
+  }catch(e){
+    show('acaoErr','❌ <strong>Falha ao consultar a Z-API</strong><br>'+esc(e.message));
+  }
 }
 async function resetarSenha(){
   hide('acaoErr');hide('acaoOk');
