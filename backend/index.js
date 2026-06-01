@@ -407,29 +407,71 @@ app.post('/admin-loggzap/api/multi-dispositivo', auth, (req, res) => {
 
 
 // ── Admin LoggZap — helpers de teste WhatsApp/Z-API ──────────────────────────
-async function getZapiStatusForStoreSafe(storeId) {
-  const inst = db.getInstancia ? (db.getInstancia(storeId) || {}) : {};
+async function getZapiStatusForStore(storeId) {
+  const inst = db.getInstancia ? (db.getInstancia(String(storeId)) || {}) : {};
   const instance = inst.zapi_instance || process.env.ZAPI_INSTANCE;
   const token = inst.zapi_token || process.env.ZAPI_TOKEN;
   const client = inst.zapi_client_token || process.env.ZAPI_CLIENT_TOKEN;
 
   if (!instance || !token || !client) {
-    return { conectado: false, erro: 'Z-API não configurada para esta loja.' };
+    return {
+      conectado: false,
+      connected: false,
+      smartphoneConnected: false,
+      erro: 'Z-API não configurada para esta loja.'
+    };
   }
 
   try {
     const r = await axios.get(
       `https://api.z-api.io/instances/${instance}/token/${token}/status`,
-      { headers: { 'Client-Token': client }, timeout: 7000 }
+      {
+        headers: {
+          'Client-Token': client,
+          'Content-Type': 'application/json'
+        },
+        timeout: 10000,
+        validateStatus: () => true
+      }
     );
+
+    const data = r.data || {};
+    const conectado = data.connected === true ||
+      data.status === 'connected' ||
+      data.status === 'CONNECTED' ||
+      data.value === true;
+
+    if (r.status < 200 || r.status >= 300) {
+      return {
+        conectado: false,
+        connected: false,
+        smartphoneConnected: data.smartphoneConnected === true,
+        httpStatus: r.status,
+        erro: data.error || data.message || data.description || `Erro HTTP ${r.status} ao consultar Z-API.`,
+        data
+      };
+    }
+
     return {
-      conectado: r.data?.connected === true || r.data?.status === 'connected' || r.data?.value === true,
-      estado: r.data?.status || r.data?.state || 'unknown',
-      data: r.data
+      conectado,
+      connected: conectado,
+      smartphoneConnected: data.smartphoneConnected === true,
+      estado: conectado ? 'connected' : (data.error || data.status || data.state || 'not_connected'),
+      erro: conectado ? null : (data.error || data.message || 'Instância não conectada.'),
+      data
     };
   } catch(e) {
-    return { conectado: false, erro: e.response?.data?.message || e.message };
+    return {
+      conectado: false,
+      connected: false,
+      smartphoneConnected: false,
+      erro: e.response?.data?.message || e.response?.data?.error || e.message
+    };
   }
+}
+
+async function getZapiStatusForStoreSafe(storeId) {
+  return getZapiStatusForStore(storeId);
 }
 
 function renderTemplateTesteAdmin(storeId, tipo) {
