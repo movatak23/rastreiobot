@@ -2110,6 +2110,44 @@ const processarEnvioAvulsoHandler = async (req, res) => {
     if (!parsed.ok) return res.status(400).json({ error: parsed.erros.join(' ') });
 
     const dados = { ...parsed.dados, store_id: storeId };
+
+    const envioExistente = db.getEnvioAvulso
+      ? db.getEnvioAvulso(storeId, dados.codigo_rastreio)
+      : null;
+
+    if (envioExistente && envioExistente.primeira_mensagem_em) {
+      safeLogAutomacao({
+        store_id: storeId,
+        tipo: 'envio_avulso_duplicado',
+        pedido: envioExistente.codigo_envio || dados.codigo_envio || dados.codigo_rastreio,
+        telefone: envioExistente.telefone || dados.telefone,
+        mensagem: 'Envio avulso já estava em monitoramento. Nenhuma nova mensagem foi enviada.',
+        extra: {
+          rastreio: dados.codigo_rastreio,
+          primeira_mensagem_em: envioExistente.primeira_mensagem_em
+        }
+      });
+
+      return res.json({
+        success: true,
+        duplicate: true,
+        ja_monitorado: true,
+        mensagem: 'Este envio avulso já está em monitoramento. Nenhuma nova mensagem foi enviada.',
+        envio: envioExistente,
+        dados_extraidos: {
+          codigo_envio: envioExistente.codigo_envio || dados.codigo_envio,
+          nome_cliente: envioExistente.nome_cliente || dados.nome_cliente,
+          telefone: envioExistente.telefone || dados.telefone,
+          email: envioExistente.email || dados.email,
+          codigo_rastreio: envioExistente.codigo_rastreio || dados.codigo_rastreio,
+          transportadora: envioExistente.transportadora || dados.transportadora,
+          prazo: envioExistente.prazo || dados.prazo,
+          valor: envioExistente.valor || dados.valor,
+          primeira_mensagem_em: envioExistente.primeira_mensagem_em
+        }
+      });
+    }
+
     const evento = await consultarCorreios(dados.codigo_rastreio);
     const statusInicial = evento?.entregue ? 'entregue' : (evento?.descricao || evento?.status || 'capturado');
 
