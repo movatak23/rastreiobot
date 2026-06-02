@@ -1445,7 +1445,8 @@ function ensureDefaultZapiStoreBinding() {
 ensureDefaultZapiStoreBinding();
 
 function auth(req, res, next) {
-  if (req.headers['x-secret'] !== EXTENSION_SECRET)
+  const suppliedSecret = req.headers['x-secret'] || req.query.x_secret;
+  if (suppliedSecret !== EXTENSION_SECRET)
     return res.status(401).json({ error: 'Não autorizado.' });
   next();
 }
@@ -1996,6 +1997,267 @@ app.get('/rastreio-publico', async (req, res) => {
   res.json({ success: true, evento });
 });
 
+
+
+
+// ── Conectores Financeiros — Mercado Pago ───────────────────────────────────
+const MP_CLIENT_ID = process.env.MP_CLIENT_ID || '';
+const MP_CLIENT_SECRET = process.env.MP_CLIENT_SECRET || '';
+const MP_REDIRECT_URI = process.env.MP_REDIRECT_URI || 'https://cliente.loggzap.com.br/mercadopago/callback';
+
+function mpMonthRange(query = {}) {
+  const now = new Date();
+  const y = Number(query.ano || now.getFullYear());
+  const m = Number(query.mes || (now.getMonth() + 1));
+  const inicio = query.inicio ? new Date(String(query.inicio)) : new Date(Date.UTC(y, m - 1, 1, 0, 0, 0));
+  const fim = query.fim ? new Date(String(query.fim)) : new Date(Date.UTC(y, m, 0, 23, 59, 59));
+  return {
+    inicio,
+    fim,
+    inicioISO: inicio.toISOString(),
+    fimISO: fim.toISOString(),
+    inicioDate: inicio.toISOString().slice(0, 10),
+    fimDate: fim.toISOString().slice(0, 10)
+  };
+}
+
+function mpAuthUrl(storeId) {
+  if (!MP_CLIENT_ID) throw new Error('MP_CLIENT_ID não configurado no backend.');
+  const state = `mp_${String(storeId)}_${crypto.randomBytes(8).toString('hex')}`;
+  db.criarFinanceiroState(state, String(storeId));
+  const u = new URL('https://auth.mercadopago.com.br/authorization');
+  u.searchParams.set('client_id', MP_CLIENT_ID);
+  u.searchParams.set('response_type', 'code');
+  u.searchParams.set('platform_id', 'mp');
+  u.searchParams.set('state', state);
+  u.searchParams.set('redirect_uri', MP_REDIRECT_URI);
+  return u.toString();
+}
+
+async function mpTrocarToken(body) {
+  if (!MP_CLIENT_ID || !MP_CLIENT_SECRET) throw new Error('Credenciais do Mercado Pago não configuradas no backend.');
+  const res = await axios.post('https://api.mercadopago.com/oauth/token', body, {
+    headers: { 'Content-Type': 'application/json' },
+    timeout: 20000
+  });
+  return res.data;
+}
+
+async function mpGarantirToken(storeId) {
+  const conn = db.getMercadoPagoConexao(storeId);
+  if (!conn || conn.status !== 'conectado' || !conn.access_token) throw new Error('Mercado Pago não conectado para esta loja.');
+
+  const expiresAt = Number(conn.expires_at || 0);
+  const precisaRenovar = conn.refresh_token && expiresAt && (Date.now() > (expiresAt - (1000 * 60 * 60 * 24 * 7)));
+
+  if (!precisaRenovar) return conn.access_token;
+
+  const data = await mpTrocarToken({
+    grant_type: 'refresh_token',
+    client_id: MP_CLIENT_ID,
+    client_secret: MP_CLIENT_SECRET,
+    refresh_token: conn.refresh_token
+  });
+
+  const atualizado = db.salvarMercadoPagoConexao(storeId, {
+    mp_user_id: data.user_id || conn.mp_user_id,
+    access_token: data.access_token,
+    refresh_token: data.refresh_token || conn.refresh_token,
+    expires_at: Date.now() + (Number(data.expires_in || 0) * 1000),
+    scope: data.scope || conn.scope
+  });
+
+  return atualizado.access_token;
+}
+
+async function mpSyncPagamentos(storeId, range) {
+  const token = await mpGarantirToken(storeId);
+  const url = new URL('https://api.mercadopago.com/v1/payments/search');
+  url.searchParams.set('sort', 'date_created');
+  url.searchParams.set('criteria', 'desc');
+  url.searchParams.set('range', 'date_created');
+  url.searchParams.set('begin_date', range.inicioISO);
+  url.searchParams.set('end_date', range.fimISO);
+  url.searchParams.set('limit', '100');
+
+  const res = await axios.get(url.toString(), {
+    headers: { Authorization: `Bearer ${token}` },
+    timeout: 25000
+  });
+
+  const results = res.data?.results || [];
+  for (const p of results) {
+    const paymentId = String(p.id || p.payment_id || '');
+    if (!paymentId) continue;
+
+    const status = String(p.status || '').toLowerCase();
+    const data = p.date_approved || p.date_created || p.money_release_date || new Date().toISOString();
+    const descricao = p.description || p.statement_descriptor || `Pagamento ${paymentId}`;
+    const valorBruto = Number(p.transaction_amount || 0);
+    const estornado = Number(p.transaction_amount_refunded || 0);
+
+    if (status === 'approved' && valorBruto > 0) {
+      db.salvarMovimentacaoFinanceira({
+        store_id: storeId,
+        conector: 'mercado_pago',
+        origem_id: paymentId,
+        data,
+        descricao,
+        tipo: 'entrada',
+        valor: valorBruto,
+        categoria: 'pagamento_aprovado',
+        raw_json: p
+      });
+    }
+
+    const taxas = Array.isArray(p.fee_details)
+      ? p.fee_details.reduce((acc, f) => acc + Math.abs(Number(f.amount || 0)), 0)
+      : 0;
+
+    if (taxas > 0) {
+      db.salvarMovimentacaoFinanceira({
+        store_id: storeId,
+        conector: 'mercado_pago',
+        origem_id: `${paymentId}:fees`,
+        data,
+        descricao: `Taxas Mercado Pago — ${descricao}`,
+        tipo: 'taxa',
+        valor: taxas,
+        categoria: 'taxas',
+        raw_json: { payment_id: paymentId, fee_details: p.fee_details || [] }
+      });
+    }
+
+    if (estornado > 0 || status === 'refunded') {
+      db.salvarMovimentacaoFinanceira({
+        store_id: storeId,
+        conector: 'mercado_pago',
+        origem_id: `${paymentId}:refund`,
+        data,
+        descricao: `Estorno/Reembolso — ${descricao}`,
+        tipo: 'estorno',
+        valor: estornado || valorBruto,
+        categoria: 'estornos',
+        raw_json: p
+      });
+    }
+  }
+
+  return { total_importados: results.length };
+}
+
+app.get('/mercadopago/connect/:storeId', auth, (req, res) => {
+  try {
+    const url = mpAuthUrl(req.params.storeId);
+    res.redirect(url);
+  } catch(e) {
+    res.status(500).send(`Erro ao iniciar conexão Mercado Pago: ${e.message}`);
+  }
+});
+
+app.get('/mercadopago/callback', async (req, res) => {
+  const { code, state, error, error_description } = req.query;
+  if (error) return res.status(400).send(`Mercado Pago retornou erro: ${error_description || error}`);
+  if (!code || !state) return res.status(400).send('Callback inválido: code/state ausente.');
+
+  try {
+    const st = db.getFinanceiroState(String(state));
+    if (!st) return res.status(400).send('Sessão de conexão expirada ou inválida. Volte à extensão e tente novamente.');
+
+    const data = await mpTrocarToken({
+      grant_type: 'authorization_code',
+      client_id: MP_CLIENT_ID,
+      client_secret: MP_CLIENT_SECRET,
+      code: String(code),
+      redirect_uri: MP_REDIRECT_URI
+    });
+
+    db.salvarMercadoPagoConexao(st.store_id, {
+      mp_user_id: data.user_id,
+      access_token: data.access_token,
+      refresh_token: data.refresh_token,
+      expires_at: Date.now() + (Number(data.expires_in || 0) * 1000),
+      scope: data.scope
+    });
+    db.deleteFinanceiroState(String(state));
+
+    res.send(`
+      <html><body style="font-family:Arial;background:#0d0d10;color:#fff;padding:32px">
+        <h2>Mercado Pago conectado com sucesso ✅</h2>
+        <p>Você já pode voltar para a extensão LoggZap e atualizar a aba Conectores financeiros.</p>
+      </body></html>
+    `);
+  } catch(e) {
+    console.error('[Mercado Pago callback]', e.response?.data || e.message);
+    res.status(500).send(`Erro ao conectar Mercado Pago: ${e.response?.data?.message || e.message}`);
+  }
+});
+
+app.get('/financeiro/status/:storeId', auth, (req, res) => {
+  const conn = db.getMercadoPagoConexao(req.params.storeId);
+  res.json({
+    success: true,
+    conector: conn?.conector || 'mercado_pago',
+    conectado: !!(conn && conn.status === 'conectado' && conn.access_token),
+    status: conn?.status || 'desconectado',
+    mp_user_id: conn?.mp_user_id || null,
+    teto_saidas: Number(conn?.teto_saidas || 0),
+    updated_at: conn?.updated_at || null,
+    connect_url: `/mercadopago/connect/${encodeURIComponent(req.params.storeId)}`
+  });
+});
+
+app.post('/financeiro/teto-saidas', auth, (req, res) => {
+  const { store_id, teto } = req.body || {};
+  if (!store_id) return res.status(400).json({ error: 'store_id obrigatório.' });
+  const conn = db.salvarTetoSaidas(store_id, Number(teto || 0));
+  res.json({ success: true, teto_saidas: Number(conn?.teto_saidas || 0) });
+});
+
+app.post('/financeiro/mercadopago/desconectar', auth, (req, res) => {
+  const { store_id } = req.body || {};
+  if (!store_id) return res.status(400).json({ error: 'store_id obrigatório.' });
+  const conn = db.desconectarMercadoPago(store_id);
+  res.json({ success: true, status: conn?.status || 'desconectado' });
+});
+
+app.get('/financeiro/mercadopago/:storeId', auth, async (req, res) => {
+  const { storeId } = req.params;
+  const range = mpMonthRange(req.query);
+  try {
+    const conn = db.getMercadoPagoConexao(storeId);
+    if (!conn || conn.status !== 'conectado' || !conn.access_token) {
+      const resumo = db.getResumoFinanceiro(storeId, range.inicioDate, range.fimDate).resumo;
+      return res.json({
+        success: true,
+        conectado: false,
+        aviso: 'Mercado Pago ainda não conectado.',
+        periodo: { inicio: range.inicioDate, fim: range.fimDate },
+        resumo,
+        movimentacoes: []
+      });
+    }
+
+    let sync = null;
+    if (req.query.sync !== 'false') {
+      sync = await mpSyncPagamentos(storeId, range);
+    }
+
+    const dados = db.getResumoFinanceiro(storeId, range.inicioDate, range.fimDate);
+    res.json({
+      success: true,
+      conectado: true,
+      periodo: { inicio: range.inicioDate, fim: range.fimDate },
+      sync,
+      resumo: dados.resumo,
+      movimentacoes: dados.movimentacoes,
+      observacao: 'MVP Mercado Pago: entradas, taxas e estornos vêm da API de pagamentos. Saques/transferências exigem a etapa de relatórios financeiros do Mercado Pago.'
+    });
+  } catch(e) {
+    console.error('[Financeiro MP]', e.response?.data || e.message);
+    res.status(500).json({ error: e.response?.data?.message || e.message });
+  }
+});
 
 
 // ── Envios Avulsos — processamento manual assistido ─────────────────────────

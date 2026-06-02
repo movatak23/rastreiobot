@@ -193,6 +193,42 @@ db.exec(`
     UNIQUE(store_id, codigo_rastreio)
   );
 
+
+  CREATE TABLE IF NOT EXISTS financeiro_conectores (
+    store_id       TEXT PRIMARY KEY,
+    conector       TEXT DEFAULT 'mercado_pago',
+    status         TEXT DEFAULT 'desconectado',
+    mp_user_id     TEXT,
+    access_token   TEXT,
+    refresh_token  TEXT,
+    expires_at     INTEGER,
+    scope          TEXT,
+    teto_saidas    REAL DEFAULT 0,
+    created_at     TEXT DEFAULT (datetime('now')),
+    updated_at     TEXT DEFAULT (datetime('now'))
+  );
+
+  CREATE TABLE IF NOT EXISTS financeiro_oauth_states (
+    state      TEXT PRIMARY KEY,
+    store_id   TEXT NOT NULL,
+    created_at INTEGER NOT NULL
+  );
+
+  CREATE TABLE IF NOT EXISTS financeiro_movimentacoes (
+    id          INTEGER PRIMARY KEY AUTOINCREMENT,
+    store_id    TEXT NOT NULL,
+    conector    TEXT DEFAULT 'mercado_pago',
+    origem_id   TEXT NOT NULL,
+    data        TEXT,
+    descricao   TEXT,
+    tipo        TEXT,
+    valor       REAL DEFAULT 0,
+    categoria   TEXT,
+    raw_json    TEXT,
+    created_at  TEXT DEFAULT (datetime('now')),
+    UNIQUE(store_id, conector, origem_id, tipo)
+  );
+
 `);
 
 function saveToken(storeId, accessToken) {
@@ -652,7 +688,46 @@ function migrar() {
   try { db.exec("ALTER TABLE configuracoes ADD COLUMN rastreio_ativo INTEGER DEFAULT 1"); } catch(e) {}
   try { db.exec("ALTER TABLE configuracoes ADD COLUMN pos_entrega_ativo INTEGER DEFAULT 1"); } catch(e) {}
   try { db.exec("ALTER TABLE configuracoes ADD COLUMN parado_ativo INTEGER DEFAULT 1"); } catch(e) {}
-  console.log('[DB] Migração concluída.');
+  db.exec(`
+
+  CREATE TABLE IF NOT EXISTS financeiro_conectores (
+    store_id       TEXT PRIMARY KEY,
+    conector       TEXT DEFAULT 'mercado_pago',
+    status         TEXT DEFAULT 'desconectado',
+    mp_user_id     TEXT,
+    access_token   TEXT,
+    refresh_token  TEXT,
+    expires_at     INTEGER,
+    scope          TEXT,
+    teto_saidas    REAL DEFAULT 0,
+    created_at     TEXT DEFAULT (datetime('now')),
+    updated_at     TEXT DEFAULT (datetime('now'))
+  );
+
+  CREATE TABLE IF NOT EXISTS financeiro_oauth_states (
+    state      TEXT PRIMARY KEY,
+    store_id   TEXT NOT NULL,
+    created_at INTEGER NOT NULL
+  );
+
+  CREATE TABLE IF NOT EXISTS financeiro_movimentacoes (
+    id          INTEGER PRIMARY KEY AUTOINCREMENT,
+    store_id    TEXT NOT NULL,
+    conector    TEXT DEFAULT 'mercado_pago',
+    origem_id   TEXT NOT NULL,
+    data        TEXT,
+    descricao   TEXT,
+    tipo        TEXT,
+    valor       REAL DEFAULT 0,
+    categoria   TEXT,
+    raw_json    TEXT,
+    created_at  TEXT DEFAULT (datetime('now')),
+    UNIQUE(store_id, conector, origem_id, tipo)
+  );
+
+  `);
+  try { db.exec("ALTER TABLE financeiro_conectores ADD COLUMN teto_saidas REAL DEFAULT 0"); } catch(e) {}
+    console.log('[DB] Migração concluída.');
 }
 
 // ── Licenças ──────────────────────────────────────────────────────────────────
@@ -1060,13 +1135,162 @@ function marcarEnvioAvulsoPrimeiraMensagem(storeId, codigoRastreio) {
 }
 
 
+
+// ── Financeiro / Mercado Pago ────────────────────────────────────────────────
+function criarFinanceiroState(state, storeId) {
+  db.prepare(`
+    INSERT OR REPLACE INTO financeiro_oauth_states (state, store_id, created_at)
+    VALUES (?, ?, ?)
+  `).run(String(state), String(storeId), Date.now());
+}
+
+function getFinanceiroState(state) {
+  const row = db.prepare('SELECT * FROM financeiro_oauth_states WHERE state = ?').get(String(state));
+  if (!row) return null;
+  if ((Date.now() - Number(row.created_at || 0)) > 1000 * 60 * 20) {
+    db.prepare('DELETE FROM financeiro_oauth_states WHERE state = ?').run(String(state));
+    return null;
+  }
+  return row;
+}
+
+function deleteFinanceiroState(state) {
+  db.prepare('DELETE FROM financeiro_oauth_states WHERE state = ?').run(String(state));
+}
+
+function salvarMercadoPagoConexao(storeId, dados) {
+  const d = dados || {};
+  db.prepare(`
+    INSERT INTO financeiro_conectores (
+      store_id, conector, status, mp_user_id, access_token, refresh_token,
+      expires_at, scope, teto_saidas, updated_at
+    ) VALUES (?, 'mercado_pago', 'conectado', ?, ?, ?, ?, ?, COALESCE((SELECT teto_saidas FROM financeiro_conectores WHERE store_id = ?), 0), datetime('now'))
+    ON CONFLICT(store_id) DO UPDATE SET
+      conector = 'mercado_pago',
+      status = 'conectado',
+      mp_user_id = excluded.mp_user_id,
+      access_token = excluded.access_token,
+      refresh_token = excluded.refresh_token,
+      expires_at = excluded.expires_at,
+      scope = excluded.scope,
+      updated_at = datetime('now')
+  `).run(
+    String(storeId),
+    d.mp_user_id ? String(d.mp_user_id) : (d.user_id ? String(d.user_id) : null),
+    d.access_token ? String(d.access_token) : null,
+    d.refresh_token ? String(d.refresh_token) : null,
+    d.expires_at ? Number(d.expires_at) : null,
+    d.scope ? String(d.scope) : null,
+    String(storeId)
+  );
+  return getMercadoPagoConexao(storeId);
+}
+
+function getMercadoPagoConexao(storeId) {
+  return db.prepare('SELECT * FROM financeiro_conectores WHERE store_id = ?').get(String(storeId)) || null;
+}
+
+function desconectarMercadoPago(storeId) {
+  db.prepare(`
+    UPDATE financeiro_conectores
+    SET status = 'desconectado',
+        access_token = NULL,
+        refresh_token = NULL,
+        updated_at = datetime('now')
+    WHERE store_id = ?
+  `).run(String(storeId));
+  return getMercadoPagoConexao(storeId);
+}
+
+function salvarTetoSaidas(storeId, teto) {
+  const valor = Number(teto || 0);
+  db.prepare(`
+    INSERT INTO financeiro_conectores (store_id, conector, status, teto_saidas, updated_at)
+    VALUES (?, 'mercado_pago', 'desconectado', ?, datetime('now'))
+    ON CONFLICT(store_id) DO UPDATE SET
+      teto_saidas = excluded.teto_saidas,
+      updated_at = datetime('now')
+  `).run(String(storeId), valor);
+  return getMercadoPagoConexao(storeId);
+}
+
+function salvarMovimentacaoFinanceira(m) {
+  const x = m || {};
+  db.prepare(`
+    INSERT INTO financeiro_movimentacoes (
+      store_id, conector, origem_id, data, descricao, tipo, valor, categoria, raw_json
+    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+    ON CONFLICT(store_id, conector, origem_id, tipo) DO UPDATE SET
+      data = excluded.data,
+      descricao = excluded.descricao,
+      valor = excluded.valor,
+      categoria = excluded.categoria,
+      raw_json = excluded.raw_json
+  `).run(
+    String(x.store_id),
+    x.conector ? String(x.conector) : 'mercado_pago',
+    String(x.origem_id),
+    x.data ? String(x.data) : null,
+    x.descricao ? String(x.descricao) : null,
+    x.tipo ? String(x.tipo) : null,
+    Number(x.valor || 0),
+    x.categoria ? String(x.categoria) : null,
+    x.raw_json ? JSON.stringify(x.raw_json) : null
+  );
+}
+
+function listarMovimentacoesFinanceiras(storeId, inicio, fim, limit = 200) {
+  const lim = Math.max(1, Math.min(Number(limit) || 200, 500));
+  return db.prepare(`
+    SELECT id, store_id, conector, origem_id, data, descricao, tipo, valor, categoria, created_at
+    FROM financeiro_movimentacoes
+    WHERE store_id = ?
+      AND (date(data) >= date(?) OR ? IS NULL)
+      AND (date(data) <= date(?) OR ? IS NULL)
+    ORDER BY datetime(data) DESC
+    LIMIT ?
+  `).all(String(storeId), inicio || null, inicio || null, fim || null, fim || null, lim);
+}
+
+function getResumoFinanceiro(storeId, inicio, fim) {
+  const rows = listarMovimentacoesFinanceiras(storeId, inicio, fim, 500);
+  const conn = getMercadoPagoConexao(storeId);
+  const resumo = {
+    entradas: 0,
+    saidas: 0,
+    taxas: 0,
+    estornos: 0,
+    saldo_operacional: 0,
+    teto_saidas: Number(conn?.teto_saidas || 0),
+    disponivel_teto: Number(conn?.teto_saidas || 0),
+    uso_teto_percentual: 0
+  };
+
+  for (const r of rows) {
+    const v = Math.abs(Number(r.valor || 0));
+    if (r.tipo === 'entrada') resumo.entradas += v;
+    if (r.tipo === 'taxa') { resumo.taxas += v; resumo.saidas += v; }
+    if (r.tipo === 'estorno') { resumo.estornos += v; resumo.saidas += v; }
+    if (r.tipo === 'saida') resumo.saidas += v;
+  }
+
+  resumo.saldo_operacional = resumo.entradas - resumo.saidas;
+  resumo.disponivel_teto = resumo.teto_saidas ? Math.max(0, resumo.teto_saidas - resumo.saidas) : 0;
+  resumo.uso_teto_percentual = resumo.teto_saidas ? (resumo.saidas / resumo.teto_saidas) * 100 : 0;
+
+  return { resumo, movimentacoes: rows, conexao: conn };
+}
+
 function limparSessoesPainelExpiradas() {
   db.prepare('DELETE FROM painel_sessoes WHERE expires_at < ?').run(Date.now());
 }
 
 
 module.exports = {
-  jaPedidoRecebido,
+  criarFinanceiroState, getFinanceiroState, deleteFinanceiroState,
+  salvarMercadoPagoConexao, getMercadoPagoConexao, desconectarMercadoPago,
+  salvarTetoSaidas, salvarMovimentacaoFinanceira, listarMovimentacoesFinanceiras, getResumoFinanceiro,
+    jaPedidoRecebido,
   salvarEnvioAvulso, getEnvioAvulso, listarEnviosAvulsos, listarEnviosAvulsosMonitorar,
   atualizarEnvioAvulsoStatus, marcarEnvioAvulsoPrimeiraMensagem,
   listarClientesOperacionais, getClienteOperacional, listarLogsPorStore, getResumoAutomacoesStore,
