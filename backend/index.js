@@ -1914,16 +1914,22 @@ app.get('/pedidos/:storeId', auth, async (req, res) => {
         statusPrazo = diasUteis > prazo ? 'atrasado' : diasUteis === prazo ? 'hoje' : 'ok';
       }
       const statusRastreio = temRastreio ? db.statusRastreio(o.shipping_tracking_number.trim()) : null;
+      const satisfacaoEnviada = db.jaSatisfacaoEnviada ? db.jaSatisfacaoEnviada(String(o.id)) : false;
+      const recebido = !!(
+        satisfacaoEnviada ||
+        (statusRastreio && String(statusRastreio).toLowerCase().includes('entregue'))
+      );
       resultado.push({
         order_id: String(o.id), numero: o.number, cliente: o.contact_name || '',
         telefone: tel, rastreio: o.shipping_tracking_number || '',
         transportadora: o.shipping_option || '',
         status: foiEnviado ? 'shipped' : (o.shipping_status || 'pending'),
-        statusRastreio, diasUteis, statusPrazo, ja_notificado: jaEnviado, created_at: o.created_at
+        statusRastreio, recebido, satisfacao_enviada: satisfacaoEnviada,
+        diasUteis, statusPrazo, ja_notificado: jaEnviado, created_at: o.created_at
       });
     }
     resultado.sort((a, b) => {
-      const p = x => x.statusPrazo === 'atrasado' ? 0 : x.statusPrazo === 'hoje' ? 1 : x.status === 'shipped' ? 2 : 3;
+      const p = x => x.statusPrazo === 'atrasado' ? 0 : x.statusPrazo === 'hoje' ? 1 : x.recebido ? 4 : x.status === 'shipped' ? 2 : 3;
       return p(a) - p(b);
     });
     res.json({ success: true, total: resultado.length, pedidos: resultado });
