@@ -2146,12 +2146,24 @@ async function mpSyncPagamentos(storeId, range) {
   return { total_importados: results.length };
 }
 
-app.get('/mercadopago/connect/:storeId', auth, (req, res) => {
+function handleMercadoPagoConnect(req, res) {
   try {
     const url = mpAuthUrl(req.params.storeId);
-    res.redirect(url);
+    return res.redirect(url);
   } catch(e) {
-    res.status(500).send(`Erro ao iniciar conexão Mercado Pago: ${e.message}`);
+    return res.status(500).send(`Erro ao iniciar conexão Mercado Pago: ${e.message}`);
+  }
+}
+
+app.get('/mercadopago/connect/:storeId', auth, handleMercadoPagoConnect);
+app.get('/api/mercadopago/connect/:storeId', auth, handleMercadoPagoConnect);
+app.get('/financeiro/mercadopago/connect/:storeId', auth, handleMercadoPagoConnect);
+app.get('/financeiro/mercadopago/connect-url/:storeId', auth, (req, res) => {
+  try {
+    const url = mpAuthUrl(req.params.storeId);
+    res.json({ success: true, url });
+  } catch(e) {
+    res.status(500).json({ error: e.message });
   }
 });
 
