@@ -2096,6 +2096,11 @@ async function mpSyncPagamentos(storeId, range) {
     const valorBruto = Number(p.transaction_amount || 0);
     const estornado = Number(p.transaction_amount_refunded || 0);
 
+    const descricaoLower = String(descricao || '').toLowerCase();
+    const ehCreditoNuvemEnvio = descricaoLower.includes('crédito nuvem envio') ||
+      descricaoLower.includes('credito nuvem envio') ||
+      descricaoLower.includes('nuvem envio');
+
     if (status === 'approved' && valorBruto > 0) {
       db.salvarMovimentacaoFinanceira({
         store_id: storeId,
@@ -2103,10 +2108,15 @@ async function mpSyncPagamentos(storeId, range) {
         origem_id: paymentId,
         data,
         descricao,
-        tipo: 'entrada',
+        tipo: ehCreditoNuvemEnvio ? 'saida' : 'entrada',
         valor: valorBruto,
-        categoria: 'pagamento_aprovado',
-        raw_json: p
+        categoria: ehCreditoNuvemEnvio ? 'frete_nuvem_envio' : 'pagamento_aprovado',
+        raw_json: {
+          ...p,
+          classificacao_loggzap: ehCreditoNuvemEnvio
+            ? 'Classificado como saída porque Crédito Nuvem Envio é custo de frete.'
+            : 'Classificado como entrada.'
+        }
       });
     }
 
