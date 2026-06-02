@@ -1987,6 +1987,141 @@ app.get('/rastreio-publico', async (req, res) => {
   res.json({ success: true, evento });
 });
 
+
+// ── Diagnóstico — Envios avulsos / Nuvem Envio ───────────────────────────────
+// Uso interno. Esta rota NÃO dispara mensagens e NÃO altera dados.
+// Ela testa possíveis endpoints da Nuvemshop/Nuvem Envio para descobrir onde
+// aparecem envios avulsos do tipo #EA2766.
+app.get('/diag/envios-avulsos/:storeId', auth, async (req, res) => {
+  const { storeId } = req.params;
+  const envioId = String(req.query.envio || req.query.id || '').replace(/^#/, '').trim();
+  const codigo = String(req.query.codigo || req.query.rastreio || '').trim();
+
+  const candidatos = [
+    { nome: 'orders_recentes', path: '/orders', params: { per_page: 50, page: 1, fields: 'id,number,contact_name,contact_phone,contact_email,shipping_status,shipping_tracking_number,shipping_tracking_url,shipping_option,created_at,total,customer' } },
+    { nome: 'orders_search_envio', path: '/orders', params: { per_page: 50, page: 1, q: envioId || codigo || 'EA' } },
+    { nome: 'shipping_options', path: '/shipping_options', params: { per_page: 20, page: 1 } },
+    { nome: 'shipping_carriers', path: '/shipping_carriers', params: { per_page: 20, page: 1 } },
+    { nome: 'shipping_methods', path: '/shipping_methods', params: { per_page: 20, page: 1 } },
+    { nome: 'shipping_labels', path: '/shipping_labels', params: { per_page: 20, page: 1 } },
+    { nome: 'shipments', path: '/shipments', params: { per_page: 20, page: 1 } },
+    { nome: 'shipping_shipments', path: '/shipping/shipments', params: { per_page: 20, page: 1 } },
+    { nome: 'logistics_shipments', path: '/logistics/shipments', params: { per_page: 20, page: 1 } },
+    { nome: 'nuvem_envio_shipments', path: '/nuvem_envio/shipments', params: { per_page: 20, page: 1 } },
+    { nome: 'fulfillments', path: '/fulfillments', params: { per_page: 20, page: 1 } }
+  ];
+
+  if (envioId) {
+    candidatos.push(
+      { nome: 'shipping_label_por_id', path: `/shipping_labels/${encodeURIComponent(envioId)}`, params: {} },
+      { nome: 'shipment_por_id', path: `/shipments/${encodeURIComponent(envioId)}`, params: {} },
+      { nome: 'nuvem_envio_por_id', path: `/nuvem_envio/shipments/${encodeURIComponent(envioId)}`, params: {} }
+    );
+  }
+
+  function limitarObjeto(obj, depth = 0) {
+    if (obj === null || obj === undefined) return obj;
+    if (depth > 3) return '[depth-limit]';
+    if (Array.isArray(obj)) return obj.slice(0, 3).map(v => limitarObjeto(v, depth + 1));
+    if (typeof obj !== 'object') return obj;
+
+    const out = {};
+    for (const [k, v] of Object.entries(obj).slice(0, 30)) {
+      const key = String(k).toLowerCase();
+
+      // Reduzir exposição no diagnóstico. O objetivo é descobrir estrutura/endpoint,
+      // não vazar documento/endereço completo.
+      if (key.includes('cpf') || key.includes('cnpj') || key.includes('document')) {
+        out[k] = '[oculto]';
+      } else if (key.includes('address') || key.includes('endereco')) {
+        out[k] = '[endereço oculto]';
+      } else {
+        out[k] = limitarObjeto(v, depth + 1);
+      }
+    }
+    return out;
+  }
+
+  function extrairPossiveisEnvios(payload) {
+    const arr = Array.isArray(payload) ? payload : [payload];
+    return arr.flatMap(item => {
+      const campos = JSON.stringify(item || {}).toLowerCase();
+      const tracking = item?.shipping_tracking_number || item?.tracking_number || item?.tracking || item?.code || item?.codigo || '';
+      const number = item?.number || item?.id || item?.order_id || item?.shipment_id || '';
+      const ehAvulso = String(number).toUpperCase().startsWith('EA') || campos.includes('"avulso"') || campos.includes('#ea') || campos.includes('nuvem envio');
+      const bateCodigo = codigo && campos.includes(codigo.toLowerCase());
+      const bateEnvio = envioId && campos.includes(envioId.toLowerCase());
+      if (ehAvulso || bateCodigo || bateEnvio) {
+        return [{
+          id: item?.id || item?.shipment_id || item?.order_id || null,
+          numero: number || null,
+          cliente: item?.contact_name || item?.customer?.name || item?.shipping_address?.name || item?.name || null,
+          telefone: item?.contact_phone || item?.customer?.phone || item?.shipping_address?.phone || null,
+          email: item?.contact_email || item?.customer?.email || null,
+          rastreio: tracking || null,
+          status: item?.shipping_status || item?.status || null,
+          amostra: limitarObjeto(item)
+        }];
+      }
+      return [];
+    });
+  }
+
+  const resultados = [];
+
+  for (const c of candidatos) {
+    const inicio = Date.now();
+    try {
+      const data = await nuvemGet(storeId, c.path, c.params);
+      const arr = Array.isArray(data) ? data : (data ? [data] : []);
+      resultados.push({
+        nome: c.nome,
+        path: c.path,
+        params: c.params,
+        ok: true,
+        status: 200,
+        tempo_ms: Date.now() - inicio,
+        tipo: Array.isArray(data) ? 'array' : typeof data,
+        total_amostra: arr.length,
+        possiveis_envios_avulsos: extrairPossiveisEnvios(data),
+        sample_keys: arr[0] && typeof arr[0] === 'object' ? Object.keys(arr[0]).slice(0, 40) : [],
+        sample: limitarObjeto(arr[0] || data || null)
+      });
+    } catch (e) {
+      resultados.push({
+        nome: c.nome,
+        path: c.path,
+        params: c.params,
+        ok: false,
+        status: e.response?.status || null,
+        tempo_ms: Date.now() - inicio,
+        erro: e.response?.data?.message || e.response?.data?.description || e.message,
+        data: limitarObjeto(e.response?.data || null)
+      });
+    }
+  }
+
+  const encontrados = resultados.flatMap(r =>
+    (r.possiveis_envios_avulsos || []).map(x => ({ endpoint: r.nome, path: r.path, ...x }))
+  );
+
+  res.json({
+    success: true,
+    store_id: String(storeId),
+    filtros: { envio: envioId || null, codigo: codigo || null },
+    objetivo: 'Diagnosticar onde a Nuvemshop/Nuvem Envio expõe envios avulsos #EA para futura automação.',
+    aviso: 'Esta rota é somente leitura. Não envia WhatsApp, não marca notificado e não altera pedidos/envios.',
+    resumo: {
+      endpoints_testados: resultados.length,
+      endpoints_com_sucesso: resultados.filter(r => r.ok).length,
+      possiveis_envios_avulsos_encontrados: encontrados.length
+    },
+    encontrados,
+    resultados
+  });
+});
+
+
 app.get('/status', (req, res) => {
   const stores = db.getAllStores();
   res.json({ ok: true, lojas: stores.length, versao: '2.5.1', cron: 'ativo (30min)' });
