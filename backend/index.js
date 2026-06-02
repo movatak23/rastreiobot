@@ -2758,43 +2758,338 @@ app.post('/financeiro/mercadopago/extrato-colado/importar', auth, (req, res) => 
 });
 
 
+
+// ── Financeiro Oficial MP — entradas, saídas e teto ─────────────────────────
+function mpValorOficial(v) {
+  const s = String(v ?? '').trim();
+  if (!s) return 0;
+  const normalized = s.includes(',') ? s.replace(/\./g, '').replace(',', '.') : s;
+  const n = Number(normalized);
+  return Number.isFinite(n) ? n : 0;
+}
+
+function mpGet(row, names) {
+  const keys = Object.keys(row || {});
+  for (const n of names) {
+    if (row[n] !== undefined && row[n] !== null && String(row[n]).trim() !== '') return row[n];
+    const k = keys.find(x => x.toLowerCase() === String(n).toLowerCase());
+    if (k && String(row[k]).trim() !== '') return row[k];
+  }
+  return '';
+}
+
+function mpCsvRows(text) {
+  const raw = String(text || '').replace(/^\uFEFF/, '').trim();
+  if (!raw) return [];
+  const lines = raw.split(/\r?\n/).filter(Boolean);
+  if (!lines.length) return [];
+
+  const split = (line, sep) => {
+    const out = [];
+    let cur = '', q = false;
+    for (let i = 0; i < line.length; i++) {
+      const ch = line[i];
+      if (ch === '"') {
+        if (q && line[i + 1] === '"') { cur += '"'; i++; }
+        else q = !q;
+      } else if (ch === sep && !q) {
+        out.push(cur); cur = '';
+      } else cur += ch;
+    }
+    out.push(cur);
+    return out.map(v => String(v || '').trim());
+  };
+
+  const sep = (lines[0].split(';').length >= lines[0].split(',').length) ? ';' : ',';
+  const headers = split(lines[0], sep);
+  return lines.slice(1).map(line => {
+    const vals = split(line, sep);
+    const obj = {};
+    headers.forEach((h, i) => obj[h] = vals[i] ?? '');
+    return obj;
+  });
+}
+
+function mpMovimentoOficial(row, storeId) {
+  const tipoTransacao = String(mpGet(row, ['TRANSACTION_TYPE', 'Transaction type', 'TIPO_DE_TRANSACAO'])).toUpperCase();
+  const net = mpValorOficial(mpGet(row, [
+    'SETTLEMENT_NET_AMOUNT',
+    'Settlement net amount',
+    'REAL_AMOUNT',
+    'NET_CREDIT_AMOUNT',
+    'NET_RECEIVED_AMOUNT',
+    'AMOUNT'
+  ]));
+  const bruto = mpValorOficial(mpGet(row, ['TRANSACTION_AMOUNT', 'Transaction amount']));
+  const valorImpacto = net || bruto;
+  if (!valorImpacto) return null;
+
+  const tipo = valorImpacto >= 0 ? 'entrada' : 'saida';
+  const data = mpGet(row, ['TRANSACTION_DATE', 'SETTLEMENT_DATE', 'DATE', 'Data', 'DATA']) || new Date().toISOString();
+  const source = mpGet(row, ['SOURCE_ID', 'ORDER_ID', 'EXTERNAL_REFERENCE', 'ID']) || crypto.createHash('md5').update(JSON.stringify(row)).digest('hex');
+  const desc = [
+    tipoTransacao || 'MOVIMENTO',
+    mpGet(row, ['DESCRIPTION', 'DESCRICAO', 'METADATA', 'PAYMENT_METHOD_TYPE']),
+    source
+  ].filter(Boolean).join(' • ');
+
+  return {
+    store_id: storeId,
+    conector: 'mercado_pago',
+    origem_id: `oficial_mp:${source}:${tipoTransacao}:${Math.abs(valorImpacto).toFixed(2)}`,
+    data,
+    descricao: desc,
+    tipo,
+    valor: Math.abs(valorImpacto),
+    categoria: tipo === 'entrada' ? 'entrada_oficial_mp' : 'saida_oficial_mp',
+    raw_json: {
+      origem: 'relatorio_oficial_mp',
+      transaction_type: tipoTransacao,
+      settlement_net_amount: net,
+      transaction_amount: bruto,
+      row
+    }
+  };
+}
+
+function mpResumoOficial(storeId, inicio, fim) {
+  const dados = db.getResumoFinanceiro(storeId, inicio, fim);
+  const movs = (dados.movimentacoes || []).filter(m =>
+    String(m.categoria || '').includes('_oficial_mp') ||
+    String(m.raw_json || '').includes('relatorio_oficial_mp')
+  );
+
+  const conn = db.getMercadoPagoConexao(storeId);
+  const resumo = {
+    entradas: 0,
+    saidas: 0,
+    taxas: 0,
+    estornos: 0,
+    saldo_operacional: 0,
+    teto_saidas: Number(conn?.teto_saidas || 0),
+    disponivel_teto: Number(conn?.teto_saidas || 0),
+    uso_teto_percentual: 0
+  };
+
+  for (const m of movs) {
+    const v = Math.abs(Number(m.valor || 0));
+    if (m.tipo === 'entrada') resumo.entradas += v;
+    if (m.tipo === 'saida') resumo.saidas += v;
+  }
+
+  resumo.saldo_operacional = resumo.entradas - resumo.saidas;
+  resumo.disponivel_teto = resumo.teto_saidas ? Math.max(0, resumo.teto_saidas - resumo.saidas) : 0;
+  resumo.uso_teto_percentual = resumo.teto_saidas ? (resumo.saidas / resumo.teto_saidas) * 100 : 0;
+
+  return { resumo, movimentacoes: movs, conexao: conn };
+}
+
+async function mpConfigOficial(storeId) {
+  const token = await mpGarantirToken(storeId);
+  const conn = db.getMercadoPagoConexao(storeId);
+  const prefix = `loggzap-oficial-${String(conn?.mp_user_id || storeId)}`;
+
+  const payload = {
+    file_name_prefix: prefix,
+    show_fee_prevision: false,
+    show_chargeback_cancel: true,
+    scheduled: false,
+    coupon_detailed: false,
+    include_withdraw: true,
+    shipping_detail: true,
+    refund_detailed: true,
+    display_timezone: 'GMT-03',
+    header_language: 'en',
+    separator: ';',
+    columns: [
+      { key: 'TRANSACTION_DATE' },
+      { key: 'SOURCE_ID' },
+      { key: 'EXTERNAL_REFERENCE' },
+      { key: 'TRANSACTION_TYPE' },
+      { key: 'TRANSACTION_AMOUNT' },
+      { key: 'SETTLEMENT_NET_AMOUNT' }
+    ]
+  };
+
+  try {
+    await axios.post('https://api.mercadopago.com/v1/account/settlement_report/config', payload, {
+      headers: { Authorization: `Bearer ${token}`, accept: 'application/json', 'Content-Type': 'application/json' },
+      timeout: 25000
+    });
+  } catch(e) {
+    try {
+      await axios.put('https://api.mercadopago.com/v1/account/settlement_report/config', payload, {
+        headers: { Authorization: `Bearer ${token}`, accept: 'application/json', 'Content-Type': 'application/json' },
+        timeout: 25000
+      });
+    } catch(e2) {
+      // Se já houver configuração válida, continuamos; se for erro real, a geração vai apontar.
+      console.warn('[MP Oficial] Config warning:', e2.response?.data || e2.message);
+    }
+  }
+}
+
+async function mpGerarOficial(storeId, range) {
+  const token = await mpGarantirToken(storeId);
+  await mpConfigOficial(storeId);
+  const res = await axios.post('https://api.mercadopago.com/v1/account/settlement_report', {
+    begin_date: range.inicioISO,
+    end_date: range.fimISO
+  }, {
+    headers: { Authorization: `Bearer ${token}`, accept: 'application/json', 'Content-Type': 'application/json' },
+    timeout: 25000
+  });
+  db.salvarRelatorioMercadoPago(storeId, res.data || {});
+  return res.data;
+}
+
+async function mpListarOficial(storeId, range) {
+  const token = await mpGarantirToken(storeId);
+  const tentativas = [];
+
+  async function tentar(url) {
+    try {
+      const res = await axios.get(url, {
+        headers: { Authorization: `Bearer ${token}`, accept: 'application/json' },
+        timeout: 25000
+      });
+      return res.data;
+    } catch(e) {
+      tentativas.push({ url, error: e.response?.data || e.message });
+      return null;
+    }
+  }
+
+  const search = new URL('https://api.mercadopago.com/v1/account/settlement_report/search');
+  search.searchParams.set('begin_date', range.inicioISO);
+  search.searchParams.set('end_date', range.fimISO);
+  search.searchParams.set('limit', '50');
+  let data = await tentar(search.toString());
+  if (!data) data = await tentar('https://api.mercadopago.com/v1/account/settlement_report/list');
+
+  const list = Array.isArray(data) ? data : (data?.results || data?.reports || data?.data || []);
+  for (const r of list) db.salvarRelatorioMercadoPago(storeId, r);
+  return { list, tentativas };
+}
+
+async function mpImportarOficialFile(storeId, fileName) {
+  const token = await mpGarantirToken(storeId);
+  const res = await axios.get(`https://api.mercadopago.com/v1/account/settlement_report/${encodeURIComponent(fileName)}`, {
+    headers: { Authorization: `Bearer ${token}` },
+    responseType: 'text',
+    transformResponse: [d => d],
+    timeout: 50000
+  });
+
+  const rows = mpCsvRows(res.data);
+  let importadas = 0;
+  let ignoradas = 0;
+  for (const row of rows) {
+    const mov = mpMovimentoOficial(row, storeId);
+    if (!mov) { ignoradas++; continue; }
+    db.salvarMovimentacaoFinanceira(mov);
+    importadas++;
+  }
+  return { file_name: fileName, linhas: rows.length, importadas, ignoradas };
+}
+
+async function mpSincronizarOficial(storeId, query = {}) {
+  const range = mpMonthRange(query);
+  const conn = db.getMercadoPagoConexao(storeId);
+  if (!conn || conn.status !== 'conectado' || !conn.access_token) {
+    return {
+      conectado: false,
+      status_oficial: 'desconectado',
+      mensagem: 'Mercado Pago ainda não conectado.',
+      periodo: { inicio: range.inicioDate, fim: range.fimDate },
+      ...mpResumoOficial(storeId, range.inicioDate, range.fimDate)
+    };
+  }
+
+  const listOut = await mpListarOficial(storeId, range);
+  const arquivos = (listOut.list || []).filter(r => r.file_name || r.filename || r.file);
+  let importadas = 0;
+  let importados = [];
+
+  for (const r of arquivos.slice(0, 5)) {
+    const file = r.file_name || r.filename || r.file;
+    if (!file) continue;
+    try {
+      const out = await mpImportarOficialFile(storeId, file);
+      importadas += out.importadas || 0;
+      importados.push(out);
+    } catch(e) {
+      console.warn('[MP Oficial] Falha ao importar', file, e.response?.data || e.message);
+    }
+  }
+
+  let gerado = null;
+  let status = importadas > 0 ? 'importado' : 'aguardando_relatorio';
+
+  if (!arquivos.length || importadas === 0) {
+    try {
+      gerado = await mpGerarOficial(storeId, range);
+      status = 'relatorio_solicitado';
+    } catch(e) {
+      console.error('[MP Oficial] Falha ao gerar:', e.response?.data || e.message);
+      throw e;
+    }
+  }
+
+  const dados = mpResumoOficial(storeId, range.inicioDate, range.fimDate);
+  return {
+    conectado: true,
+    status_oficial: status,
+    mensagem: status === 'importado'
+      ? 'Relatório oficial importado.'
+      : 'Relatório oficial solicitado. Aguarde alguns minutos e atualize novamente.',
+    periodo: { inicio: range.inicioDate, fim: range.fimDate },
+    importadas,
+    importados,
+    relatorios_encontrados: arquivos.length,
+    gerado,
+    ...dados
+  };
+}
+
+
 app.get('/financeiro/mercadopago/:storeId', auth, async (req, res) => {
   const { storeId } = req.params;
   const range = mpMonthRange(req.query);
   try {
     const conn = db.getMercadoPagoConexao(storeId);
-    if (!conn || conn.status !== 'conectado' || !conn.access_token) {
-      const resumo = db.getResumoFinanceiro(storeId, range.inicioDate, range.fimDate).resumo;
-      return res.json({
-        success: true,
-        conectado: false,
-        aviso: 'Mercado Pago ainda não conectado.',
-        periodo: { inicio: range.inicioDate, fim: range.fimDate },
-        resumo,
-        movimentacoes: []
-      });
-    }
-
-    let sync = null;
-    if (req.query.sync !== 'false') {
-      sync = await mpSyncPagamentos(storeId, range);
-    }
-
-    const dados = db.getResumoFinanceiro(storeId, range.inicioDate, range.fimDate);
+    const dados = mpResumoOficial(storeId, range.inicioDate, range.fimDate);
     res.json({
       success: true,
-      conectado: true,
+      conectado: !!(conn && conn.status === 'conectado' && conn.access_token),
+      fonte: 'relatorio_oficial_mercado_pago',
       periodo: { inicio: range.inicioDate, fim: range.fimDate },
-      sync,
       resumo: dados.resumo,
-      movimentacoes: dados.movimentacoes,
-      observacao: 'Dados combinados: API de pagamentos + extrato real importado via relatório Account Money/Settlement do Mercado Pago. Gere e importe o relatório para incluir saques, Pix enviados, transferências e compras da conta.'
+      movimentacoes: [],
+      ultima_atualizacao: dados.movimentacoes[0]?.created_at || null,
+      observacao: 'Resumo baseado apenas no relatório financeiro oficial do Mercado Pago. Positivos = entradas, negativos = saídas.'
     });
   } catch(e) {
-    console.error('[Financeiro MP]', e.response?.data || e.message);
-    res.status(500).json({ error: e.response?.data?.message || e.message });
+    console.error('[Financeiro MP Oficial Resumo]', e.response?.data || e.message);
+    res.status(500).json({ error: e.response?.data?.message || e.message, details: e.response?.data || null });
   }
 });
+
+app.post('/financeiro/mercadopago/oficial/sincronizar', auth, async (req, res) => {
+  const { store_id, inicio, fim } = req.body || {};
+  if (!store_id) return res.status(400).json({ error: 'store_id obrigatório.' });
+  try {
+    const out = await mpSincronizarOficial(String(store_id), { inicio, fim });
+    res.json({ success: true, ...out });
+  } catch(e) {
+    console.error('[Financeiro MP Oficial Sync]', e.response?.data || e.message);
+    res.status(500).json({
+      error: e.response?.data?.message || e.message,
+      details: e.response?.data || null
+    });
+  }
+});
+
 
 
 // ── Envios Avulsos — processamento manual assistido ─────────────────────────
