@@ -2527,6 +2527,18 @@ app.post('/financeiro/mercadopago/desconectar', auth, (req, res) => {
 });
 
 
+
+app.get('/financeiro/mercadopago/relatorio/status-rota/:storeId', auth, (req, res) => {
+  const conn = db.getMercadoPagoConexao(req.params.storeId);
+  res.json({
+    success: true,
+    rota_relatorio_ativa: true,
+    mercado_pago_conectado: !!(conn && conn.status === 'conectado' && conn.access_token),
+    store_id: String(req.params.storeId)
+  });
+});
+
+
 app.post('/financeiro/mercadopago/relatorio/configurar', auth, async (req, res) => {
   const { store_id } = req.body || {};
   if (!store_id) return res.status(400).json({ error: 'store_id obrigatório.' });
@@ -2572,6 +2584,176 @@ app.post('/financeiro/mercadopago/relatorio/importar', auth, async (req, res) =>
   } catch(e) {
     console.error('[MP Settlement Importar]', e.response?.data || e.message);
     res.status(500).json({ error: e.response?.data?.message || e.message, details: e.response?.data || null });
+  }
+});
+
+
+
+function normalizarValorBR(valor) {
+  const s = String(valor || '').replace(/[^\d,.-]/g, '').trim();
+  if (!s) return 0;
+  const normalized = s.includes(',') ? s.replace(/\./g, '').replace(',', '.') : s;
+  const n = Number(normalized);
+  return Number.isFinite(n) ? n : 0;
+}
+
+function hashExtratoManual(storeId, descricao, valor, data) {
+  return crypto.createHash('sha1')
+    .update([storeId, descricao, valor, data].map(v => String(v || '').trim().toLowerCase()).join('|'))
+    .digest('hex');
+}
+
+function classificarTextoExtratoMercadoPago(descricao, valorInformado) {
+  const texto = String(descricao || '').toLowerCase();
+  const valor = Number(valorInformado || 0);
+
+  const termosSaida = [
+    'pix enviado', 'transferência enviada', 'transferencia enviada',
+    'pagamento mercado livre', 'pagamento com qr pix', 'pagamento pix',
+    'uber', 'canva', 'mercado livre', 'amazon', 'shopee', 'aliexpress',
+    'nuvem envio', 'crédito nuvem envio', 'credito nuvem envio',
+    'saque', 'retirada', 'envio de dinheiro', 'compra'
+  ];
+
+  const termosEntrada = [
+    'transferência recebida', 'transferencia recebida',
+    'pix recebido', 'recebimento', 'pagamento recebido',
+    'venda', 'dinheiro recebido', 'entrada'
+  ];
+
+  if (valor < 0 || termosSaida.some(t => texto.includes(t))) {
+    return { tipo: 'saida', categoria: texto.includes('uber') ? 'transporte_uber' : texto.includes('nuvem envio') ? 'frete_nuvem_envio' : 'saida_extrato_manual' };
+  }
+
+  if (valor > 0 || termosEntrada.some(t => texto.includes(t))) {
+    return { tipo: 'entrada', categoria: 'entrada_extrato_manual' };
+  }
+
+  return { tipo: 'saida', categoria: 'saida_extrato_manual' };
+}
+
+function parseExtratoMercadoPagoTexto(texto, storeId) {
+  const raw = String(texto || '').replace(/\r/g, '\n');
+  const linhas = raw.split('\n').map(l => l.trim()).filter(Boolean);
+
+  const movimentos = [];
+  let buffer = [];
+
+  const valorRegex = /([+-]?\s*R\$\s*[\d.]+,\d{2}|R\$\s*[\d.]+,\d{2}\s*[+-]?)/i;
+  const dataRegex = /(\d{1,2}\/\d{1,2}(?:\/\d{2,4})?|\d{4}-\d{2}-\d{2}|hoje|ontem)/i;
+
+  function normalizarData(s) {
+    const hoje = new Date();
+    const lower = String(s || '').toLowerCase();
+    if (lower.includes('hoje')) return hoje.toISOString();
+    if (lower.includes('ontem')) {
+      const d = new Date();
+      d.setDate(d.getDate() - 1);
+      return d.toISOString();
+    }
+    const m = String(s || '').match(/\d{1,2}\/\d{1,2}(?:\/\d{2,4})?/);
+    if (m) {
+      const parts = m[0].split('/');
+      const dia = Number(parts[0]);
+      const mes = Number(parts[1]);
+      let ano = parts[2] ? Number(parts[2]) : hoje.getFullYear();
+      if (ano < 100) ano += 2000;
+      return new Date(ano, mes - 1, dia, 12, 0, 0).toISOString();
+    }
+    const iso = String(s || '').match(/\d{4}-\d{2}-\d{2}/);
+    if (iso) return new Date(iso[0] + 'T12:00:00').toISOString();
+    return hoje.toISOString();
+  }
+
+  function flush(linhaComValor) {
+    const bloco = [...buffer, linhaComValor].join(' ').replace(/\s+/g, ' ').trim();
+    buffer = [];
+
+    const vm = bloco.match(valorRegex);
+    if (!vm) return;
+
+    const valorToken = vm[0];
+    const temMenos = /-\s*R\$|R\$[^+-]*-/.test(valorToken) || bloco.includes('- R$');
+    const temMais = /\+\s*R\$|R\$[^+-]*\+/.test(valorToken) || bloco.includes('+ R$');
+
+    let valor = normalizarValorBR(valorToken);
+    if (temMenos) valor = -Math.abs(valor);
+    if (temMais) valor = Math.abs(valor);
+
+    let descricao = bloco.replace(valorRegex, ' ').replace(dataRegex, ' ').replace(/\s+/g, ' ').trim();
+    if (!descricao) descricao = 'Movimentação Mercado Pago';
+
+    const dm = bloco.match(dataRegex);
+    const data = normalizarData(dm ? dm[0] : '');
+
+    const classificacao = classificarTextoExtratoMercadoPago(descricao, valor);
+    const origemHash = hashExtratoManual(storeId, descricao, Math.abs(valor).toFixed(2), data.slice(0, 10));
+
+    movimentos.push({
+      origem_id: `manual_mp:${origemHash}`,
+      data,
+      descricao,
+      tipo: classificacao.tipo,
+      valor: Math.abs(valor),
+      categoria: classificacao.categoria,
+      raw_json: { origem: 'extrato_colado', bloco, valor_original: valorToken }
+    });
+  }
+
+  for (const linha of linhas) {
+    if (valorRegex.test(linha)) flush(linha);
+    else buffer.push(linha);
+    if (buffer.length > 4) buffer.shift();
+  }
+
+  return movimentos;
+}
+
+app.post('/financeiro/mercadopago/extrato-colado/importar', auth, (req, res) => {
+  const { store_id, texto } = req.body || {};
+  if (!store_id) return res.status(400).json({ error: 'store_id obrigatório.' });
+  if (!texto || String(texto).trim().length < 10) return res.status(400).json({ error: 'Cole o texto do extrato do Mercado Pago.' });
+
+  try {
+    const movimentos = parseExtratoMercadoPagoTexto(texto, String(store_id));
+    if (!movimentos.length) {
+      return res.status(400).json({
+        error: 'Não encontrei movimentações com valor no texto colado. Copie o texto do extrato ou use OCR antes de colar.'
+      });
+    }
+
+    let importadas = 0;
+    let duplicadas = 0;
+
+    for (const m of movimentos) {
+      const antes = db.listarMovimentacoesFinanceiras(store_id, m.data.slice(0, 10), m.data.slice(0, 10), 500)
+        .find(x => x.origem_id === m.origem_id && x.tipo === m.tipo);
+      db.salvarMovimentacaoFinanceira({
+        store_id,
+        conector: 'mercado_pago',
+        origem_id: m.origem_id,
+        data: m.data,
+        descricao: m.descricao,
+        tipo: m.tipo,
+        valor: m.valor,
+        categoria: m.categoria,
+        raw_json: m.raw_json
+      });
+      if (antes) duplicadas++;
+      else importadas++;
+    }
+
+    res.json({
+      success: true,
+      mensagem: 'Extrato colado importado com sucesso.',
+      total_lidas: movimentos.length,
+      importadas,
+      duplicadas,
+      movimentos: movimentos.slice(0, 50)
+    });
+  } catch(e) {
+    console.error('[Extrato colado MP]', e.message);
+    res.status(500).json({ error: e.message });
   }
 });
 
