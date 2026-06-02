@@ -1615,6 +1615,7 @@ cron.schedule('*/30 * * * *', async () => {
       await verificarBoletosPendentes(store.store_id);
       await verificarCarrinhosAbandonados(store.store_id);
       await verificarRastreios(store.store_id);
+      await verificarEnviosAvulsos(store.store_id);
       await verificarPosEntrega(store.store_id);
       await verificarPedidosParados(store.store_id);
     }
@@ -1986,6 +1987,251 @@ app.get('/rastreio-publico', async (req, res) => {
   if (!evento) return res.json({ success: false, error: 'Não encontrado.' });
   res.json({ success: true, evento });
 });
+
+
+
+// ── Envios Avulsos — processamento manual assistido ─────────────────────────
+function extrairEnvioAvulsoDoTexto(texto) {
+  const raw = String(texto || '').replace(/\r/g, '').trim();
+  const linhas = raw.split('\n').map(l => l.trim()).filter(Boolean);
+  const semCpf = raw.replace(/\d{3}\.?\d{3}\.?\d{3}-?\d{2}/g, ' ');
+
+  const rastreio = (raw.match(/\b[A-Z]{2}\d{9}[A-Z]{2}\b/i) || [])[0]?.toUpperCase() || null;
+  const codigoEnvio = (raw.match(/#?\bEA\d+\b/i) || [])[0]?.replace(/^#/, '').toUpperCase() || (rastreio ? `EA-${rastreio}` : null);
+  const email = (raw.match(/[A-Z0-9._%+-]+@[A-Z0-9.-]+\.[A-Z]{2,}/i) || [])[0] || null;
+  const valor = (raw.match(/R\$\s*\d{1,3}(?:\.\d{3})*,\d{2}/i) || [])[0] || null;
+  const prazo = (raw.match(/\d+\s*a\s*\d+\s*dias(?:\s*úteis|\s*uteis)?/i) || [])[0] || null;
+
+  let telefone = null;
+  const linhasTelefone = linhas.filter(l => /telefone|celular|whats|whatsapp|\(\d{2}\)/i.test(l) && !/cpf|cnpj/i.test(l));
+  const candidatosTel = [...linhasTelefone, semCpf].join('\n').match(/(?:\+?55\s*)?(?:\(?\d{2}\)?\s*)9?\d{4}[-\s]?\d{4}/g) || [];
+  for (const c of candidatosTel) {
+    const f = formatTel(c);
+    if (f) { telefone = f; break; }
+  }
+
+  const ignorarLinha = (l) => {
+    const s = String(l || '').trim();
+    if (!s) return true;
+    if (/dados do cliente/i.test(s)) return true;
+    if (/cpf|cnpj/i.test(s)) return true;
+    if (rastreio && s.toUpperCase().includes(rastreio)) return true;
+    if (codigoEnvio && s.toUpperCase().replace('#','').includes(codigoEnvio.replace('#',''))) return true;
+    if (email && s.includes(email)) return true;
+    if (valor && s.includes(valor)) return true;
+    if (prazo && s.toLowerCase().includes(prazo.toLowerCase())) return true;
+    if (/\d{3}\.?\d{3}\.?\d{3}-?\d{2}/.test(s)) return true;
+    if (/(?:\+?55\s*)?(?:\(?\d{2}\)?\s*)9?\d{4}[-\s]?\d{4}/.test(s)) return true;
+    if (/^avulso$/i.test(s)) return true;
+    if (/^correios|pac|sedex|jadlog|loggi/i.test(s)) return true;
+    return false;
+  };
+
+  let nome = null;
+  const idxDados = linhas.findIndex(l => /dados do cliente/i.test(l));
+  if (idxDados >= 0) {
+    for (let i = idxDados + 1; i < linhas.length; i++) {
+      if (!ignorarLinha(linhas[i])) { nome = linhas[i]; break; }
+    }
+  }
+  if (!nome) nome = linhas.find(l => !ignorarLinha(l)) || 'Cliente';
+
+  let transportadora = 'Correios';
+  if (/jadlog/i.test(raw)) transportadora = 'Jadlog';
+  else if (/loggi/i.test(raw)) transportadora = 'Loggi';
+  else if (/correios|pac|sedex/i.test(raw)) transportadora = 'Correios';
+
+  let modalidade = null;
+  const modalidadeLinha = linhas.find(l => /(correios|pac|sedex|jadlog|loggi)/i.test(l));
+  if (modalidadeLinha) modalidade = modalidadeLinha;
+
+  const erros = [];
+  if (!rastreio) erros.push('Não encontrei o código de rastreio. Exemplo: AP022997557BR.');
+  if (!telefone) erros.push('Não encontrei o telefone com DDD. Exemplo: (75) 98196-4692.');
+  if (!nome || nome === 'Cliente') erros.push('Não encontrei o nome do cliente.');
+
+  return {
+    ok: erros.length === 0,
+    erros,
+    dados: {
+      codigo_envio: codigoEnvio,
+      nome_cliente: nome || 'Cliente',
+      telefone,
+      email,
+      codigo_rastreio: rastreio,
+      transportadora,
+      modalidade,
+      prazo,
+      valor,
+      raw_text: raw
+    }
+  };
+}
+
+function montarMensagemEnvioAvulso(envio, evento) {
+  const nome = envio.nome_cliente || 'Cliente';
+  const rastreio = envio.codigo_rastreio;
+  const numero = envio.codigo_envio || rastreio;
+  const transportadora = envio.transportadora || 'Correios';
+  const link = `https://rastreamento.correios.com.br/app/index.php?objeto=${rastreio}`;
+  const prazo = envio.prazo ? `\nPrazo estimado: *${envio.prazo}*` : '';
+
+  if (!evento) {
+    return `📮 Olá, ${nome}! Seu envio já foi gerado.\n\nCódigo de rastreio: *${rastreio}*\nTransportadora: *${transportadora}*${prazo}\n\n🔗 Acompanhe sua entrega:\n${link}`;
+  }
+
+  return montarMensagemRastreio({
+    cliente: nome,
+    numero,
+    rastreio
+  }, evento);
+}
+
+const processarEnvioAvulsoHandler = async (req, res) => {
+  const { store_id, texto } = req.body || {};
+  const storeId = String(store_id || '').trim();
+
+  if (!storeId) return res.status(400).json({ error: 'Store ID obrigatório.' });
+  if (!texto || String(texto).trim().length < 10) return res.status(400).json({ error: 'Cole os dados do envio avulso.' });
+
+  try {
+    const lic = db.getLicencaPorStore ? db.getLicencaPorStore(storeId) : null;
+    if (!lic || lic.plano !== 'premium') {
+      return res.status(403).json({ error: 'Envios avulsos automáticos estão disponíveis apenas no plano Premium.' });
+    }
+
+    const parsed = extrairEnvioAvulsoDoTexto(texto);
+    if (!parsed.ok) return res.status(400).json({ error: parsed.erros.join(' ') });
+
+    const dados = { ...parsed.dados, store_id: storeId };
+    const evento = await consultarCorreios(dados.codigo_rastreio);
+    const statusInicial = evento?.entregue ? 'entregue' : (evento?.descricao || evento?.status || 'capturado');
+
+    db.salvarEnvioAvulso({
+      ...dados,
+      ultimo_status: statusInicial,
+      ultimo_evento_json: evento ? JSON.stringify(evento) : null,
+      entregue_em: evento?.entregue ? new Date().toISOString() : null,
+      ativo: evento?.entregue ? 0 : 1
+    });
+
+    if (!await podEnviar(dados.telefone, storeId)) {
+      safeLogAutomacao({ store_id: storeId, tipo: 'envio_avulso_bloqueado_limite', pedido: dados.codigo_envio, telefone: dados.telefone, erro: 'Limite diário de mensagens atingido.' });
+      return res.status(429).json({ error: 'Este telefone já atingiu o limite diário de mensagens.' });
+    }
+
+    const fallback = montarMensagemEnvioAvulso(dados, evento);
+    const mensagem = getMensagemTemplate(storeId, evento ? getRastreioTemplateKey(evento) : 'pedido_postado', fallback, {
+      nome: dados.nome_cliente || 'Cliente',
+      numero: dados.codigo_envio || dados.codigo_rastreio,
+      codigo: dados.codigo_rastreio,
+      link: `https://rastreamento.correios.com.br/app/index.php?objeto=${dados.codigo_rastreio}`,
+      transportadora: dados.transportadora || 'Correios',
+      status: evento?.descricao || evento?.status || 'Envio gerado',
+      data: evento?.data || '',
+      hora: evento?.hora || ''
+    });
+
+    await sendWhatsApp(dados.telefone, mensagem, storeId);
+    db.registrarMensagem(dados.telefone);
+    db.registrarClienteAtivo(dados.telefone, storeId);
+    db.marcarEnvioAvulsoPrimeiraMensagem(storeId, dados.codigo_rastreio);
+
+    safeLogAutomacao({
+      store_id: storeId,
+      tipo: 'envio_avulso',
+      pedido: dados.codigo_envio || dados.codigo_rastreio,
+      telefone: dados.telefone,
+      mensagem,
+      extra: { rastreio: dados.codigo_rastreio, nome: dados.nome_cliente }
+    });
+
+    res.json({
+      success: true,
+      mensagem: 'Envio avulso capturado, mensagem enviada e rastreio em monitoramento.',
+      envio: db.getEnvioAvulso(storeId, dados.codigo_rastreio),
+      dados_extraidos: {
+        codigo_envio: dados.codigo_envio,
+        nome_cliente: dados.nome_cliente,
+        telefone: dados.telefone,
+        email: dados.email,
+        codigo_rastreio: dados.codigo_rastreio,
+        transportadora: dados.transportadora,
+        prazo: dados.prazo,
+        valor: dados.valor
+      }
+    });
+  } catch(e) {
+    console.error('[Envio Avulso] Erro:', e.message);
+    safeLogAutomacao({ store_id: storeId, tipo: 'envio_avulso_erro', erro: e.message });
+    res.status(500).json({ error: e.response?.data?.message || e.message });
+  }
+};
+
+app.post('/envios-avulsos/processar', auth, processarEnvioAvulsoHandler);
+app.post('/api/envios-avulsos/processar', auth, processarEnvioAvulsoHandler);
+app.post('/envio-avulso/processar', auth, processarEnvioAvulsoHandler);
+app.post('/envios-avulso/processar', auth, processarEnvioAvulsoHandler);
+
+
+const listarEnviosAvulsosHandler = (req, res) => {
+  try {
+    const envios = db.listarEnviosAvulsos(String(req.params.storeId), Number(req.query.limit || 100));
+    res.json({ success: true, total: envios.length, envios });
+  } catch(e) {
+    res.status(500).json({ error: e.message });
+  }
+};
+
+app.get('/envios-avulsos/:storeId', auth, listarEnviosAvulsosHandler);
+app.get('/api/envios-avulsos/:storeId', auth, listarEnviosAvulsosHandler);
+
+
+async function verificarEnviosAvulsos(storeId) {
+  try {
+    const envios = db.listarEnviosAvulsosMonitorar ? db.listarEnviosAvulsosMonitorar(storeId, 200) : [];
+    for (const envio of envios) {
+      if (!envio.codigo_rastreio || db.statusRastreio(envio.codigo_rastreio) === 'entregue') continue;
+
+      const evento = await consultarCorreios(envio.codigo_rastreio);
+      if (!evento) continue;
+
+      const statusAnterior = envio.ultimo_status || db.statusRastreio(envio.codigo_rastreio);
+      const statusNovo = evento.entregue ? 'entregue' : (evento.descricao || evento.status || '');
+      if (!statusNovo || statusNovo === statusAnterior) continue;
+
+      const mensagem = getMensagemTemplate(storeId, getRastreioTemplateKey(evento), montarMensagemEnvioAvulso(envio, evento), {
+        nome: envio.nome_cliente || 'Cliente',
+        numero: envio.codigo_envio || envio.codigo_rastreio,
+        codigo: envio.codigo_rastreio,
+        link: `https://rastreamento.correios.com.br/app/index.php?objeto=${envio.codigo_rastreio}`,
+        transportadora: envio.transportadora || 'Correios',
+        status: evento.descricao || evento.status || '',
+        data: evento.data || '',
+        hora: evento.hora || ''
+      });
+
+      if (!await podEnviar(envio.telefone, storeId)) continue;
+
+      await sendWhatsApp(envio.telefone, mensagem, storeId);
+      db.registrarMensagem(envio.telefone);
+      db.registrarClienteAtivo(envio.telefone, storeId);
+      db.atualizarEnvioAvulsoStatus(storeId, envio.codigo_rastreio, statusNovo, evento, evento.entregue);
+      db.atualizarStatusRastreio(envio.codigo_rastreio, statusNovo);
+
+      safeLogAutomacao({
+        store_id: storeId,
+        tipo: 'envio_avulso_monitoramento',
+        pedido: envio.codigo_envio || envio.codigo_rastreio,
+        telefone: envio.telefone,
+        mensagem,
+        extra: { rastreio: envio.codigo_rastreio, status: statusNovo }
+      });
+    }
+  } catch(e) {
+    console.error(`[Envio Avulso] Erro ao monitorar loja ${storeId}:`, e.message);
+  }
+}
 
 
 // ── Diagnóstico — Envios avulsos / Nuvem Envio ───────────────────────────────

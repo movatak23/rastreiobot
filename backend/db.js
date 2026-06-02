@@ -169,6 +169,30 @@ db.exec(`
     created_at TEXT DEFAULT (datetime('now'))
   );
 
+
+  CREATE TABLE IF NOT EXISTS envios_avulsos (
+    id                   INTEGER PRIMARY KEY AUTOINCREMENT,
+    store_id             TEXT NOT NULL,
+    codigo_envio          TEXT,
+    nome_cliente          TEXT,
+    telefone              TEXT NOT NULL,
+    email                 TEXT,
+    codigo_rastreio       TEXT NOT NULL,
+    transportadora        TEXT DEFAULT 'Correios',
+    modalidade            TEXT,
+    prazo                 TEXT,
+    valor                 TEXT,
+    ultimo_status         TEXT,
+    ultimo_evento_json    TEXT,
+    primeira_mensagem_em  TEXT,
+    entregue_em           TEXT,
+    ativo                 INTEGER DEFAULT 1,
+    raw_text              TEXT,
+    created_at            TEXT DEFAULT (datetime('now')),
+    updated_at            TEXT DEFAULT (datetime('now')),
+    UNIQUE(store_id, codigo_rastreio)
+  );
+
 `);
 
 function saveToken(storeId, accessToken) {
@@ -553,6 +577,29 @@ function migrar() {
       extra_json TEXT,
       created_at TEXT DEFAULT (datetime('now'))
     );
+
+  CREATE TABLE IF NOT EXISTS envios_avulsos (
+    id                   INTEGER PRIMARY KEY AUTOINCREMENT,
+    store_id             TEXT NOT NULL,
+    codigo_envio          TEXT,
+    nome_cliente          TEXT,
+    telefone              TEXT NOT NULL,
+    email                 TEXT,
+    codigo_rastreio       TEXT NOT NULL,
+    transportadora        TEXT DEFAULT 'Correios',
+    modalidade            TEXT,
+    prazo                 TEXT,
+    valor                 TEXT,
+    ultimo_status         TEXT,
+    ultimo_evento_json    TEXT,
+    primeira_mensagem_em  TEXT,
+    entregue_em           TEXT,
+    ativo                 INTEGER DEFAULT 1,
+    raw_text              TEXT,
+    created_at            TEXT DEFAULT (datetime('now')),
+    updated_at            TEXT DEFAULT (datetime('now')),
+    UNIQUE(store_id, codigo_rastreio)
+  );
   `);
   // Adiciona coluna device_id se não existir
   try { db.exec("ALTER TABLE licencas ADD COLUMN device_id TEXT"); } catch(e) {}
@@ -869,12 +916,118 @@ function getResumoAutomacoesStore(storeId) {
 }
 
 
+
+// ── Envios Avulsos ───────────────────────────────────────────────────────────
+function salvarEnvioAvulso(envio) {
+  const e = envio || {};
+  db.prepare(`
+    INSERT INTO envios_avulsos (
+      store_id, codigo_envio, nome_cliente, telefone, email, codigo_rastreio,
+      transportadora, modalidade, prazo, valor, ultimo_status, ultimo_evento_json,
+      primeira_mensagem_em, entregue_em, ativo, raw_text, updated_at
+    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, datetime('now'))
+    ON CONFLICT(store_id, codigo_rastreio) DO UPDATE SET
+      codigo_envio = COALESCE(excluded.codigo_envio, envios_avulsos.codigo_envio),
+      nome_cliente = COALESCE(excluded.nome_cliente, envios_avulsos.nome_cliente),
+      telefone = COALESCE(excluded.telefone, envios_avulsos.telefone),
+      email = COALESCE(excluded.email, envios_avulsos.email),
+      transportadora = COALESCE(excluded.transportadora, envios_avulsos.transportadora),
+      modalidade = COALESCE(excluded.modalidade, envios_avulsos.modalidade),
+      prazo = COALESCE(excluded.prazo, envios_avulsos.prazo),
+      valor = COALESCE(excluded.valor, envios_avulsos.valor),
+      ultimo_status = COALESCE(excluded.ultimo_status, envios_avulsos.ultimo_status),
+      ultimo_evento_json = COALESCE(excluded.ultimo_evento_json, envios_avulsos.ultimo_evento_json),
+      primeira_mensagem_em = COALESCE(envios_avulsos.primeira_mensagem_em, excluded.primeira_mensagem_em),
+      entregue_em = COALESCE(envios_avulsos.entregue_em, excluded.entregue_em),
+      ativo = excluded.ativo,
+      raw_text = COALESCE(excluded.raw_text, envios_avulsos.raw_text),
+      updated_at = datetime('now')
+  `).run(
+    String(e.store_id),
+    e.codigo_envio ? String(e.codigo_envio) : null,
+    e.nome_cliente ? String(e.nome_cliente) : null,
+    String(e.telefone),
+    e.email ? String(e.email) : null,
+    String(e.codigo_rastreio),
+    e.transportadora ? String(e.transportadora) : 'Correios',
+    e.modalidade ? String(e.modalidade) : null,
+    e.prazo ? String(e.prazo) : null,
+    e.valor ? String(e.valor) : null,
+    e.ultimo_status ? String(e.ultimo_status) : null,
+    e.ultimo_evento_json ? String(e.ultimo_evento_json) : null,
+    e.primeira_mensagem_em ? String(e.primeira_mensagem_em) : null,
+    e.entregue_em ? String(e.entregue_em) : null,
+    e.ativo === 0 ? 0 : 1,
+    e.raw_text ? String(e.raw_text) : null
+  );
+  return getEnvioAvulso(String(e.store_id), String(e.codigo_rastreio));
+}
+
+function getEnvioAvulso(storeId, codigoRastreio) {
+  return db.prepare(`
+    SELECT * FROM envios_avulsos
+    WHERE store_id = ? AND codigo_rastreio = ?
+  `).get(String(storeId), String(codigoRastreio));
+}
+
+function listarEnviosAvulsos(storeId, limit = 100) {
+  const lim = Math.max(1, Math.min(Number(limit) || 100, 500));
+  return db.prepare(`
+    SELECT * FROM envios_avulsos
+    WHERE store_id = ?
+    ORDER BY datetime(created_at) DESC
+    LIMIT ?
+  `).all(String(storeId), lim);
+}
+
+function listarEnviosAvulsosMonitorar(storeId, limit = 200) {
+  const lim = Math.max(1, Math.min(Number(limit) || 200, 500));
+  return db.prepare(`
+    SELECT * FROM envios_avulsos
+    WHERE store_id = ? AND ativo = 1 AND entregue_em IS NULL
+    ORDER BY datetime(updated_at) ASC
+    LIMIT ?
+  `).all(String(storeId), lim);
+}
+
+function atualizarEnvioAvulsoStatus(storeId, codigoRastreio, status, evento, entregue) {
+  db.prepare(`
+    UPDATE envios_avulsos
+    SET ultimo_status = ?,
+        ultimo_evento_json = ?,
+        entregue_em = CASE WHEN ? THEN COALESCE(entregue_em, datetime('now')) ELSE entregue_em END,
+        ativo = CASE WHEN ? THEN 0 ELSE ativo END,
+        updated_at = datetime('now')
+    WHERE store_id = ? AND codigo_rastreio = ?
+  `).run(
+    status ? String(status) : null,
+    evento ? JSON.stringify(evento) : null,
+    entregue ? 1 : 0,
+    entregue ? 1 : 0,
+    String(storeId),
+    String(codigoRastreio)
+  );
+  return getEnvioAvulso(storeId, codigoRastreio);
+}
+
+function marcarEnvioAvulsoPrimeiraMensagem(storeId, codigoRastreio) {
+  db.prepare(`
+    UPDATE envios_avulsos
+    SET primeira_mensagem_em = COALESCE(primeira_mensagem_em, datetime('now')),
+        updated_at = datetime('now')
+    WHERE store_id = ? AND codigo_rastreio = ?
+  `).run(String(storeId), String(codigoRastreio));
+}
+
+
 function limparSessoesPainelExpiradas() {
   db.prepare('DELETE FROM painel_sessoes WHERE expires_at < ?').run(Date.now());
 }
 
 
 module.exports = {
+  salvarEnvioAvulso, getEnvioAvulso, listarEnviosAvulsos, listarEnviosAvulsosMonitorar,
+  atualizarEnvioAvulsoStatus, marcarEnvioAvulsoPrimeiraMensagem,
   listarClientesOperacionais, getClienteOperacional, listarLogsPorStore, getResumoAutomacoesStore,
   criarPainelUsuario, getPainelUsuario, atualizarPainelCredenciais,
   criarPainelSessao, getPainelSessao, deletarPainelSessao,
