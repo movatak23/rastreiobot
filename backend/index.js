@@ -3055,27 +3055,38 @@ async function mpSincronizarOficial(storeId, query = {}) {
 
 app.get('/financeiro/mercadopago/:storeId', auth, async (req, res) => {
   const { storeId } = req.params;
-  const range = mpMonthRange(req.query);
   try {
     const conn = db.getMercadoPagoConexao(storeId);
-    const dados = mpResumoOficial(storeId, range.inicioDate, range.fimDate);
+    const conectado = !!(conn && conn.status === 'conectado' && conn.access_token);
     res.json({
       success: true,
-      conectado: !!(conn && conn.status === 'conectado' && conn.access_token),
-      fonte: 'relatorio_oficial_mercado_pago',
-      periodo: { inicio: range.inicioDate, fim: range.fimDate },
-      resumo: dados.resumo,
+      modo: 'somente_conexao',
+      conector: 'mercado_pago',
+      conectado,
+      status: conectado ? 'conectado' : 'desconectado',
+      mp_user_id: conn?.mp_user_id || null,
+      updated_at: conn?.updated_at || null,
+      resumo: {
+        entradas: 0,
+        saidas: 0,
+        taxas: 0,
+        estornos: 0,
+        saldo_operacional: 0,
+        teto_saidas: Number(conn?.teto_saidas || 0),
+        disponivel_teto: 0,
+        uso_teto_percentual: 0
+      },
       movimentacoes: [],
-      ultima_atualizacao: dados.movimentacoes[0]?.created_at || null,
-      observacao: 'Resumo baseado apenas no relatório financeiro oficial do Mercado Pago. Positivos = entradas, negativos = saídas.'
+      observacao: 'Módulo financeiro reduzido para conexão Mercado Pago. Nenhum extrato ou cálculo financeiro é processado.'
     });
   } catch(e) {
-    console.error('[Financeiro MP Oficial Resumo]', e.response?.data || e.message);
-    res.status(500).json({ error: e.response?.data?.message || e.message, details: e.response?.data || null });
+    console.error('[Financeiro MP Somente Conexão]', e.message);
+    res.status(500).json({ error: e.message });
   }
 });
 
-app.post('/financeiro/mercadopago/oficial/sincronizar', auth, async (req, res) => {
+
+const handleFinanceiroMpOficialSincronizar = async (req, res) => {
   const { store_id, inicio, fim } = req.body || {};
   if (!store_id) return res.status(400).json({ error: 'store_id obrigatório.' });
   try {
@@ -3088,6 +3099,19 @@ app.post('/financeiro/mercadopago/oficial/sincronizar', auth, async (req, res) =
       details: e.response?.data || null
     });
   }
+};
+app.post('/financeiro/mercadopago/oficial/sincronizar', auth, handleFinanceiroMpOficialSincronizar);
+app.post('/api/financeiro/mercadopago/oficial/sincronizar', auth, handleFinanceiroMpOficialSincronizar);
+app.post('/financeiro/oficial/sincronizar', auth, handleFinanceiroMpOficialSincronizar);
+
+app.get('/financeiro/mercadopago/oficial/status-rota/:storeId', auth, (req, res) => {
+  const conn = db.getMercadoPagoConexao(req.params.storeId);
+  res.json({
+    success: true,
+    rota_oficial_ativa: true,
+    store_id: String(req.params.storeId),
+    mercado_pago_conectado: !!(conn && conn.status === 'conectado' && conn.access_token)
+  });
 });
 
 
