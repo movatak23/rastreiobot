@@ -219,6 +219,46 @@ function marcarSatisfacaoEnviada(orderId, storeId) {
   db.prepare('INSERT OR IGNORE INTO satisfacao (order_id, store_id) VALUES (?, ?)').run(orderId, storeId);
 }
 
+
+function jaPedidoRecebido(orderId, storeId, numero, rastreio) {
+  const id = String(orderId || '');
+  const loja = String(storeId || '');
+  const num = String(numero || '');
+  const cod = String(rastreio || '');
+
+  if (id && db.prepare('SELECT 1 FROM satisfacao WHERE order_id = ?').get(id)) return true;
+
+  if (id && db.prepare(`
+    SELECT 1 FROM automacao_logs
+    WHERE store_id = ?
+      AND pedido = ?
+      AND (
+        tipo = 'pesquisa_satisfacao'
+        OR lower(COALESCE(mensagem, '')) LIKE '%entreg%'
+        OR lower(COALESCE(extra_json, '')) LIKE '%entreg%'
+      )
+    LIMIT 1
+  `).get(loja, num || id)) return true;
+
+  if (cod && db.prepare(`
+    SELECT 1 FROM automacao_logs
+    WHERE store_id = ?
+      AND (
+        lower(COALESCE(mensagem, '')) LIKE '%entreg%'
+        OR lower(COALESCE(extra_json, '')) LIKE '%entreg%'
+      )
+      AND (
+        COALESCE(extra_json, '') LIKE ?
+        OR COALESCE(mensagem, '') LIKE ?
+        OR pedido = ?
+      )
+    LIMIT 1
+  `).get(loja, `%${cod}%`, `%${cod}%`, num)) return true;
+
+  return false;
+}
+
+
 function limparRegistrosAntigos() {
   // msgs_dia: mantém só os últimos 7 dias
   db.prepare(`DELETE FROM msgs_dia WHERE created_at < datetime('now', '-7 days')`).run();
@@ -1026,6 +1066,7 @@ function limparSessoesPainelExpiradas() {
 
 
 module.exports = {
+  jaPedidoRecebido,
   salvarEnvioAvulso, getEnvioAvulso, listarEnviosAvulsos, listarEnviosAvulsosMonitorar,
   atualizarEnvioAvulsoStatus, marcarEnvioAvulsoPrimeiraMensagem,
   listarClientesOperacionais, getClienteOperacional, listarLogsPorStore, getResumoAutomacoesStore,

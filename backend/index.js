@@ -1915,21 +1915,23 @@ app.get('/pedidos/:storeId', auth, async (req, res) => {
       }
       const statusRastreio = temRastreio ? db.statusRastreio(o.shipping_tracking_number.trim()) : null;
       const satisfacaoEnviada = db.jaSatisfacaoEnviada ? db.jaSatisfacaoEnviada(String(o.id)) : false;
-      const recebido = !!(
-        satisfacaoEnviada ||
-        (statusRastreio && String(statusRastreio).toLowerCase().includes('entregue'))
-      );
+      const recebidoPorRastreio = !!(statusRastreio && String(statusRastreio).toLowerCase().includes('entreg'));
+      const recebidoPorLog = db.jaPedidoRecebido
+        ? db.jaPedidoRecebido(String(o.id), storeId, o.number, o.shipping_tracking_number || '')
+        : false;
+      const recebido = !!(satisfacaoEnviada || recebidoPorRastreio || recebidoPorLog);
       resultado.push({
         order_id: String(o.id), numero: o.number, cliente: o.contact_name || '',
         telefone: tel, rastreio: o.shipping_tracking_number || '',
         transportadora: o.shipping_option || '',
         status: foiEnviado ? 'shipped' : (o.shipping_status || 'pending'),
         statusRastreio, recebido, satisfacao_enviada: satisfacaoEnviada,
+        recebido_por_rastreio: recebidoPorRastreio, recebido_por_log: recebidoPorLog,
         diasUteis, statusPrazo, ja_notificado: jaEnviado, created_at: o.created_at
       });
     }
     resultado.sort((a, b) => {
-      const p = x => x.statusPrazo === 'atrasado' ? 0 : x.statusPrazo === 'hoje' ? 1 : x.recebido ? 4 : x.status === 'shipped' ? 2 : 3;
+      const p = x => x.recebido ? 4 : x.statusPrazo === 'atrasado' ? 0 : x.statusPrazo === 'hoje' ? 1 : x.status === 'shipped' ? 2 : 3;
       return p(a) - p(b);
     });
     res.json({ success: true, total: resultado.length, pedidos: resultado });
