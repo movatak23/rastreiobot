@@ -1223,6 +1223,7 @@ function salvarMovimentacaoFinanceira(m) {
     ON CONFLICT(store_id, conector, origem_id, tipo) DO UPDATE SET
       data = excluded.data,
       descricao = excluded.descricao,
+      tipo = excluded.tipo,
       valor = excluded.valor,
       categoria = excluded.categoria,
       raw_json = excluded.raw_json

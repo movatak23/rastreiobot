@@ -2070,6 +2070,48 @@ async function mpGarantirToken(storeId) {
   return atualizado.access_token;
 }
 
+
+function classificarMovimentacaoMercadoPago(descricao, pagamento = {}) {
+  const texto = [
+    descricao,
+    pagamento.description,
+    pagamento.statement_descriptor,
+    pagamento.external_reference,
+    pagamento.additional_info?.items?.map(i => i?.title).join(' '),
+    pagamento.point_of_interaction?.transaction_data?.transaction_id,
+    pagamento.metadata ? JSON.stringify(pagamento.metadata) : ''
+  ].filter(Boolean).join(' ').toLowerCase();
+
+  const regrasSaida = [
+    { categoria: 'frete_nuvem_envio', termos: ['crédito nuvem envio', 'credito nuvem envio', 'nuvem envio'] },
+    { categoria: 'transporte_uber', termos: ['uber', 'uber trip', 'uber *', 'uber do brasil'] },
+    { categoria: 'compra_insumos', termos: ['soprador', 'pistola', 'vonder', 'ferramenta', 'ferramentas', 'insumo', 'insumos', 'suprimento', 'suprimentos'] },
+    { categoria: 'compra_fornecedor', termos: ['mercado livre', 'amazon', 'shopee', 'aliexpress', 'magazine luiza', 'kabum', 'kalunga'] }
+  ];
+
+  for (const regra of regrasSaida) {
+    if (regra.termos.some(t => texto.includes(t))) {
+      return {
+        tipo: 'saida',
+        categoria: regra.categoria,
+        motivo: `Classificado como saída pela regra: ${regra.categoria}.`
+      };
+    }
+  }
+
+  const op = String(pagamento.operation_type || '').toLowerCase();
+  const statusDetail = String(pagamento.status_detail || '').toLowerCase();
+
+  // Regra conservadora: só considera entrada quando não bateu em regras de saída.
+  // A API de pagamentos é incompleta para extrato real; compras feitas pela conta podem aparecer como pagamentos aprovados.
+  return {
+    tipo: 'entrada',
+    categoria: 'pagamento_aprovado',
+    motivo: `Classificado como entrada padrão. operation_type=${op || 'n/a'} status_detail=${statusDetail || 'n/a'}.`
+  };
+}
+
+
 async function mpSyncPagamentos(storeId, range) {
   const token = await mpGarantirToken(storeId);
   const url = new URL('https://api.mercadopago.com/v1/payments/search');
@@ -2096,10 +2138,7 @@ async function mpSyncPagamentos(storeId, range) {
     const valorBruto = Number(p.transaction_amount || 0);
     const estornado = Number(p.transaction_amount_refunded || 0);
 
-    const descricaoLower = String(descricao || '').toLowerCase();
-    const ehCreditoNuvemEnvio = descricaoLower.includes('crédito nuvem envio') ||
-      descricaoLower.includes('credito nuvem envio') ||
-      descricaoLower.includes('nuvem envio');
+    const classificacao = classificarMovimentacaoMercadoPago(descricao, p);
 
     if (status === 'approved' && valorBruto > 0) {
       db.salvarMovimentacaoFinanceira({
@@ -2108,14 +2147,12 @@ async function mpSyncPagamentos(storeId, range) {
         origem_id: paymentId,
         data,
         descricao,
-        tipo: ehCreditoNuvemEnvio ? 'saida' : 'entrada',
+        tipo: classificacao.tipo,
         valor: valorBruto,
-        categoria: ehCreditoNuvemEnvio ? 'frete_nuvem_envio' : 'pagamento_aprovado',
+        categoria: classificacao.categoria,
         raw_json: {
           ...p,
-          classificacao_loggzap: ehCreditoNuvemEnvio
-            ? 'Classificado como saída porque Crédito Nuvem Envio é custo de frete.'
-            : 'Classificado como entrada.'
+          classificacao_loggzap: classificacao.motivo
         }
       });
     }
