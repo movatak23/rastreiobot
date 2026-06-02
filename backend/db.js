@@ -214,6 +214,22 @@ db.exec(`
     created_at INTEGER NOT NULL
   );
 
+
+  CREATE TABLE IF NOT EXISTS financeiro_relatorios_mp (
+    id              INTEGER PRIMARY KEY AUTOINCREMENT,
+    store_id        TEXT NOT NULL,
+    report_id       TEXT,
+    file_name       TEXT,
+    status          TEXT,
+    begin_date      TEXT,
+    end_date        TEXT,
+    raw_json        TEXT,
+    imported_at     TEXT,
+    created_at      TEXT DEFAULT (datetime('now')),
+    updated_at      TEXT DEFAULT (datetime('now')),
+    UNIQUE(store_id, report_id)
+  );
+
   CREATE TABLE IF NOT EXISTS financeiro_movimentacoes (
     id          INTEGER PRIMARY KEY AUTOINCREMENT,
     store_id    TEXT NOT NULL,
@@ -689,6 +705,21 @@ function migrar() {
   try { db.exec("ALTER TABLE configuracoes ADD COLUMN pos_entrega_ativo INTEGER DEFAULT 1"); } catch(e) {}
   try { db.exec("ALTER TABLE configuracoes ADD COLUMN parado_ativo INTEGER DEFAULT 1"); } catch(e) {}
   db.exec(`
+
+  CREATE TABLE IF NOT EXISTS financeiro_relatorios_mp (
+    id              INTEGER PRIMARY KEY AUTOINCREMENT,
+    store_id        TEXT NOT NULL,
+    report_id       TEXT,
+    file_name       TEXT,
+    status          TEXT,
+    begin_date      TEXT,
+    end_date        TEXT,
+    raw_json        TEXT,
+    imported_at     TEXT,
+    created_at      TEXT DEFAULT (datetime('now')),
+    updated_at      TEXT DEFAULT (datetime('now')),
+    UNIQUE(store_id, report_id)
+  );
 
   CREATE TABLE IF NOT EXISTS financeiro_conectores (
     store_id       TEXT PRIMARY KEY,
@@ -1253,6 +1284,62 @@ function listarMovimentacoesFinanceiras(storeId, inicio, fim, limit = 200) {
   `).all(String(storeId), inicio || null, inicio || null, fim || null, fim || null, lim);
 }
 
+
+function salvarRelatorioMercadoPago(storeId, rel) {
+  const r = rel || {};
+  const reportId = r.id || r.report_id || r.generation_id || r.task_id || r.file_name || require('crypto').randomBytes(8).toString('hex');
+  db.prepare(`
+    INSERT INTO financeiro_relatorios_mp (
+      store_id, report_id, file_name, status, begin_date, end_date, raw_json, updated_at
+    ) VALUES (?, ?, ?, ?, ?, ?, ?, datetime('now'))
+    ON CONFLICT(store_id, report_id) DO UPDATE SET
+      file_name = COALESCE(excluded.file_name, financeiro_relatorios_mp.file_name),
+      status = COALESCE(excluded.status, financeiro_relatorios_mp.status),
+      begin_date = COALESCE(excluded.begin_date, financeiro_relatorios_mp.begin_date),
+      end_date = COALESCE(excluded.end_date, financeiro_relatorios_mp.end_date),
+      raw_json = excluded.raw_json,
+      updated_at = datetime('now')
+  `).run(
+    String(storeId),
+    String(reportId),
+    r.file_name ? String(r.file_name) : null,
+    r.status ? String(r.status) : null,
+    r.begin_date ? String(r.begin_date) : null,
+    r.end_date ? String(r.end_date) : null,
+    JSON.stringify(r)
+  );
+  return getRelatorioMercadoPago(storeId, reportId);
+}
+
+function getRelatorioMercadoPago(storeId, reportId) {
+  return db.prepare(`
+    SELECT * FROM financeiro_relatorios_mp
+    WHERE store_id = ? AND report_id = ?
+  `).get(String(storeId), String(reportId));
+}
+
+function listarRelatoriosMercadoPago(storeId, limit = 20) {
+  const lim = Math.max(1, Math.min(Number(limit) || 20, 100));
+  return db.prepare(`
+    SELECT * FROM financeiro_relatorios_mp
+    WHERE store_id = ?
+    ORDER BY datetime(updated_at) DESC
+    LIMIT ?
+  `).all(String(storeId), lim);
+}
+
+function marcarRelatorioMercadoPagoImportado(storeId, reportId, fileName) {
+  db.prepare(`
+    UPDATE financeiro_relatorios_mp
+    SET status = 'importado',
+        file_name = COALESCE(?, file_name),
+        imported_at = datetime('now'),
+        updated_at = datetime('now')
+    WHERE store_id = ? AND report_id = ?
+  `).run(fileName ? String(fileName) : null, String(storeId), String(reportId));
+}
+
+
 function getResumoFinanceiro(storeId, inicio, fim) {
   const rows = listarMovimentacoesFinanceiras(storeId, inicio, fim, 500);
   const conn = getMercadoPagoConexao(storeId);
@@ -1291,6 +1378,7 @@ module.exports = {
   criarFinanceiroState, getFinanceiroState, deleteFinanceiroState,
   salvarMercadoPagoConexao, getMercadoPagoConexao, desconectarMercadoPago,
   salvarTetoSaidas, salvarMovimentacaoFinanceira, listarMovimentacoesFinanceiras, getResumoFinanceiro,
+  salvarRelatorioMercadoPago, getRelatorioMercadoPago, listarRelatoriosMercadoPago, marcarRelatorioMercadoPagoImportado,
     jaPedidoRecebido,
   salvarEnvioAvulso, getEnvioAvulso, listarEnviosAvulsos, listarEnviosAvulsosMonitorar,
   atualizarEnvioAvulsoStatus, marcarEnvioAvulsoPrimeiraMensagem,

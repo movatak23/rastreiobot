@@ -2193,6 +2193,252 @@ async function mpSyncPagamentos(storeId, range) {
   return { total_importados: results.length };
 }
 
+
+function csvSplitLine(line, sep = ';') {
+  const out = [];
+  let cur = '';
+  let inQ = false;
+  for (let i = 0; i < line.length; i++) {
+    const ch = line[i];
+    if (ch === '"') {
+      if (inQ && line[i + 1] === '"') { cur += '"'; i++; }
+      else inQ = !inQ;
+    } else if (ch === sep && !inQ) {
+      out.push(cur);
+      cur = '';
+    } else {
+      cur += ch;
+    }
+  }
+  out.push(cur);
+  return out.map(v => String(v || '').trim());
+}
+
+function parseCsvMercadoPago(text) {
+  const raw = String(text || '').replace(/^\uFEFF/, '').trim();
+  if (!raw) return [];
+  const lines = raw.split(/\r?\n/).filter(l => l.trim());
+  if (!lines.length) return [];
+  const sep = (lines[0].split(';').length >= lines[0].split(',').length) ? ';' : ',';
+  const headers = csvSplitLine(lines[0], sep).map(h => h.trim());
+  return lines.slice(1).map(line => {
+    const values = csvSplitLine(line, sep);
+    const obj = {};
+    headers.forEach((h, i) => obj[h] = values[i] ?? '');
+    return obj;
+  });
+}
+
+function getCampoMp(row, nomes) {
+  for (const n of nomes) {
+    if (row[n] !== undefined && row[n] !== null && String(row[n]).trim() !== '') return row[n];
+  }
+  const keys = Object.keys(row);
+  for (const n of nomes) {
+    const found = keys.find(k => k.toLowerCase() === String(n).toLowerCase());
+    if (found && String(row[found] || '').trim() !== '') return row[found];
+  }
+  return '';
+}
+
+function numMp(v) {
+  const s = String(v ?? '').trim();
+  if (!s) return 0;
+  // Suporta "1.234,56" e "1234.56".
+  const normalized = s.includes(',') ? s.replace(/\./g, '').replace(',', '.') : s;
+  const n = Number(normalized);
+  return Number.isFinite(n) ? n : 0;
+}
+
+function classificarLinhaSettlement(row) {
+  const tipoTransacao = String(getCampoMp(row, ['TRANSACTION_TYPE', 'Transaction type', 'TIPO_DE_TRANSACAO', 'Tipo de transação'])).toUpperCase();
+  const metodo = String(getCampoMp(row, ['PAYMENT_METHOD_TYPE', 'PAYMENT_METHOD', 'Payment method', 'MEIO_DE_PAGAMENTO']));
+  const source = String(getCampoMp(row, ['SOURCE_ID', 'Source ID', 'SOURCE']));
+  const ext = String(getCampoMp(row, ['EXTERNAL_REFERENCE', 'External reference', 'REFERENCIA_EXTERNA']));
+  const meta = String(getCampoMp(row, ['METADATA', 'Metadata', 'DESCRIPTION', 'DESCRICAO', 'Descrição']));
+  const descricaoBase = [tipoTransacao, metodo, source, ext, meta].filter(Boolean).join(' • ');
+
+  const transactionAmount = numMp(getCampoMp(row, ['TRANSACTION_AMOUNT', 'Transaction amount']));
+  const netAmount = numMp(getCampoMp(row, ['SETTLEMENT_NET_AMOUNT', 'REAL_AMOUNT', 'Settlement net amount']));
+  const feeAmount = numMp(getCampoMp(row, ['FEE_AMOUNT', 'MKP_FEE_AMOUNT', 'FINANCING_FEE_AMOUNT', 'TAXES_AMOUNT', 'SHIPPING_FEE_AMOUNT']));
+
+  let tipo = 'entrada';
+  let valor = Math.abs(netAmount || transactionAmount || 0);
+  let categoria = 'extrato_mercado_pago';
+
+  const text = descricaoBase.toLowerCase();
+
+  if (
+    tipoTransacao.includes('WITHDRAW') ||
+    tipoTransacao.includes('PAYOUT') ||
+    tipoTransacao.includes('TRANSFER') ||
+    tipoTransacao.includes('DEBIT') ||
+    tipoTransacao.includes('PAYMENT') && transactionAmount < 0 ||
+    netAmount < 0 ||
+    text.includes('pix enviado') ||
+    text.includes('transferência enviada') ||
+    text.includes('transferencia enviada') ||
+    text.includes('pagamento com qr pix') ||
+    text.includes('mercado livre') ||
+    text.includes('uber') ||
+    text.includes('canva') ||
+    text.includes('nuvem envio')
+  ) {
+    tipo = 'saida';
+    categoria = 'saida_extrato_mp';
+    valor = Math.abs(netAmount || transactionAmount || 0);
+  }
+
+  if (tipoTransacao.includes('REFUND') || tipoTransacao.includes('CHARGEBACK')) {
+    tipo = 'estorno';
+    categoria = 'estorno_extrato_mp';
+  }
+
+  if (tipoTransacao.includes('FEE') || feeAmount < 0) {
+    tipo = 'taxa';
+    categoria = 'taxa_extrato_mp';
+    valor = Math.abs(feeAmount || netAmount || transactionAmount || 0);
+  }
+
+  if (tipoTransacao.includes('SETTLEMENT') && netAmount > 0 && !text.includes('nuvem envio')) {
+    tipo = 'entrada';
+    categoria = 'entrada_extrato_mp';
+    valor = Math.abs(netAmount || transactionAmount || 0);
+  }
+
+  const data = getCampoMp(row, ['TRANSACTION_DATE', 'SETTLEMENT_DATE', 'DATE', 'Data', 'DATA']) || new Date().toISOString();
+  const origem = getCampoMp(row, ['SOURCE_ID', 'ORDER_ID', 'EXTERNAL_REFERENCE']) || require('crypto').createHash('md5').update(JSON.stringify(row)).digest('hex');
+
+  return {
+    origem_id: `settlement:${origem}:${tipo}`,
+    data,
+    descricao: descricaoBase || `Movimentação Mercado Pago ${origem}`,
+    tipo,
+    valor,
+    categoria,
+    raw_json: row
+  };
+}
+
+async function mpConfigurarSettlementReport(storeId) {
+  const token = await mpGarantirToken(storeId);
+  const conn = db.getMercadoPagoConexao(storeId);
+  const prefix = `loggzap-settlement-${String(conn?.mp_user_id || storeId)}`;
+
+  const payload = {
+    file_name_prefix: prefix,
+    show_fee_prevision: true,
+    show_chargeback_cancel: true,
+    coupon_detailed: true,
+    include_withdraw: true,
+    shipping_detail: true,
+    refund_detailed: true,
+    display_timezone: 'GMT-03',
+    header_language: 'en',
+    separator: ';',
+    frequency: { hour: 0, type: 'monthly', value: 1 },
+    columns: [
+      { key: 'TRANSACTION_DATE' },
+      { key: 'SOURCE_ID' },
+      { key: 'EXTERNAL_REFERENCE' },
+      { key: 'PAYMENT_METHOD_TYPE' },
+      { key: 'PAYMENT_METHOD' },
+      { key: 'TRANSACTION_TYPE' },
+      { key: 'TRANSACTION_AMOUNT' },
+      { key: 'FEE_AMOUNT' },
+      { key: 'SETTLEMENT_NET_AMOUNT' },
+      { key: 'REAL_AMOUNT' },
+      { key: 'SHIPPING_FEE_AMOUNT' },
+      { key: 'TAXES_AMOUNT' },
+      { key: 'ORDER_ID' },
+      { key: 'SHIPPING_ID' },
+      { key: 'METADATA' }
+    ]
+  };
+
+  try {
+    await axios.get('https://api.mercadopago.com/v1/account/settlement_report/config', {
+      headers: { Authorization: `Bearer ${token}`, accept: 'application/json' },
+      timeout: 20000
+    });
+    const res = await axios.put('https://api.mercadopago.com/v1/account/settlement_report/config', payload, {
+      headers: { Authorization: `Bearer ${token}`, accept: 'application/json', 'Content-Type': 'application/json' },
+      timeout: 20000
+    });
+    return { configured: true, method: 'update', data: res.data };
+  } catch(e) {
+    const res = await axios.post('https://api.mercadopago.com/v1/account/settlement_report/config', payload, {
+      headers: { Authorization: `Bearer ${token}`, accept: 'application/json', 'Content-Type': 'application/json' },
+      timeout: 20000
+    });
+    return { configured: true, method: 'create', data: res.data };
+  }
+}
+
+async function mpGerarSettlementReport(storeId, range) {
+  const token = await mpGarantirToken(storeId);
+  await mpConfigurarSettlementReport(storeId);
+  const res = await axios.post('https://api.mercadopago.com/v1/account/settlement_report', {
+    begin_date: range.inicioISO,
+    end_date: range.fimISO
+  }, {
+    headers: { Authorization: `Bearer ${token}`, accept: 'application/json', 'Content-Type': 'application/json' },
+    timeout: 25000
+  });
+
+  const saved = db.salvarRelatorioMercadoPago(storeId, res.data);
+  return { task: res.data, saved };
+}
+
+async function mpListarSettlementReports(storeId) {
+  const token = await mpGarantirToken(storeId);
+  const res = await axios.get('https://api.mercadopago.com/v1/account/settlement_report/list', {
+    headers: { Authorization: `Bearer ${token}`, accept: 'application/json' },
+    timeout: 25000
+  });
+
+  const list = Array.isArray(res.data) ? res.data : (res.data?.results || []);
+  for (const r of list) db.salvarRelatorioMercadoPago(storeId, r);
+  return list;
+}
+
+async function mpImportarSettlementReport(storeId, fileName) {
+  if (!fileName) throw new Error('file_name obrigatório para importar relatório.');
+  const token = await mpGarantirToken(storeId);
+  const res = await axios.get(`https://api.mercadopago.com/v1/account/settlement_report/${encodeURIComponent(fileName)}`, {
+    headers: { Authorization: `Bearer ${token}` },
+    timeout: 45000,
+    responseType: 'text',
+    transformResponse: [d => d]
+  });
+
+  const rows = parseCsvMercadoPago(res.data);
+  let importadas = 0;
+  for (const row of rows) {
+    const mov = classificarLinhaSettlement(row);
+    if (!mov.valor) continue;
+    db.salvarMovimentacaoFinanceira({
+      store_id: storeId,
+      conector: 'mercado_pago',
+      origem_id: mov.origem_id,
+      data: mov.data,
+      descricao: mov.descricao,
+      tipo: mov.tipo,
+      valor: mov.valor,
+      categoria: mov.categoria,
+      raw_json: mov.raw_json
+    });
+    importadas++;
+  }
+
+  const relatorios = db.listarRelatoriosMercadoPago(storeId, 50);
+  const rel = relatorios.find(r => r.file_name === fileName);
+  if (rel) db.marcarRelatorioMercadoPagoImportado(storeId, rel.report_id, fileName);
+
+  return { file_name: fileName, linhas: rows.length, importadas };
+}
+
+
 function handleMercadoPagoConnect(req, res) {
   try {
     const url = mpAuthUrl(req.params.storeId);
@@ -2280,6 +2526,56 @@ app.post('/financeiro/mercadopago/desconectar', auth, (req, res) => {
   res.json({ success: true, status: conn?.status || 'desconectado' });
 });
 
+
+app.post('/financeiro/mercadopago/relatorio/configurar', auth, async (req, res) => {
+  const { store_id } = req.body || {};
+  if (!store_id) return res.status(400).json({ error: 'store_id obrigatório.' });
+  try {
+    const out = await mpConfigurarSettlementReport(store_id);
+    res.json({ success: true, ...out });
+  } catch(e) {
+    console.error('[MP Settlement Config]', e.response?.data || e.message);
+    res.status(500).json({ error: e.response?.data?.message || e.message, details: e.response?.data || null });
+  }
+});
+
+app.post('/financeiro/mercadopago/relatorio/gerar', auth, async (req, res) => {
+  const { store_id, inicio, fim } = req.body || {};
+  if (!store_id) return res.status(400).json({ error: 'store_id obrigatório.' });
+  const range = mpMonthRange({ inicio, fim });
+  try {
+    const out = await mpGerarSettlementReport(store_id, range);
+    res.json({ success: true, mensagem: 'Relatório solicitado. Aguarde alguns minutos e clique em Verificar relatórios.', periodo: { inicio: range.inicioDate, fim: range.fimDate }, ...out });
+  } catch(e) {
+    console.error('[MP Settlement Gerar]', e.response?.data || e.message);
+    res.status(500).json({ error: e.response?.data?.message || e.message, details: e.response?.data || null });
+  }
+});
+
+app.get('/financeiro/mercadopago/relatorio/listar/:storeId', auth, async (req, res) => {
+  try {
+    const list = await mpListarSettlementReports(req.params.storeId);
+    res.json({ success: true, total: list.length, relatorios: list, locais: db.listarRelatoriosMercadoPago(req.params.storeId, 30) });
+  } catch(e) {
+    console.error('[MP Settlement Listar]', e.response?.data || e.message);
+    res.status(500).json({ error: e.response?.data?.message || e.message, details: e.response?.data || null });
+  }
+});
+
+app.post('/financeiro/mercadopago/relatorio/importar', auth, async (req, res) => {
+  const { store_id, file_name } = req.body || {};
+  if (!store_id) return res.status(400).json({ error: 'store_id obrigatório.' });
+  if (!file_name) return res.status(400).json({ error: 'file_name obrigatório.' });
+  try {
+    const out = await mpImportarSettlementReport(store_id, file_name);
+    res.json({ success: true, mensagem: 'Extrato real importado com sucesso.', ...out });
+  } catch(e) {
+    console.error('[MP Settlement Importar]', e.response?.data || e.message);
+    res.status(500).json({ error: e.response?.data?.message || e.message, details: e.response?.data || null });
+  }
+});
+
+
 app.get('/financeiro/mercadopago/:storeId', auth, async (req, res) => {
   const { storeId } = req.params;
   const range = mpMonthRange(req.query);
@@ -2310,7 +2606,7 @@ app.get('/financeiro/mercadopago/:storeId', auth, async (req, res) => {
       sync,
       resumo: dados.resumo,
       movimentacoes: dados.movimentacoes,
-      observacao: 'MVP Mercado Pago: entradas, taxas e estornos vêm da API de pagamentos. Saques/transferências exigem a etapa de relatórios financeiros do Mercado Pago.'
+      observacao: 'Dados combinados: API de pagamentos + extrato real importado via relatório Account Money/Settlement do Mercado Pago. Gere e importe o relatório para incluir saques, Pix enviados, transferências e compras da conta.'
     });
   } catch(e) {
     console.error('[Financeiro MP]', e.response?.data || e.message);
