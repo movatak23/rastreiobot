@@ -443,6 +443,14 @@ function atualizarStatusRastreio(codigo, statusAtual, atualizadoEm) {
   `).run(codigo, statusAtual, atualizadoEm || new Date().toISOString());
 }
 
+function foiRastreioConsultadoHoje(codigo) {
+  const row = db.prepare('SELECT atualizado_em FROM rastreios WHERE codigo = ?').get(codigo);
+  if (!row?.atualizado_em) return false;
+  const ultima = new Date(row.atualizado_em);
+  const agora  = new Date();
+  return ultima.toISOString().slice(0, 10) === agora.toISOString().slice(0, 10);
+}
+
 function jaConfirmacaoEnviada(orderId) {
   return !!db.prepare('SELECT 1 FROM confirmacoes WHERE order_id = ?').get(orderId);
 }
@@ -1389,7 +1397,7 @@ module.exports = {
   registrarLogAutomacao, listarLogsAutomacao, limparSessoesPainelExpiradas,
   saveToken, getToken, getAllStores,
   marcarNotificado, jaNotificado,
-  statusRastreio, atualizarStatusRastreio,
+  statusRastreio, atualizarStatusRastreio, foiRastreioConsultadoHoje,
   jaConfirmacaoEnviada, marcarConfirmacaoEnviada,
   salvarInstancia, getInstancia, listarInstancias,
   jaSatisfacaoEnviada, marcarSatisfacaoEnviada,

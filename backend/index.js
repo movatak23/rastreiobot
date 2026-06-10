@@ -1615,12 +1615,22 @@ cron.schedule('*/30 * * * *', async () => {
       await verificarPagamentos(store.store_id);
       await verificarBoletosPendentes(store.store_id);
       await verificarCarrinhosAbandonados(store.store_id);
-      await verificarRastreios(store.store_id);
       await verificarEnviosAvulsos(store.store_id);
       await verificarPosEntrega(store.store_id);
       await verificarPedidosParados(store.store_id);
     }
   } catch(e) { console.error('[Cron] Erro geral:', e.message); }
+});
+
+// Rastreios: 1x por dia às 18h (limite SeuRastreio 200/mês)
+cron.schedule('0 18 * * *', async () => {
+  console.log('[Cron Rastreios] Iniciando verificação diária 18h...');
+  try {
+    const stores = db.getAllStores();
+    for (const store of stores) {
+      await verificarRastreios(store.store_id);
+    }
+  } catch(e) { console.error('[Cron Rastreios] Erro geral:', e.message); }
 });
 
 function montarMensagemCarrinho(etapa, nome, link) {
@@ -1817,7 +1827,8 @@ async function verificarRastreios(storeId) {
       if (!telefone) continue;
       if (!/^[A-Z]{2}\d{9}[A-Z]{2}$/i.test(rastreio)) continue;
       if (db.statusRastreio(rastreio) === 'entregue') continue;
-      await new Promise(r => setTimeout(r, 2000)); // rate limit SeuRastreio (~30 req/min)
+      if (db.foiRastreioConsultadoHoje(rastreio)) continue; // limite SeuRastreio 200/mês
+      await new Promise(r => setTimeout(r, 2000)); // espaçamento entre requests
       const evento = await consultarCorreios(rastreio);
       if (!evento) continue;
       const statusAnterior = db.statusRastreio(rastreio);
@@ -1851,7 +1862,7 @@ async function verificarRastreios(storeId) {
       } else if (!statusAnterior) {
         db.atualizarStatusRastreio(rastreio, statusNovo || 'postado', evento.data + ' ' + evento.hora);
       }
-      await new Promise(r => setTimeout(r, 3000));
+      await new Promise(r => setTimeout(r, 7000));
     }
   } catch(e) { console.error(`[Rastreio] Erro loja ${storeId}:`, e.response?.data || e.message); }
 }
