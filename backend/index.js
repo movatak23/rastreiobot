@@ -1659,40 +1659,42 @@ function montarMensagemBoleto(etapa, nome, numero, gateway) {
 async function verificarBoletosPendentes(storeId) {
   try {
     const cfg = db.getConfig(storeId) || {};
-    if (cfg.boleto_ativo === 0) return;
+    if (cfg.boleto_ativo === 0) { console.log(`[DIAG-PEND] loja ${storeId}: boleto_ativo=0 (desligado)`); return; }
     const orders = await nuvemGet(storeId, '/orders', {
       per_page: 100,
       payment_status: 'pending'
     });
+    console.log(`[DIAG-PEND] loja ${storeId}: ${Array.isArray(orders) ? orders.length : 'N/A'} pedidos com payment_status=pending`);
 
     const agora = Date.now();
+    let puladoCancelado = 0, puladoCartao = 0, puladoSemTel = 0, puladoIdade = 0, puladoEtapa = 0, puladoJaEnviado = 0, enviados = 0;
 
     for (const o of orders) {
-      if (o.status === 'cancelled') continue;
+      if (o.status === 'cancelled') { puladoCancelado++; continue; }
 
       const gw = (o.gateway || '').toLowerCase();
       const ehCartao = gw.includes('credit') || gw.includes('credito') ||
                        gw.includes('debit')  || gw.includes('debito')  ||
                        gw.includes('card');
-      if (ehCartao) continue;
+      if (ehCartao) { puladoCartao++; continue; }
 
       const telefone = formatTel(o.contact_phone);
-      if (!telefone) continue;
+      if (!telefone) { puladoSemTel++; continue; }
 
       const criadoEm = new Date(o.created_at).getTime();
       const minutos  = Math.floor((agora - criadoEm) / 60000);
       const id       = String(o.id);
       const nome     = o.contact_name || 'Cliente';
 
-      if (minutos > 10080) continue; // teto: ignora pendente com mais de 7 dias
+      if (minutos > 10080) { puladoIdade++; continue; } // teto: ignora pendente com mais de 7 dias
 
       let etapa = null;
       if (minutos >= 300  && minutos < 1440)  etapa = 300;   // 5h
       if (minutos >= 1440 && minutos < 4320)  etapa = 1440;  // 24h
       if (minutos >= 4320 && minutos < 10080) etapa = 4320;  // 72h
-      if (!etapa) continue;
+      if (!etapa) { puladoEtapa++; console.log(`[DIAG-PEND] #${o.number}: idade ${minutos}min, fora das etapas (precisa 300-10080)`); continue; }
 
-      if (db.jaBoletoEnviado(id, etapa)) continue;
+      if (db.jaBoletoEnviado(id, etapa)) { puladoJaEnviado++; continue; }
 
       const metodoLabel = gw.includes('pix') ? 'PIX' : gw === '' ? 'link de pagamento' : 'boleto';
       const mensagem = getMensagemTemplate(storeId, 'boleto_pix_pendente', montarMensagemBoleto(etapa, nome, o.number, metodoLabel), { nome, numero: o.number, gateway: metodoLabel, etapa });
@@ -1703,6 +1705,7 @@ async function verificarBoletosPendentes(storeId) {
         await sendWhatsApp(telefone, mensagem, storeId);
         db.marcarBoletoEnviado(id, storeId, etapa);
         db.registrarMensagem(telefone);
+        enviados++;
         console.log(`[Boleto/Manual] Etapa ${etapa}min → ${nome} pedido #${o.number} (${metodoLabel || 'manual'})`);
         safeLogAutomacao({ store_id: storeId, tipo: 'pagamento_pendente', pedido: o.number, telefone, mensagem });
       } catch(e) {
@@ -1711,9 +1714,10 @@ async function verificarBoletosPendentes(storeId) {
       }
       await new Promise(r => setTimeout(r, 500));
     }
+    console.log(`[DIAG-PEND] loja ${storeId}: resumo → enviados=${enviados} | cancelado=${puladoCancelado} cartao=${puladoCartao} semTel=${puladoSemTel} idade+7d=${puladoIdade} foraEtapa=${puladoEtapa} jaEnviado=${puladoJaEnviado}`);
   } catch(e) {
     const msg = e.response?.data?.description || e.message || '';
-    if (msg.includes('Last page is 0')) return;
+    if (msg.includes('Last page is 0')) { console.log(`[DIAG-PEND] loja ${storeId}: Nuvemshop retornou 'Last page is 0' (query sem resultados)`); return; }
     console.error(`[Boleto] Erro loja ${storeId}:`, e.response?.data || e.message);
   }
 }
@@ -3547,6 +3551,37 @@ app.get('/diag/envios-avulsos/:storeId', auth, async (req, res) => {
 app.get('/status', (req, res) => {
   const stores = db.getAllStores();
   res.json({ ok: true, lojas: stores.length, versao: '2.5.1', cron: 'ativo (30min)' });
+});
+
+// TEMPORÁRIO (diagnóstico de pendentes) — remover após validar.
+// Roda a verificação na hora e devolve os pedidos pendentes crus para inspeção.
+app.get('/diag/pendentes/:storeId', async (req, res) => {
+  const storeId = req.params.storeId;
+  try {
+    const cfg = db.getConfig(storeId) || {};
+    const orders = await nuvemGet(storeId, '/orders', { per_page: 100, payment_status: 'pending' });
+    const agora = Date.now();
+    const detalhe = (Array.isArray(orders) ? orders : []).map(o => {
+      const criadoEm = new Date(o.created_at).getTime();
+      const minutos = Math.floor((agora - criadoEm) / 60000);
+      return {
+        numero: o.number, status: o.status, gateway: o.gateway || '(vazio)',
+        telefone: o.contact_phone || '(vazio)', criado_em: o.created_at,
+        idade_min: minutos, idade_dias: Math.floor(minutos / 1440),
+        na_janela: (minutos >= 300 && minutos <= 10080)
+      };
+    });
+    // Dispara a verificação real também (com os logs [DIAG-PEND] no Railway)
+    await verificarBoletosPendentes(storeId);
+    res.json({
+      ok: true, storeId, boleto_ativo: cfg.boleto_ativo,
+      total_pendentes: detalhe.length,
+      na_janela_5h_7d: detalhe.filter(d => d.na_janela).length,
+      pedidos: detalhe
+    });
+  } catch (e) {
+    res.status(500).json({ error: e.response?.data || e.message });
+  }
 });
 
 app.get('/admin/dashboard', auth, (req, res) => {
