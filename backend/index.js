@@ -93,8 +93,9 @@ function adminLoggzapHtml() {
   <div id="painel" class="hidden">
     <div class="grid">
       <div class="metric"><strong id="mClientes">--</strong><span>Z-APIs online</span></div>
-      <div class="metric"><strong id="mPremium">--</strong><span>clientes Premium</span></div>
-      <div class="metric"><strong id="mProntos">--</strong><span>Premium prontos</span></div>
+      <div class="metric"><strong id="mPagos">--</strong><span>pagantes ativos</span></div>
+      <div class="metric"><strong id="mVencidos">--</strong><span>mensalidades vencidas</span></div>
+      <div class="metric"><strong id="mFree">--</strong><span>contas free</span></div>
       <div class="metric"><strong id="mErros">--</strong><span>clientes com erro</span></div>
     </div>
 
@@ -102,7 +103,7 @@ function adminLoggzapHtml() {
       <h2>Clientes / lojas</h2>
       <input id="filtroCliente" placeholder="Filtrar por loja, cliente, plano ou erro" oninput="renderClientes()">
       <div style="overflow:auto">
-        <table><thead><tr><th>Loja</th><th>Plano</th><th>Z-API</th><th>Painel</th><th>Templates</th><th>Última automação</th><th>Erro</th><th>Ações</th></tr></thead><tbody id="clientesBody"></tbody></table>
+        <table><thead><tr><th>Loja</th><th>Plano</th><th>Status</th><th>Rastreios/mês</th><th>Z-API</th><th>Painel</th><th>Templates</th><th>Última automação</th><th>Erro</th><th>Ações</th></tr></thead><tbody id="clientesBody"></tbody></table>
       </div>
     </div>
 
@@ -236,14 +237,18 @@ function renderClientes(){
   const f=(document.getElementById('filtroCliente').value||'').toLowerCase();
   const rows=clientes.filter(c=>JSON.stringify(c).toLowerCase().includes(f));
   document.getElementById('mClientes').textContent=clientes.filter(c=>c.zapi_conectada===true).length;
-  document.getElementById('mPremium').textContent=clientes.filter(c=>c.plano==='premium').length;
-  document.getElementById('mProntos').textContent=clientes.filter(c=>c.premium_pronto).length;
+  document.getElementById('mPagos').textContent=clientes.filter(c=>c.status_conta==='ativo').length;
+  document.getElementById('mVencidos').textContent=clientes.filter(c=>c.status_conta==='vencido').length;
+  document.getElementById('mFree').textContent=clientes.filter(c=>c.status_conta==='free').length;
   document.getElementById('mErros').textContent=clientes.filter(c=>c.ultimo_erro || (c.zapi_configurada && c.zapi_conectada===false)).length;
   document.getElementById('clientesBody').innerHTML=rows.map(c=>{
     const plano=c.plano?c.plano:'trial/free';
+    const sc=c.status_conta==='vencido'?'<span class="badge bErr">vencido</span>':c.status_conta==='ativo'?'<span class="badge bOk">ativo</span>':'<span class="badge bWarn">free</span>';
     return '<tr>'+
       '<td><strong>'+esc(c.nome_cliente||c.store_id)+'</strong><br><span class="muted">'+esc(c.store_id)+'</span></td>'+
       '<td>'+esc(plano)+'<br><span class="muted">'+esc(c.expira_em||'')+'</span></td>'+
+      '<td>'+sc+(c.assinatura_status?'<br><span class="muted">'+esc(c.assinatura_status)+'</span>':'')+'</td>'+
+      '<td>'+(c.rastreios_usados||0)+' / '+(c.rastreios_limite||0)+'</td>'+
       '<td>'+badgeZapi(c)+(c.zapi_erro_status?'<br><span class="muted">'+esc(c.zapi_erro_status)+'</span>':'')+'</td>'+
       '<td>'+badge(c.painel_configurado,'Painel')+'</td>'+
       '<td>'+badge(c.templates_ok,(c.templates_configurados||0)+'/8')+'</td>'+
@@ -485,8 +490,31 @@ app.get('/admin-loggzap/api/resumo', auth, async (req, res) => {
       }));
     }
 
+    // Enriquece com uso de rastreios, status da conta (free/ativo/vencido) e status da assinatura.
+    const agora = new Date();
+    clientes = clientes.map(c => {
+      const sid = String(c.store_id);
+      let usados = 0, limite = 50;
+      try { usados = db.contarUsoRastreio ? db.contarUsoRastreio(sid) : 0; } catch(_) {}
+      try { limite = getLimiteRastreio(sid); } catch(_) {}
+      const assinatura = db.getAssinatura ? db.getAssinatura(sid) : null;
+      const pago = !!c.plano && ['basic','premium','enterprise'].includes(String(c.plano).toLowerCase());
+      const vencido = pago && c.expira_em && new Date(c.expira_em) < agora;
+      const status_conta = !pago ? 'free' : (vencido ? 'vencido' : 'ativo');
+      return { ...c, rastreios_usados: usados, rastreios_limite: limite,
+        rastreios_pct: limite ? Math.min(100, Math.round(usados / limite * 100)) : 0,
+        status_conta, assinatura_status: assinatura?.status || null };
+    });
+
+    const resumo_contas = {
+      total: clientes.length,
+      free: clientes.filter(c => c.status_conta === 'free').length,
+      ativos: clientes.filter(c => c.status_conta === 'ativo').length,
+      vencidos: clientes.filter(c => c.status_conta === 'vencido').length
+    };
+
     const logs = readLoggzapLogs ? readLoggzapLogs() : [];
-    res.json({ success: true, clientes, logs });
+    res.json({ success: true, clientes, resumo_contas, logs });
   } catch(e) {
     console.error('[Admin LoggZap resumo]', e);
     res.status(500).json({ error: e.message || 'Erro interno ao carregar resumo.' });
@@ -3943,15 +3971,18 @@ app.get('/assinar', (req, res) => {
 </div>
 <script>
 const PLANO = '${plano}';
+const STORE = new URLSearchParams(location.search).get('store') || '';
 async function pagar() {
   const email = document.getElementById('email').value.trim();
   const erro = document.getElementById('erro');
   const btn = document.getElementById('btn');
   erro.style.display = 'none';
-  if (!email || !email.includes('@')) { erro.textContent = 'Informe um email válido para receber sua chave.'; erro.style.display = 'block'; return; }
+  if (!email || !email.includes('@')) { erro.textContent = 'Informe um email válido.'; erro.style.display = 'block'; return; }
   btn.textContent = 'Gerando pagamento...'; btn.disabled = true;
   try {
-    const r = await fetch('/checkout/criar', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ plano: PLANO, email }) });
+    const endpoint = STORE ? '/assinatura/criar' : '/checkout/criar';
+    const body = STORE ? { plano: PLANO, email, store_id: STORE } : { plano: PLANO, email };
+    const r = await fetch(endpoint, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(body) });
     const d = await r.json();
     if (d.url) { window.location.href = d.url; }
     else { erro.textContent = d.error || 'Erro ao gerar checkout.'; erro.style.display = 'block'; btn.textContent = 'Ir para o pagamento →'; btn.disabled = false; }
@@ -3984,6 +4015,32 @@ app.post('/checkout/criar', async (req, res) => {
   } catch(e) { console.error('[Checkout MP]', e.response?.data || e.message); res.status(500).json({ error: e.message }); }
 });
 
+// Assinatura recorrente (Mercado Pago preapproval, vinculada à loja) — cobra automático todo mês
+app.post('/assinatura/criar', async (req, res) => {
+  const { plano, email, store_id } = req.body || {};
+  if (!plano || !email || !store_id) return res.status(400).json({ error: 'plano, email e store_id obrigatorios' });
+  if (!MP_ACCESS_TOKEN) return res.status(500).json({ error: 'MP_ACCESS_TOKEN nao configurado' });
+  const precos = { basic: 97, premium: 147 };
+  const nomes  = { basic: 'LoggZap Essencial', premium: 'LoggZap Pro' };
+  if (!precos[plano]) return res.status(400).json({ error: 'plano invalido' });
+  try {
+    const { data } = await axios.post('https://api.mercadopago.com/preapproval', {
+      reason: nomes[plano] + ' — assinatura mensal',
+      external_reference: JSON.stringify({ store_id: String(store_id), plano, email }),
+      payer_email: email,
+      auto_recurring: { frequency: 1, frequency_type: 'months', transaction_amount: precos[plano], currency_id: 'BRL' },
+      back_url: BACKEND_URL + '/checkout/sucesso?plano=' + plano,
+      status: 'pending',
+      notification_url: BACKEND_URL + '/webhook/mp'
+    }, { headers: { 'Authorization': 'Bearer ' + MP_ACCESS_TOKEN, 'Content-Type': 'application/json' } });
+    db.upsertAssinatura(String(store_id), data.id, plano, data.status || 'pending', email, data.next_payment_date || null);
+    res.json({ success: true, url: data.init_point, id: data.id });
+  } catch(e) {
+    console.error('[Assinatura MP]', e.response?.data || e.message);
+    res.status(500).json({ error: e.response?.data?.message || e.message });
+  }
+});
+
 app.post('/webhook/mp', async (req, res) => {
   res.sendStatus(200);
   const { type, data } = req.body;
@@ -4006,24 +4063,51 @@ app.post('/webhook/mp', async (req, res) => {
     } catch(e) { console.error('[Webhook MP]', e.message); }
   }
 
-  // Assinatura recorrente — Premium
+  const mpHeaders = { 'Authorization': 'Bearer ' + MP_ACCESS_TOKEN };
+
+  // Assinatura recorrente — cobrança mensal aprovada → renova a licença da loja
   if (type === 'subscription_authorized_payment') {
     try {
-      const { data: apData } = await axios.get('https://api.mercadopago.com/authorized_payments/' + data.id, { headers: { 'Authorization': 'Bearer ' + MP_ACCESS_TOKEN } });
-      const preapprovalId = apData.preapproval_id;
+      if (db.getLicencasPorPayment && db.getLicencasPorPayment(String(data.id))) return; // idempotência
+      const { data: ap } = await axios.get('https://api.mercadopago.com/authorized_payments/' + data.id, { headers: mpHeaders });
+      const preapprovalId = ap.preapproval_id;
       if (!preapprovalId) return;
-      const { data: subData } = await axios.get('https://api.mercadopago.com/preapproval/' + preapprovalId, { headers: { 'Authorization': 'Bearer ' + MP_ACCESS_TOKEN } });
-      if (subData.preapproval_plan_id !== SUBSCRIPTION_PREMIUM_ID) return;
-      const email = subData.payer_email;
-      if (!email) return;
-      const jaProcessado = db.getLicencasPorPayment(String(data.id));
-      if (jaProcessado) return;
-      const chave = gerarChave('premium');
-      db.criarLicenca(chave, 'premium', null, 1);
-      db.salvarPaymentId(chave, String(data.id));
-      await enviarChavePorEmail(email, chave, 'premium', new Date(Date.now() + 30 * 24 * 60 * 60 * 1000).toISOString());
-      console.log('[MP Sub] Licenca ' + chave + ' gerada para ' + email + ' — Premium');
+      const aprovado = ap.status === 'approved' || ap.status === 'processed' || ap.payment?.status === 'approved';
+      if (!aprovado) return;
+      const { data: sub } = await axios.get('https://api.mercadopago.com/preapproval/' + preapprovalId, { headers: mpHeaders });
+      let ref = {}; try { ref = JSON.parse(sub.external_reference || '{}'); } catch(_) {}
+      if (ref.store_id) {
+        // Fluxo vinculado à loja: renova licença (+35 dias) e marca assinatura ativa
+        db.ativarAssinaturaLicenca(String(ref.store_id), ref.plano || 'premium', 35);
+        db.upsertAssinatura(String(ref.store_id), preapprovalId, ref.plano || 'premium', 'authorized', sub.payer_email, sub.next_payment_date || null);
+        db.salvarPaymentId('SUB-' + ref.store_id, String(data.id));
+        console.log('[MP Sub] Renovada loja ' + ref.store_id + ' — ' + (ref.plano || 'premium'));
+      } else if (sub.preapproval_plan_id === SUBSCRIPTION_PREMIUM_ID && sub.payer_email) {
+        // Compat: plano antigo por e-mail (gera chave)
+        const chave = gerarChave('premium');
+        db.criarLicenca(chave, 'premium', null, 1);
+        db.salvarPaymentId(chave, String(data.id));
+        await enviarChavePorEmail(sub.payer_email, chave, 'premium', new Date(Date.now() + 30 * 24 * 60 * 60 * 1000).toISOString());
+        console.log('[MP Sub] (compat) Licenca ' + chave + ' — ' + sub.payer_email);
+      }
     } catch(e) { console.error('[Webhook Subscription]', e.message); }
+  }
+
+  // Assinatura recorrente — mudança de status (autorizada / pausada / cancelada)
+  if (type === 'subscription_preapproval') {
+    try {
+      const { data: sub } = await axios.get('https://api.mercadopago.com/preapproval/' + data.id, { headers: mpHeaders });
+      let ref = {}; try { ref = JSON.parse(sub.external_reference || '{}'); } catch(_) {}
+      if (!ref.store_id) return;
+      db.upsertAssinatura(String(ref.store_id), String(data.id), ref.plano || 'premium', sub.status, sub.payer_email, sub.next_payment_date || null);
+      if (sub.status === 'authorized') {
+        db.ativarAssinaturaLicenca(String(ref.store_id), ref.plano || 'premium', 35);
+        console.log('[MP Sub] Autorizada loja ' + ref.store_id);
+      } else if (sub.status === 'cancelled' || sub.status === 'paused') {
+        db.cancelarAssinaturaLicenca(String(ref.store_id), sub.status);
+        console.log('[MP Sub] ' + sub.status + ' loja ' + ref.store_id);
+      }
+    } catch(e) { console.error('[Webhook Preapproval]', e.message); }
   }
 });
 

@@ -786,6 +786,17 @@ function migrar() {
       UNIQUE(store_id, ano_mes, codigo)
     )`);
   } catch(e) {}
+  try {
+    db.exec(`CREATE TABLE IF NOT EXISTS assinaturas (
+      store_id       TEXT PRIMARY KEY,
+      preapproval_id TEXT,
+      plano          TEXT,
+      status         TEXT,
+      email          TEXT,
+      proxima_cobranca TEXT,
+      atualizado_em  TEXT DEFAULT (datetime('now'))
+    )`);
+  } catch(e) {}
     console.log('[DB] Migração concluída.');
 }
 
@@ -850,6 +861,43 @@ function getLicencasPorPayment(paymentId) {
 
 function salvarPaymentId(chave, paymentId) {
   db.prepare('UPDATE licencas SET payment_id = ? WHERE chave = ?').run(paymentId, chave);
+}
+
+// ── Assinaturas recorrentes (Mercado Pago preapproval) ──────────────────────
+function upsertAssinatura(storeId, preapprovalId, plano, status, email, proximaCobranca) {
+  db.prepare(`
+    INSERT INTO assinaturas (store_id, preapproval_id, plano, status, email, proxima_cobranca, atualizado_em)
+    VALUES (?, ?, ?, ?, ?, ?, datetime('now'))
+    ON CONFLICT(store_id) DO UPDATE SET
+      preapproval_id = excluded.preapproval_id,
+      plano = excluded.plano,
+      status = excluded.status,
+      email = COALESCE(excluded.email, assinaturas.email),
+      proxima_cobranca = COALESCE(excluded.proxima_cobranca, assinaturas.proxima_cobranca),
+      atualizado_em = datetime('now')
+  `).run(String(storeId), preapprovalId || null, plano || null, status || null, email || null, proximaCobranca || null);
+}
+function getAssinatura(storeId) {
+  return db.prepare('SELECT * FROM assinaturas WHERE store_id = ?').get(String(storeId)) || null;
+}
+// Ativa/renova a licença da loja de forma rolável (chave determinística SUB-<store>).
+function ativarAssinaturaLicenca(storeId, plano, diasValidade) {
+  const chave = 'SUB-' + String(storeId);
+  const expira = new Date(Date.now() + (Number(diasValidade || 35) * 24 * 60 * 60 * 1000)).toISOString();
+  db.prepare(`
+    INSERT INTO licencas (chave, plano, store_id, expira_em, status)
+    VALUES (?, ?, ?, ?, 'ativa')
+    ON CONFLICT(chave) DO UPDATE SET
+      plano = excluded.plano, store_id = excluded.store_id,
+      expira_em = excluded.expira_em, status = 'ativa'
+  `).run(chave, plano, String(storeId), expira);
+}
+function cancelarAssinaturaLicenca(storeId, novoStatus) {
+  db.prepare('UPDATE assinaturas SET status = ?, atualizado_em = datetime(\'now\') WHERE store_id = ?').run(novoStatus || 'cancelled', String(storeId));
+  // A licença deixa de ser renovada; expira naturalmente. (Não força inativa p/ dar carência até a data.)
+}
+function listarAssinaturas() {
+  return db.prepare('SELECT * FROM assinaturas ORDER BY atualizado_em DESC').all();
 }
 
 // Busca licenca pela chave (para login do app mobile)
@@ -1465,6 +1513,7 @@ module.exports = {
   salvarNomeMovimentacao, listarNomesMovimentacoes,
   salvarRastreioContexto, getRastreioContexto,
   registrarUsoRastreio, usoRastreioJaContado, contarUsoRastreio,
+  upsertAssinatura, getAssinatura, ativarAssinaturaLicenca, cancelarAssinaturaLicenca, listarAssinaturas,
   salvarRelatorioMercadoPago, getRelatorioMercadoPago, listarRelatoriosMercadoPago, marcarRelatorioMercadoPagoImportado,
     jaPedidoRecebido,
   salvarEnvioAvulso, getEnvioAvulso, listarEnviosAvulsos, listarEnviosAvulsosMonitorar,
