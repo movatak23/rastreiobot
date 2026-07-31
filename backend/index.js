@@ -538,6 +538,19 @@ app.post('/admin-loggzap/api/multi-dispositivo', auth, (req, res) => {
 
 // ── Admin LoggZap — helpers de teste WhatsApp/Z-API ──────────────────────────
 async function getZapiStatusForStore(storeId, options = {}) {
+  // Se o provedor ativo é o Evolution, o status vem do estado da instância Evolution.
+  if (WHATSAPP_PROVIDER === 'evolution') {
+    const st = await evolutionState(storeId);
+    return {
+      conectado: st.conectado,
+      connected: st.conectado,
+      smartphoneConnected: st.conectado,
+      estado: st.state,
+      origem: 'evolution',
+      erro: st.conectado ? null : (st.erro || `Evolution: ${st.state}`)
+    };
+  }
+
   const inst = db.getInstancia ? (db.getInstancia(String(storeId)) || null) : null;
   const allowEnvFallback = options.allowEnvFallback === true;
 
@@ -1517,6 +1530,50 @@ async function sendViaEvolution(numeroComDDI, mensagem, storeId) {
     { headers: { apikey: EVOLUTION_API_KEY, 'Content-Type': 'application/json' }, timeout: 30000 }
   );
   return res.data;
+}
+
+// Gestão de instância Evolution (onboarding self-service de WhatsApp por loja)
+async function evolutionEnsureInstance(storeId) {
+  const instance = evolutionInstanceName(storeId);
+  try {
+    await axios.post(`${EVOLUTION_URL}/instance/create`,
+      { instanceName: instance, integration: 'WHATSAPP-BAILEYS', qrcode: true },
+      { headers: { apikey: EVOLUTION_API_KEY, 'Content-Type': 'application/json' }, timeout: 30000 });
+  } catch (e) {
+    // 403/409 ou "already in use" = instância já existe → seguimos normalmente
+    const msg = JSON.stringify(e.response?.data || '');
+    if (![403, 409].includes(e.response?.status) && !/already|exists|in use/i.test(msg)) {
+      console.warn('[Evolution] create instance aviso:', e.response?.status, msg.slice(0, 160));
+    }
+  }
+  return instance;
+}
+
+async function evolutionConnect(storeId) {
+  const instance = await evolutionEnsureInstance(storeId);
+  const r = await axios.get(`${EVOLUTION_URL}/instance/connect/${instance}`,
+    { headers: { apikey: EVOLUTION_API_KEY }, timeout: 30000 });
+  const d = r.data || {};
+  return { instance, qr: d.base64 || d.qrcode?.base64 || null, code: d.code || d.pairingCode || null };
+}
+
+async function evolutionState(storeId) {
+  const instance = evolutionInstanceName(storeId);
+  try {
+    const r = await axios.get(`${EVOLUTION_URL}/instance/connectionState/${instance}`,
+      { headers: { apikey: EVOLUTION_API_KEY }, timeout: 15000, validateStatus: () => true });
+    const state = r.data?.instance?.state || r.data?.state || 'close';
+    return { state, conectado: state === 'open' };
+  } catch (e) {
+    return { state: 'error', conectado: false, erro: e.message };
+  }
+}
+
+async function evolutionLogout(storeId) {
+  const instance = evolutionInstanceName(storeId);
+  await axios.delete(`${EVOLUTION_URL}/instance/logout/${instance}`,
+    { headers: { apikey: EVOLUTION_API_KEY }, timeout: 15000, validateStatus: () => true });
+  return { instance };
 }
 
 async function sendWhatsApp(telefone, mensagem, storeId) {
@@ -4366,6 +4423,41 @@ app.get('/whatsapp/status', auth, async (req, res) => {
 
 app.get('/whatsapp/qrcode', auth, (req, res) => { res.json({ success: false, error: 'Com Z-API o QR Code é gerado no painel de z-api.io.' }); });
 app.post('/whatsapp/criar-instancia', auth, (req, res) => { res.json({ success: true, message: 'Z-API não precisa criar instância via API.' }); });
+
+// ── WhatsApp self-service (Evolution): conectar por QR, status e desconectar ──
+app.post('/whatsapp/conectar', auth, async (req, res) => {
+  const { store_id } = req.body || {};
+  if (!store_id) return res.status(400).json({ error: 'store_id obrigatório.' });
+  if (WHATSAPP_PROVIDER !== 'evolution')
+    return res.status(400).json({ error: 'Conexão por QR disponível apenas no provedor Evolution.' });
+  try {
+    const out = await evolutionConnect(String(store_id));
+    const st = await evolutionState(String(store_id));
+    res.json({ success: true, qr: out.qr, code: out.code, estado: st.state, conectado: st.conectado });
+  } catch (e) {
+    res.status(500).json({ error: e.response?.data?.message || e.message });
+  }
+});
+
+app.get('/whatsapp/status/:storeId', auth, async (req, res) => {
+  try {
+    const st = await getZapiStatusForStore(String(req.params.storeId));
+    res.json({ success: true, conectado: !!st.conectado, estado: st.estado || null, provedor: WHATSAPP_PROVIDER });
+  } catch (e) {
+    res.status(500).json({ error: e.message });
+  }
+});
+
+app.post('/whatsapp/desconectar', auth, async (req, res) => {
+  const { store_id } = req.body || {};
+  if (!store_id) return res.status(400).json({ error: 'store_id obrigatório.' });
+  try {
+    if (WHATSAPP_PROVIDER === 'evolution') await evolutionLogout(String(store_id));
+    res.json({ success: true });
+  } catch (e) {
+    res.status(500).json({ error: e.message });
+  }
+});
 
 async function verificarPosEntrega(storeId) {
   try {
