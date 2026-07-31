@@ -1547,6 +1547,17 @@ async function evolutionEnsureInstance(storeId) {
       console.warn('[Evolution] create instance aviso:', e.response?.status, msg.slice(0, 160));
     }
   }
+  // Configura o webhook de inbound (respostas do cliente) apontando pro backend.
+  const base = (process.env.APP_URL || '').replace(/\/$/, '');
+  if (base) {
+    try {
+      await axios.post(`${EVOLUTION_URL}/webhook/set/${instance}`,
+        { webhook: { enabled: true, url: `${base}/webhook/evolution`, webhookByEvents: false, webhookBase64: false, events: ['MESSAGES_UPSERT'] } },
+        { headers: { apikey: EVOLUTION_API_KEY, 'Content-Type': 'application/json' }, timeout: 15000 });
+    } catch (e) {
+      console.warn('[Evolution] webhook/set aviso:', e.response?.status, JSON.stringify(e.response?.data || '').slice(0, 120));
+    }
+  }
   return instance;
 }
 
@@ -4652,54 +4663,77 @@ app.post('/webhook/seurastreio', async (req, res) => {
   }
 });
 
+// Lógica compartilhada de resposta ao cliente (usada pelos webhooks Z-API e Evolution).
+// storeIdContexto = loja cuja instância recebeu a mensagem (Evolution sabe; Z-API não).
+async function processarRespostaCliente(telefone, texto, storeIdContexto) {
+  if (!telefone || !texto) return;
+  if (!contemGatilho(texto)) return;
+  console.log(`[Inbound] Gatilho detectado de ${telefone}: "${texto}"`);
+  const stores = db.getAllStores();
+  let pedidoEncontrado = null;
+  for (const store of stores) {
+    try {
+      const orders = await nuvemGet(store.store_id, '/orders', { per_page: 50, payment_status: 'paid', fields: 'id,number,contact_name,contact_phone,shipping_tracking_number,shipping_option,created_at' });
+      const telLimpo = String(telefone).replace(/\D/g, '');
+      const pedido = orders.filter(o => o.status !== 'cancelled').find(o => { const t = formatTel(o.contact_phone); return t && String(t).replace(/\D/g, '').endsWith(telLimpo.slice(-10)); });
+      if (pedido) { pedidoEncontrado = { ...pedido, store_id: store.store_id }; break; }
+    } catch(e) { console.error(`[Inbound] Erro ao buscar loja ${store.store_id}:`, e.message); }
+  }
+  const lojaResposta = pedidoEncontrado?.store_id || storeIdContexto || null;
+  const palavrasOptOut = ['parar','sair','stop','não quero','nao quero','cancelar','descadastrar'];
+  if (palavrasOptOut.some(p => texto.toLowerCase().includes(p))) {
+    db.marcarOptOut(telefone, lojaResposta);
+    await sendWhatsApp(telefone, `Tudo bem! Você não receberá mais mensagens automáticas. 😊\n\nSe precisar de ajuda, fale conosco diretamente.`, lojaResposta);
+    console.log(`[OptOut] ${telefone} optou por sair.`);
+    return;
+  }
+  if (!pedidoEncontrado) {
+    await sendWhatsApp(telefone, `Olá! 😊 Não encontrei nenhum pedido vinculado a este número.\n\nSe precisar de ajuda, entre em contato com nossa equipe!`, lojaResposta);
+    return;
+  }
+  const rastreio = pedidoEncontrado.shipping_tracking_number?.trim();
+  const nome     = pedidoEncontrado.contact_name || 'Cliente';
+  const numero   = pedidoEncontrado.number;
+  const link     = rastreio ? `https://rastreamento.correios.com.br/app/index.php?objeto=${rastreio}` : null;
+  const statusAtual = rastreio ? db.statusRastreio(rastreio) : null;
+  let mensagem;
+  if (!rastreio) {
+    mensagem = `Olá, ${nome}! 😊\n\nSeu pedido *#${numero}* ainda está em produção.\n\nAssim que for enviado, você receberá o código de rastreio aqui. 📦`;
+  } else {
+    mensagem = `Olá, ${nome}! 😊\n\nSeu pedido *#${numero}*:\n\n📦 *Código de rastreio:* ${rastreio}\n` + (statusAtual ? `📍 *Status atual:* ${statusAtual}\n` : '') + `\n🔗 Rastreie aqui: ${link}`;
+  }
+  if (await podEnviar(telefone)) {
+    await sendWhatsApp(telefone, mensagem, pedidoEncontrado.store_id);
+    db.registrarMensagem(telefone);
+    console.log(`[Inbound] Resposta automática enviada para ${telefone} — pedido #${numero}`);
+  }
+}
+
 app.post('/webhook/zapi', async (req, res) => {
   res.json({ ok: true });
   try {
-    const body = req.body;
+    const body = req.body || {};
     if (body.fromMe) return;
     if (!body.text?.message) return;
-    const texto    = body.text.message;
-    const telefone = body.phone;
-    if (!contemGatilho(texto)) return;
-    console.log(`[ZAPI] Gatilho detectado de ${telefone}: "${texto}"`);
-    const stores = db.getAllStores();
-    let pedidoEncontrado = null;
-    for (const store of stores) {
-      try {
-        const orders = await nuvemGet(store.store_id, '/orders', { per_page: 50, payment_status: 'paid', fields: 'id,number,contact_name,contact_phone,shipping_tracking_number,shipping_option,created_at' });
-        const telLimpo = String(telefone).replace(/\D/g, '');
-        const pedido = orders.filter(o => o.status !== 'cancelled').find(o => { const t = formatTel(o.contact_phone); return t && String(t).replace(/\D/g, '').endsWith(telLimpo.slice(-10)); });
-        if (pedido) { pedidoEncontrado = { ...pedido, store_id: store.store_id }; break; }
-      } catch(e) { console.error(`[ZAPI] Erro ao buscar loja ${store.store_id}:`, e.message); }
-    }
-    const palavrasOptOut = ['parar','sair','stop','não quero','nao quero','cancelar','descadastrar'];
-    if (palavrasOptOut.some(p => texto.toLowerCase().includes(p))) {
-      db.marcarOptOut(telefone, pedidoEncontrado?.store_id);
-      await sendWhatsApp(telefone, `Tudo bem! Você não receberá mais mensagens automáticas. 😊\n\nSe precisar de ajuda, fale conosco diretamente.`);
-      console.log(`[OptOut] ${telefone} optou por sair.`);
-      return;
-    }
-    if (!pedidoEncontrado) {
-      await sendWhatsApp(telefone, `Olá! 😊 Não encontrei nenhum pedido vinculado a este número.\n\nSe precisar de ajuda, entre em contato com nossa equipe!`);
-      return;
-    }
-    const rastreio = pedidoEncontrado.shipping_tracking_number?.trim();
-    const nome     = pedidoEncontrado.contact_name || 'Cliente';
-    const numero   = pedidoEncontrado.number;
-    const link     = rastreio ? `https://rastreamento.correios.com.br/app/index.php?objeto=${rastreio}` : null;
-    const statusAtual = rastreio ? db.statusRastreio(rastreio) : null;
-    let mensagem;
-    if (!rastreio) {
-      mensagem = `Olá, ${nome}! 😊\n\nSeu pedido *#${numero}* ainda está em produção.\n\nAssim que for enviado, você receberá o código de rastreio aqui. 📦`;
-    } else {
-      mensagem = `Olá, ${nome}! 😊\n\nSeu pedido *#${numero}*:\n\n📦 *Código de rastreio:* ${rastreio}\n` + (statusAtual ? `📍 *Status atual:* ${statusAtual}\n` : '') + `\n🔗 Rastreie aqui: ${link}`;
-    }
-    if (await podEnviar(telefone)) {
-      await sendWhatsApp(telefone, mensagem, pedidoEncontrado.store_id);
-      db.registrarMensagem(telefone);
-      console.log(`[ZAPI] Resposta automática enviada para ${telefone} — pedido #${numero}`);
-    }
+    await processarRespostaCliente(body.phone, body.text.message, null);
   } catch(e) { console.error('[ZAPI] Erro no webhook:', e.message); }
+});
+
+// Inbound do Evolution (MESSAGES_UPSERT). A loja vem no nome da instância (loja_<id>).
+app.post('/webhook/evolution', async (req, res) => {
+  res.json({ ok: true });
+  try {
+    const b = req.body || {};
+    const data = b.data || {};
+    const key = data.key || {};
+    if (key.fromMe) return;
+    const jid = key.remoteJid || '';
+    if (!jid || jid.endsWith('@g.us')) return; // ignora grupos
+    const texto = data.message?.conversation || data.message?.extendedTextMessage?.text || '';
+    const telefone = String(jid).split('@')[0];
+    const storeIdContexto = String(b.instance || '').replace(/^loja_/, '') || null;
+    if (texto) await processarRespostaCliente(telefone, texto, storeIdContexto);
+  } catch(e) { console.error('[Evolution] Erro no webhook inbound:', e.message); }
 });
 
 // ── Páginas públicas de privacidade ───────────────────────────────────────────
