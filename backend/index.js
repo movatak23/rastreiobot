@@ -163,6 +163,7 @@ function adminLoggzapHtml() {
           <br><br>
           <button onclick="testarWhatsApp()">Enviar teste real</button>
           <button class="btn2" onclick="statusZapi()">Consultar Z-API</button>
+          <br><br><button onclick="simularApresentacao()" style="background:#4f8ef7;color:#fff">🎬 Simular apresentação — envia TODAS as automações</button>
         </div>
         <div>
           <label>Resetar login do cliente</label><input id="resetLogin" placeholder="Novo login">
@@ -277,6 +278,18 @@ function abrirWhats(store){window.open('https://wa.me/5581976041948?text='+encod
 async function testarWhatsApp(){
   hide('acaoErr');hide('acaoOk');
   try{const d=await api('/admin-loggzap/api/teste-whatsapp',{method:'POST',body:JSON.stringify({store_id:acaoStore.value,telefone:acaoTelefone.value,tipo:acaoTipo.value})});show('acaoOk','✅ Teste enviado.'); await carregar();}catch(e){show('acaoErr',e.message);}
+}
+async function simularApresentacao(){
+  hide('acaoErr');hide('acaoOk');
+  if(!acaoStore.value){show('acaoErr','Informe o Store ID.');return;}
+  if(!acaoTelefone.value){show('acaoErr','Informe o telefone (com DDI, ex.: 5581999998888).');return;}
+  if(!confirm('Enviar TODAS as mensagens das automações para '+acaoTelefone.value+'? (uma a cada ~2s)')) return;
+  show('acaoOk','⏳ Enviando as mensagens em sequência... (leva ~15s, aguarde no celular)');
+  try{
+    const d=await api('/admin-loggzap/api/simular-automacoes',{method:'POST',body:JSON.stringify({store_id:acaoStore.value,telefone:acaoTelefone.value})});
+    show('acaoOk','✅ Simulação enviada: '+d.total+'/'+d.de+' mensagens → '+(d.enviados||[]).join(', '));
+    await carregar();
+  }catch(e){show('acaoErr',e.message);}
 }
 function resumoStatusZapi(status){
   const s = status || {};
@@ -409,6 +422,35 @@ app.post('/admin-loggzap/api/teste-whatsapp', auth, async (req, res) => {
   }
 });
 
+
+// Simulação de apresentação: dispara TODAS as mensagens das automações pro celular informado
+app.post('/admin-loggzap/api/simular-automacoes', auth, async (req, res) => {
+  const { store_id, telefone } = req.body || {};
+  if (!store_id) return res.status(400).json({ error: 'Informe o Store ID.' });
+  if (!telefone) return res.status(400).json({ error: 'Informe o telefone para a simulação.' });
+  const telLimpo = String(telefone).replace(/\D/g, '');
+  if (telLimpo.length < 12) return res.status(400).json({ error: 'Telefone inválido. Use o formato com DDI, ex.: 5581999998888.' });
+  try {
+    const status = await getZapiStatusForStoreSafe(String(store_id));
+    if (!status.conectado) return res.status(400).json({ error: 'WhatsApp não conectado para esta loja.', status });
+
+    const tipos = Object.keys(DEFAULT_AUTOMATION_TEMPLATES); // funil completo, em ordem
+    const enviados = [];
+    for (const tipo of tipos) {
+      try {
+        const mensagem = renderTemplateTesteAdmin(String(store_id), tipo);
+        await sendWhatsApp(telLimpo, mensagem, String(store_id));
+        enviados.push(tipo);
+        if (typeof safeLogAutomacao === 'function') safeLogAutomacao({ store_id: String(store_id), tipo: 'simulacao_' + tipo, telefone: telLimpo, mensagem });
+        await new Promise(r => setTimeout(r, 1800)); // espaçamento p/ manter ordem e evitar bloqueio
+      } catch(e) { console.error('[Simulação]', tipo, e.message); }
+    }
+    res.json({ success: true, enviados, total: enviados.length, de: tipos.length });
+  } catch(e) {
+    console.error('[Simulação automações]', e.message);
+    res.status(500).json({ error: e.response?.data?.message || e.message });
+  }
+});
 
 app.get('/admin-loggzap/api/resumo', auth, async (req, res) => {
   try {
