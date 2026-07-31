@@ -58,7 +58,9 @@ function adminLoggzapHtml() {
 <meta name="viewport" content="width=device-width,initial-scale=1.0">
 <title>Admin LoggZap</title>
 <style>
+  @import url('https://fonts.googleapis.com/css2?family=Poppins:wght@600;700;800&display=swap');
   *{box-sizing:border-box}body{margin:0;background:#07090e;color:#eef0f8;font-family:Arial,sans-serif}
+  h1,h2,h3,h4,h5,h6{font-family:'Poppins',Arial,sans-serif}
   .wrap{max-width:1220px;margin:0 auto;padding:32px 22px}
   .top{display:flex;justify-content:space-between;gap:16px;align-items:center;margin-bottom:20px}
   .logo{font-size:24px;font-weight:800}.logo span{color:#00d084}
@@ -1074,7 +1076,9 @@ function painelHtml() {
 <meta name="viewport" content="width=device-width,initial-scale=1.0">
 <title>Painel Premium LoggZap</title>
 <style>
+  @import url('https://fonts.googleapis.com/css2?family=Poppins:wght@600;700;800&display=swap');
   *{box-sizing:border-box}body{margin:0;background:#07090e;color:#eef0f8;font-family:Arial,sans-serif}
+  h1,h2,h3,h4,h5,h6{font-family:'Poppins',Arial,sans-serif}
   .wrap{max-width:1040px;margin:0 auto;padding:32px 22px}
   .top{display:flex;justify-content:space-between;align-items:center;gap:16px;margin-bottom:22px}
   .logo{font-size:24px;font-weight:800}.logo span{color:#00d084}
@@ -3937,8 +3941,10 @@ app.get('/assinar', (req, res) => {
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
 <title>LoggZap — ${p.titulo}</title>
 <style>
+  @import url('https://fonts.googleapis.com/css2?family=Poppins:wght@600;700;800&display=swap');
   *,*::before,*::after{box-sizing:border-box;margin:0;padding:0}
   body{background:#07090e;color:#eef0f8;font-family:Arial,sans-serif;min-height:100vh;display:flex;align-items:center;justify-content:center;padding:24px}
+  h1,h2,h3,.logo{font-family:'Poppins',Arial,sans-serif}
   .card{background:#0c0f16;border:1px solid rgba(255,255,255,0.07);border-radius:16px;padding:40px 36px;max-width:440px;width:100%;text-align:center;box-shadow:0 24px 80px rgba(0,0,0,.35)}
   .logo{font-size:26px;font-weight:800;margin-bottom:8px}
   .logo span{color:#00d084}
@@ -4383,8 +4389,10 @@ app.get('/checkout/sucesso', (req, res) => {
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
 <title>Pagamento aprovado - LoggZap</title>
 <style>
+  @import url('https://fonts.googleapis.com/css2?family=Poppins:wght@600;700;800&display=swap');
   *,*::before,*::after{box-sizing:border-box;margin:0;padding:0}
   body{background:#07090e;color:#eef0f8;font-family:Arial,sans-serif;min-height:100vh;display:flex;align-items:center;justify-content:center;padding:24px}
+  h1,h2,h3,.logo{font-family:'Poppins',Arial,sans-serif}
   .card{background:#0c0f16;border:1px solid rgba(0,208,132,.22);border-radius:18px;padding:42px 34px;max-width:560px;width:100%;text-align:center;box-shadow:0 24px 90px rgba(0,0,0,.45)}
   .logo{font-size:26px;font-weight:800;margin-bottom:18px}.logo span{color:#00d084}
   .icon{font-size:54px;margin-bottom:16px}
@@ -4425,8 +4433,8 @@ app.get('/checkout/sucesso', (req, res) => {
 </body>
 </html>`);
 });
-app.get('/checkout/erro',    (req, res) => { res.send('<!DOCTYPE html><html><head><meta charset="UTF-8"></head><body style="background:#0d0d10;color:#fff;font-family:sans-serif;text-align:center;padding:3rem"><h2 style="color:#e05a5a">Pagamento nao aprovado</h2><p>Tente novamente ou entre em contato: contato@loggzap.com.br</p></body></html>'); });
-app.get('/checkout/pendente',(req, res) => { res.send('<!DOCTYPE html><html><head><meta charset="UTF-8"></head><body style="background:#0d0d10;color:#fff;font-family:sans-serif;text-align:center;padding:3rem"><h2 style="color:#e8a030">Pagamento em processamento</h2><p>Voce recebera a chave por email assim que o pagamento for confirmado.</p></body></html>'); });
+app.get('/checkout/erro',    (req, res) => { res.send('<!DOCTYPE html><html><head><meta charset="UTF-8"><link href="https://fonts.googleapis.com/css2?family=Poppins:wght@700&display=swap" rel="stylesheet"></head><body style="background:#0d0d10;color:#fff;font-family:sans-serif;text-align:center;padding:3rem"><h2 style="color:#e05a5a;font-family:\'Poppins\',sans-serif">Pagamento nao aprovado</h2><p>Tente novamente ou entre em contato: contato@loggzap.com.br</p></body></html>'); });
+app.get('/checkout/pendente',(req, res) => { res.send('<!DOCTYPE html><html><head><meta charset="UTF-8"><link href="https://fonts.googleapis.com/css2?family=Poppins:wght@700&display=swap" rel="stylesheet"></head><body style="background:#0d0d10;color:#fff;font-family:sans-serif;text-align:center;padding:3rem"><h2 style="color:#e8a030;font-family:\'Poppins\',sans-serif">Pagamento em processamento</h2><p>Voce recebera a chave por email assim que o pagamento for confirmado.</p></body></html>'); });
 
 app.post('/teste/email', auth, async (req, res) => {
   const { email, plano = 'basic' } = req.body;
