@@ -1497,7 +1497,36 @@ async function podEnviar(telefone) {
   return true;
 }
 
+// ── Provedor de WhatsApp: 'zapi' (padrão) | 'evolution' ─────────────────────
+// Troca via variável de ambiente WHATSAPP_PROVIDER no Railway. Downgrade = voltar pra 'zapi'.
+const WHATSAPP_PROVIDER = (process.env.WHATSAPP_PROVIDER || 'zapi').toLowerCase();
+const EVOLUTION_URL = (process.env.EVOLUTION_URL || '').replace(/\/$/, '');
+const EVOLUTION_API_KEY = process.env.EVOLUTION_API_KEY || '';
+
+function evolutionInstanceName(storeId) {
+  return storeId ? `loja_${String(storeId).replace(/\W/g, '')}` : 'default';
+}
+
+async function sendViaEvolution(numeroComDDI, mensagem, storeId) {
+  if (!EVOLUTION_URL || !EVOLUTION_API_KEY)
+    throw new Error('Evolution não configurado (EVOLUTION_URL/EVOLUTION_API_KEY).');
+  const instance = evolutionInstanceName(storeId);
+  const res = await axios.post(
+    `${EVOLUTION_URL}/message/sendText/${instance}`,
+    { number: numeroComDDI, text: mensagem },
+    { headers: { apikey: EVOLUTION_API_KEY, 'Content-Type': 'application/json' }, timeout: 30000 }
+  );
+  return res.data;
+}
+
 async function sendWhatsApp(telefone, mensagem, storeId) {
+  // Evolution usa número completo com DDI (55...). Z-API mantém o comportamento atual.
+  if (WHATSAPP_PROVIDER === 'evolution') {
+    let full = String(telefone).replace(/\D/g, '');
+    if (!full.startsWith('55')) full = '55' + full;
+    return await sendViaEvolution(full, mensagem, storeId);
+  }
+
   let instance, token, clientToken;
   if (storeId) {
     const inst = db.getInstancia(storeId);
