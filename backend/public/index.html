@@ -489,27 +489,29 @@ src="https://www.facebook.com/tr?id=1905327720020686&ev=PageView&noscript=1"
       </div>
 
       <div class="plano rev">
-        <div class="pnome">Basic</div>
-        <div><span class="pval">R$97</span><span class="pper">/ano</span></div>
+        <div class="pnome">Essencial</div>
+        <div><span class="pval">R$97</span><span class="pper">/mês</span></div>
         <div class="pdesc">Dashboard completo para lojistas que querem visibilidade total</div>
         <ul class="pitems">
           <li><span class="ok">✓</span> Dashboard completo</li>
           <li><span class="ok">✓</span> Visualização de pedidos e rastreios</li>
           <li><span class="ok">✓</span> Metas, insights e alertas</li>
           <li><span class="ok">✓</span> Atualização a cada 5 minutos</li>
+          <li><span class="ok">✓</span> Até 300 rastreios/mês</li>
           <li><span class="no">✗</span> Notificações WhatsApp automáticas</li>
           <li><span class="no">✗</span> Recuperação de carrinho e leads</li>
         </ul>
-        <a href="#" class="btnpl g" onclick="irCheckout(event,'basic')">Assinar Basic — R$97/mês</a>
+        <a href="#" class="btnpl g" onclick="irCheckout(event,'basic')">Assinar Essencial — R$97/mês</a>
       </div>
 
       <div class="plano pp rev">
         <div class="pbw"><span class="pb">⚡ Automação completa</span></div>
-        <div class="pnome">Premium</div>
-        <div><span class="pval">R$297</span><span class="pper">/mês</span></div>
+        <div class="pnome">Pro</div>
+        <div><span class="pval">R$147</span><span class="pper">/mês</span></div>
         <div class="pdesc">Tudo automatizado. Você foca no produto. A automação cuida do cliente do início ao fim — rastreio, entrega, satisfação, reativação e recuperação.</div>
         <ul class="pitems">
-          <li><span class="okb">✓</span> Tudo do Basic</li>
+          <li><span class="okb">✓</span> Tudo do Essencial</li>
+          <li><span class="okb">✓</span> Até 1.000 rastreios/mês</li>
           <li><span class="okb">✓</span> Rastreio automático a cada movimentação</li>
           <li><span class="okb">✓</span> Notificação de envio e entrega automática</li>
           <li><span class="okb">✓</span> Pesquisa de satisfação pós-entrega</li>
@@ -594,7 +596,7 @@ src="https://www.facebook.com/tr?id=1905327720020686&ev=PageView&noscript=1"
 
   function abrirCadastro(plano) {
     planoSelecionado = plano;
-    const nomes = { trial: 'Trial — 7 dias grátis', basic: 'Plano Basic — R$97/ano', premium: 'Plano Premium — R$977/mês' };
+    const nomes = { trial: 'Trial — 7 dias grátis', basic: 'Plano Essencial — R$97/mês', premium: 'Plano Pro — R$147/mês' };
     document.getElementById('modal-plano-badge').textContent = nomes[plano] || plano;
     document.getElementById('modal-cadastro').style.display = 'flex';
     document.getElementById('cad-nome').focus();

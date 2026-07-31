@@ -3843,7 +3843,7 @@ async function enviarChavePorEmail(email, chave, plano, expiraEm) {
       '<h2 style="color:#4f8ef7">LoggZap Dashboard</h2><p>Seu pagamento foi confirmado! Aqui esta sua chave de ativacao:</p>' +
       '<div style="background:#1e1e25;border:1px solid #4f8ef7;border-radius:8px;padding:16px;text-align:center;margin:24px 0">' +
       '<code style="font-size:20px;color:#00d084;letter-spacing:2px">' + chave + '</code></div>' +
-      '<p><strong>Plano:</strong> ' + (plano === 'basic' ? 'Basic - R$97/ano' : 'Premium - R$297/mês') + '</p>' +
+      '<p><strong>Plano:</strong> ' + (plano === 'basic' ? 'Essencial - R$97/mês' : 'Pro - R$147/mês') + '</p>' +
       '<p><strong>Valido ate:</strong> ' + expira + '</p>' +
       '<p style="margin-top:24px">Para ativar: abra a extensao → Configuracoes → Cole a chave → Ativar chave.</p>' +
       '<hr style="border-color:#2a2a35;margin:24px 0">' +
@@ -3885,18 +3885,18 @@ app.get('/assinar', (req, res) => {
 
   const dadosPlano = {
     basic: {
-      nome: 'Basic',
-      preco: 'R$ 97/ano',
-      titulo: 'Assinar Plano Basic',
-      descricao: 'Dashboard completo para acompanhar sua loja em tempo real.',
-      badge: 'PLANO BASIC'
+      nome: 'Essencial',
+      preco: 'R$ 97/mês',
+      titulo: 'Assinar Plano Essencial',
+      descricao: 'Dashboard, financeiro e rastreio automático — até 300 rastreios/mês.',
+      badge: 'PLANO ESSENCIAL'
     },
     premium: {
-      nome: 'Premium',
-      preco: 'R$ 297/mês',
-      titulo: 'Assinar Plano Premium',
-      descricao: 'Dashboard completo com automações via WhatsApp.',
-      badge: 'PLANO PREMIUM'
+      nome: 'Pro',
+      preco: 'R$ 147/mês',
+      titulo: 'Assinar Plano Pro',
+      descricao: 'Tudo do Essencial + automações via WhatsApp — até 1.000 rastreios/mês.',
+      badge: 'PLANO PRO'
     }
   };
 
@@ -3967,9 +3967,9 @@ app.post('/checkout/criar', async (req, res) => {
   const { plano, email } = req.body;
   if (!plano || !email) return res.status(400).json({ error: 'plano e email obrigatorios' });
   if (!MP_ACCESS_TOKEN) return res.status(500).json({ error: 'MP_ACCESS_TOKEN nao configurado' });
-  const precos = { basic: 97, premium: 297 };
-  const nomes  = { basic: 'LoggZap Basic', premium: 'LoggZap Premium' };
-  const meses  = plano === 'basic' ? 12 : 1;
+  const precos = { basic: 97, premium: 147 };
+  const nomes  = { basic: 'LoggZap Essencial', premium: 'LoggZap Pro' };
+  const meses  = 1;
   if (!precos[plano]) return res.status(400).json({ error: 'plano invalido' });
   try {
     const { data } = await axios.post('https://api.mercadopago.com/checkout/preferences', {
@@ -3994,7 +3994,7 @@ app.post('/webhook/mp', async (req, res) => {
       const { data: pagamento } = await axios.get('https://api.mercadopago.com/v1/payments/' + data.id, { headers: { 'Authorization': 'Bearer ' + MP_ACCESS_TOKEN } });
       if (pagamento.status !== 'approved') return;
       const ref = JSON.parse(pagamento.external_reference || '{}');
-      const { plano, email, meses = 12 } = ref;
+      const { plano, email, meses = 1 } = ref;
       if (!plano || !email) return;
       const jaProcessado = db.getLicencasPorPayment(String(data.id));
       if (jaProcessado) return;
