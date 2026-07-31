@@ -767,6 +767,16 @@ function migrar() {
   `);
   try { db.exec("ALTER TABLE financeiro_conectores ADD COLUMN teto_saidas REAL DEFAULT 0"); } catch(e) {}
   try { db.exec("ALTER TABLE financeiro_movimentacoes ADD COLUMN nome_custom TEXT"); } catch(e) {}
+  try {
+    db.exec(`CREATE TABLE IF NOT EXISTS rastreio_contexto (
+      codigo        TEXT PRIMARY KEY,
+      store_id      TEXT,
+      order_number  TEXT,
+      contact_name  TEXT,
+      telefone      TEXT,
+      updated_at    TEXT DEFAULT (datetime('now'))
+    )`);
+  } catch(e) {}
     console.log('[DB] Migração concluída.');
 }
 
@@ -1280,6 +1290,25 @@ function salvarMovimentacaoFinanceira(m) {
   );
 }
 
+function salvarRastreioContexto(codigo, storeId, orderNumber, contactName, telefone) {
+  if (!codigo) return;
+  db.prepare(`
+    INSERT INTO rastreio_contexto (codigo, store_id, order_number, contact_name, telefone, updated_at)
+    VALUES (?, ?, ?, ?, ?, datetime('now'))
+    ON CONFLICT(codigo) DO UPDATE SET
+      store_id = excluded.store_id,
+      order_number = excluded.order_number,
+      contact_name = excluded.contact_name,
+      telefone = excluded.telefone,
+      updated_at = datetime('now')
+  `).run(String(codigo).toUpperCase(), String(storeId || ''), String(orderNumber || ''), contactName || null, telefone || null);
+}
+
+function getRastreioContexto(codigo) {
+  if (!codigo) return null;
+  return db.prepare('SELECT * FROM rastreio_contexto WHERE codigo = ?').get(String(codigo).toUpperCase()) || null;
+}
+
 function salvarNomeMovimentacao(storeId, origemId, nome) {
   const limpo = String(nome || '').trim();
   const info = db.prepare(`
@@ -1408,6 +1437,7 @@ module.exports = {
   salvarMercadoPagoConexao, getMercadoPagoConexao, desconectarMercadoPago,
   salvarTetoSaidas, salvarMovimentacaoFinanceira, listarMovimentacoesFinanceiras, getResumoFinanceiro,
   salvarNomeMovimentacao, listarNomesMovimentacoes,
+  salvarRastreioContexto, getRastreioContexto,
   salvarRelatorioMercadoPago, getRelatorioMercadoPago, listarRelatoriosMercadoPago, marcarRelatorioMercadoPagoImportado,
     jaPedidoRecebido,
   salvarEnvioAvulso, getEnvioAvulso, listarEnviosAvulsos, listarEnviosAvulsosMonitorar,

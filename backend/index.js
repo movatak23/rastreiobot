@@ -12,7 +12,8 @@ const db      = require('./db');
 db.migrar();
 
 const app = express();
-app.use(express.json());
+// Guarda o corpo cru (necessário p/ verificar assinatura HMAC de webhooks, ex.: Seu|Rastreio)
+app.use(express.json({ verify: (req, _res, buf) => { req.rawBody = buf; } }));
 app.use(cors({ origin: '*' }));
 app.use(express.static(path.join(__dirname, 'public')));
 
@@ -1916,6 +1917,8 @@ async function verificarRastreios(storeId) {
       const telefone = formatTel(o.contact_phone);
       if (!telefone) continue;
       if (!/^[A-Z]{2}\d{9}[A-Z]{2}$/i.test(rastreio)) continue;
+      // Registra contexto (código → loja/pedido/telefone) para o webhook do Seu|Rastreio conseguir enviar.
+      try { db.salvarRastreioContexto(rastreio, storeId, o.number, o.contact_name, telefone); } catch(e) {}
       if (db.statusRastreio(rastreio) === 'entregue') continue;
       if (db.foiRastreioConsultadoHoje(rastreio)) continue; // limite SeuRastreio 200/mês
       await new Promise(r => setTimeout(r, 2000)); // espaçamento entre requests
@@ -4589,6 +4592,65 @@ function contemGatilho(texto) {
   const t = (texto || '').trim().toLowerCase().normalize('NFD').replace(/[\u0300-\u036f]/g, '');
   return GATILHOS.some(g => { const gn = g.normalize('NFD').replace(/[\u0300-\u036f]/g, ''); return t === gn; });
 }
+
+// ── Webhook Seu|Rastreio (tempo real; substitui o polling 1x/dia, sem limite de 200/mês) ──
+app.post('/webhook/seurastreio', async (req, res) => {
+  const secret = process.env.SEURASTREIO_WEBHOOK_SECRET || '';
+  try {
+    if (secret) {
+      const sig = String(req.headers['x-seurastreio-signature'] || '');
+      const m = /t=(\d+),\s*v1=([a-f0-9]+)/i.exec(sig);
+      const t = m ? m[1] : String(req.headers['x-seurastreio-timestamp'] || '');
+      const v1 = m ? m[2] : '';
+      const raw = req.rawBody ? req.rawBody.toString('utf8') : JSON.stringify(req.body || {});
+      const esperado = crypto.createHmac('sha256', secret).update(`${t}.${raw}`).digest('hex');
+      const okSig = !!v1 && esperado.length === v1.length &&
+        crypto.timingSafeEqual(Buffer.from(esperado), Buffer.from(v1));
+      if (!okSig) return res.status(401).json({ error: 'assinatura inválida' });
+      if (t && (Date.now() / 1000 - Number(t)) > 300) return res.status(401).json({ error: 'timestamp expirado' });
+    }
+  } catch (e) {
+    return res.status(401).json({ error: 'falha na verificação de assinatura' });
+  }
+
+  // Responde rápido pra evitar retries; processa em seguida.
+  res.json({ success: true });
+
+  try {
+    const body = req.body || {};
+    const codigo = String(body.tracking?.codigo || '').toUpperCase();
+    if (!codigo) return;
+
+    const ctx = db.getRastreioContexto(codigo);
+    if (!ctx || !ctx.telefone || !ctx.store_id) {
+      console.warn('[SeuRastreio Webhook] sem contexto (código ainda não visto na varredura):', codigo);
+      return;
+    }
+
+    const descricao = body.tracking?.lastEventDescription || body.eventLabel || body.event || 'Atualização de rastreio';
+    const entregue = body.event === 'entregue';
+    const statusNovo = entregue ? 'entregue' : descricao;
+    if (statusNovo && statusNovo === db.statusRastreio(codigo)) return; // status já enviado
+    if (!await podEnviar(ctx.telefone)) return;
+
+    const evento = { descricao, status: descricao, entregue, data: '', hora: '' };
+    const pedido = { cliente: ctx.contact_name, numero: ctx.order_number, rastreio: codigo };
+    await sendWhatsApp(
+      ctx.telefone,
+      getMensagemTemplate(ctx.store_id, getRastreioTemplateKey(evento), montarMensagemRastreio(pedido, evento),
+        { nome: ctx.contact_name || 'Cliente', numero: ctx.order_number, codigo,
+          link: `https://rastreamento.correios.com.br/app/index.php?objeto=${codigo}`,
+          transportadora: 'Correios', status: descricao, data: '', hora: '' }),
+      ctx.store_id
+    );
+    db.atualizarStatusRastreio(codigo, statusNovo);
+    if (db.registrarMensagem) db.registrarMensagem(ctx.telefone);
+    if (typeof safeLogAutomacao === 'function') safeLogAutomacao({ store_id: ctx.store_id, tipo: 'rastreio_webhook', pedido: ctx.order_number, telefone: ctx.telefone, mensagem: descricao });
+    console.log(`[SeuRastreio Webhook] enviado ${codigo} (${statusNovo}) → ${ctx.telefone}`);
+  } catch (e) {
+    console.error('[SeuRastreio Webhook] erro:', e.message);
+  }
+});
 
 app.post('/webhook/zapi', async (req, res) => {
   res.json({ ok: true });
