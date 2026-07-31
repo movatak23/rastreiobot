@@ -110,10 +110,17 @@ function adminLoggzapHtml() {
     </div>
 
     <div class="card">
-      <h2>Últimos logs</h2>
-      <input id="filtroLog" placeholder="Filtrar por loja, pedido, telefone ou tipo" oninput="renderLogs()">
-      <div style="overflow:auto">
-        <table><thead><tr><th>Data</th><th>Loja</th><th>Tipo</th><th>Pedido</th><th>Telefone</th><th>Mensagem / erro</th></tr></thead><tbody id="logsBody"></tbody></table>
+      <h2>Logs</h2>
+      <button class="btn2" onclick="openLogs()">📋 Ver últimos logs</button>
+    </div>
+
+    <div id="logsModal" style="display:none;position:fixed;inset:0;background:rgba(0,0,0,.72);z-index:1000;padding:20px" onclick="if(event.target===this)closeLogs()">
+      <div style="background:#0c0f16;border:1px solid rgba(255,255,255,.1);border-radius:14px;max-width:1000px;margin:20px auto;max-height:86vh;display:flex;flex-direction:column;padding:20px">
+        <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:12px"><h2 style="margin:0">Últimos logs</h2><button class="btn2" onclick="closeLogs()">✕ Fechar</button></div>
+        <input id="filtroLog" placeholder="Filtrar por loja, pedido, telefone ou tipo" oninput="renderLogs()" style="margin-bottom:12px">
+        <div style="overflow:auto;flex:1;min-height:0">
+          <table><thead><tr><th>Data</th><th>Loja</th><th>Tipo</th><th>Pedido</th><th>Telefone</th><th>Mensagem / erro</th></tr></thead><tbody id="logsBody"></tbody></table>
+        </div>
       </div>
     </div>
 
@@ -150,8 +157,8 @@ function adminLoggzapHtml() {
       <h2>Ações de suporte</h2>
       <div class="two">
         <div>
-          <label>Store ID</label><input id="acaoStore" placeholder="Store ID">
-          <label>Telefone para teste</label><input id="acaoTelefone" placeholder="5581999999999">
+          <label>Store ID</label><input id="acaoStore" value="4757590" placeholder="Store ID">
+          <label>Telefone para teste</label><input id="acaoTelefone" value="5581976041948" placeholder="5581999999999">
           <label>Tipo de teste</label>
           <select id="acaoTipo">
             <option value="pagamento_confirmado">Pagamento confirmado</option>
@@ -273,6 +280,8 @@ function renderLogs(){
     '<td><pre>'+(l.erro?('ERRO: '+esc(l.erro)):esc(l.mensagem||''))+'</pre></td>'+
   '</tr>').join('');
 }
+function openLogs(){document.getElementById('logsModal').style.display='block';renderLogs();}
+function closeLogs(){document.getElementById('logsModal').style.display='none';}
 function setStore(store){document.getElementById('acaoStore').value=store;}
 function abrirWhats(store){window.open('https://wa.me/5581976041948?text='+encodeURIComponent('Preciso verificar o suporte da loja '+store),'_blank');}
 async function testarWhatsApp(){
@@ -442,7 +451,7 @@ app.post('/admin-loggzap/api/simular-automacoes', auth, async (req, res) => {
         await sendWhatsApp(telLimpo, mensagem, String(store_id));
         enviados.push(tipo);
         if (typeof safeLogAutomacao === 'function') safeLogAutomacao({ store_id: String(store_id), tipo: 'simulacao_' + tipo, telefone: telLimpo, mensagem });
-        await new Promise(r => setTimeout(r, 1800)); // espaçamento p/ manter ordem e evitar bloqueio
+        await new Promise(r => setTimeout(r, 2000)); // intervalo de 2s entre as mensagens
       } catch(e) { console.error('[Simulação]', tipo, e.message); }
     }
     res.json({ success: true, enviados, total: enviados.length, de: tipos.length });
