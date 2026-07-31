@@ -3091,32 +3091,26 @@ async function mpSincronizarOficial(storeId, query = {}) {
 
 app.get('/financeiro/mercadopago/:storeId', auth, async (req, res) => {
   const { storeId } = req.params;
+  const range = mpMonthRange(req.query);
   try {
     const conn = db.getMercadoPagoConexao(storeId);
     const conectado = !!(conn && conn.status === 'conectado' && conn.access_token);
+    // Lê do banco (movimentações já sincronizadas) para o período pedido — sem chamar a API do MP.
+    const dados = mpResumoOficial(storeId, range.inicioDate, range.fimDate);
     res.json({
       success: true,
-      modo: 'somente_conexao',
       conector: 'mercado_pago',
       conectado,
       status: conectado ? 'conectado' : 'desconectado',
       mp_user_id: conn?.mp_user_id || null,
       updated_at: conn?.updated_at || null,
-      resumo: {
-        entradas: 0,
-        saidas: 0,
-        taxas: 0,
-        estornos: 0,
-        saldo_operacional: 0,
-        teto_saidas: Number(conn?.teto_saidas || 0),
-        disponivel_teto: 0,
-        uso_teto_percentual: 0
-      },
-      movimentacoes: [],
-      observacao: 'Módulo financeiro reduzido para conexão Mercado Pago. Nenhum extrato ou cálculo financeiro é processado.'
+      periodo: { inicio: range.inicioDate, fim: range.fimDate },
+      resumo: dados.resumo,
+      movimentacoes: dados.movimentacoes,
+      observacao: 'Resumo e extrato do relatório financeiro oficial do Mercado Pago. Positivos = entradas, negativos = saídas.'
     });
   } catch(e) {
-    console.error('[Financeiro MP Somente Conexão]', e.message);
+    console.error('[Financeiro MP Resumo]', e.message);
     res.status(500).json({ error: e.message });
   }
 });
