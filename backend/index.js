@@ -2542,6 +2542,26 @@ app.post('/financeiro/mercadopago/desconectar', auth, (req, res) => {
   res.json({ success: true, status: conn?.status || 'desconectado' });
 });
 
+// Nome personalizado de transação (persistido no backend p/ sincronizar entre computadores)
+app.post('/financeiro/mercadopago/nome', auth, (req, res) => {
+  const { store_id, origem_id, nome } = req.body || {};
+  if (!store_id || !origem_id) return res.status(400).json({ error: 'store_id e origem_id obrigatórios.' });
+  try {
+    const out = db.salvarNomeMovimentacao(String(store_id), String(origem_id), nome);
+    res.json({ success: true, ...out });
+  } catch(e) {
+    res.status(500).json({ error: e.message });
+  }
+});
+
+app.get('/financeiro/mercadopago/nomes/:storeId', auth, (req, res) => {
+  try {
+    res.json({ success: true, nomes: db.listarNomesMovimentacoes(req.params.storeId) });
+  } catch(e) {
+    res.status(500).json({ error: e.message });
+  }
+});
+
 
 
 app.get('/financeiro/mercadopago/relatorio/status-rota/:storeId', auth, (req, res) => {

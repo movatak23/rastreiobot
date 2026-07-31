@@ -766,6 +766,7 @@ function migrar() {
 
   `);
   try { db.exec("ALTER TABLE financeiro_conectores ADD COLUMN teto_saidas REAL DEFAULT 0"); } catch(e) {}
+  try { db.exec("ALTER TABLE financeiro_movimentacoes ADD COLUMN nome_custom TEXT"); } catch(e) {}
     console.log('[DB] Migração concluída.');
 }
 
@@ -1279,10 +1280,30 @@ function salvarMovimentacaoFinanceira(m) {
   );
 }
 
+function salvarNomeMovimentacao(storeId, origemId, nome) {
+  const limpo = String(nome || '').trim();
+  const info = db.prepare(`
+    UPDATE financeiro_movimentacoes
+    SET nome_custom = ?
+    WHERE store_id = ? AND origem_id = ? AND conector = 'mercado_pago'
+  `).run(limpo ? limpo.slice(0, 120) : null, String(storeId), String(origemId));
+  return { atualizadas: info.changes, nome: limpo || null };
+}
+
+function listarNomesMovimentacoes(storeId) {
+  const rows = db.prepare(`
+    SELECT origem_id, nome_custom FROM financeiro_movimentacoes
+    WHERE store_id = ? AND conector = 'mercado_pago' AND nome_custom IS NOT NULL AND nome_custom <> ''
+  `).all(String(storeId));
+  const mapa = {};
+  for (const r of rows) mapa[r.origem_id] = r.nome_custom;
+  return mapa;
+}
+
 function listarMovimentacoesFinanceiras(storeId, inicio, fim, limit = 200) {
   const lim = Math.max(1, Math.min(Number(limit) || 200, 500));
   return db.prepare(`
-    SELECT id, store_id, conector, origem_id, data, descricao, tipo, valor, categoria, created_at
+    SELECT id, store_id, conector, origem_id, data, descricao, tipo, valor, categoria, created_at, nome_custom
     FROM financeiro_movimentacoes
     WHERE store_id = ?
       AND (date(data) >= date(?) OR ? IS NULL)
@@ -1386,6 +1407,7 @@ module.exports = {
   criarFinanceiroState, getFinanceiroState, deleteFinanceiroState,
   salvarMercadoPagoConexao, getMercadoPagoConexao, desconectarMercadoPago,
   salvarTetoSaidas, salvarMovimentacaoFinanceira, listarMovimentacoesFinanceiras, getResumoFinanceiro,
+  salvarNomeMovimentacao, listarNomesMovimentacoes,
   salvarRelatorioMercadoPago, getRelatorioMercadoPago, listarRelatoriosMercadoPago, marcarRelatorioMercadoPagoImportado,
     jaPedidoRecebido,
   salvarEnvioAvulso, getEnvioAvulso, listarEnviosAvulsos, listarEnviosAvulsosMonitorar,
