@@ -1912,6 +1912,15 @@ async function verificarPagamentos(storeId) {
   }
 }
 
+// Limite de rastreios/mês por plano (1 rastreio = 1 código único no mês).
+// free/trial=50, basic=300, premium=1000, enterprise=ilimitado (na prática).
+const RASTREIO_LIMITES = { free: 50, trial: 50, basic: 300, premium: 1000, enterprise: 1000000 };
+function getLimiteRastreio(storeId) {
+  const lic = db.getLicencaPorStore ? db.getLicencaPorStore(storeId) : null;
+  const plano = String(lic?.plano || 'free').toLowerCase();
+  return RASTREIO_LIMITES[plano] != null ? RASTREIO_LIMITES[plano] : 50;
+}
+
 async function verificarRastreios(storeId) {
   try {
     const cfg = db.getConfig(storeId) || {};
@@ -1928,6 +1937,11 @@ async function verificarRastreios(storeId) {
       const telefone = formatTel(o.contact_phone);
       if (!telefone) continue;
       if (!/^[A-Z]{2}\d{9}[A-Z]{2}$/i.test(rastreio)) continue;
+      // Limite de rastreios do plano: só bloqueia CÓDIGO NOVO acima do limite (os já rastreados no mês continuam).
+      if (!db.usoRastreioJaContado(storeId, rastreio)) {
+        if (db.contarUsoRastreio(storeId) >= getLimiteRastreio(storeId)) continue; // plano no limite → não inicia rastreio novo
+        db.registrarUsoRastreio(storeId, rastreio);
+      }
       // Registra contexto (código → loja/pedido/telefone) para o webhook do Seu|Rastreio conseguir enviar.
       try { db.salvarRastreioContexto(rastreio, storeId, o.number, o.contact_name, telefone); } catch(e) {}
       if (db.statusRastreio(rastreio) === 'entregue') continue;
@@ -4468,6 +4482,19 @@ app.post('/whatsapp/desconectar', auth, async (req, res) => {
   try {
     if (WHATSAPP_PROVIDER === 'evolution') await evolutionLogout(String(store_id));
     res.json({ success: true });
+  } catch (e) {
+    res.status(500).json({ error: e.message });
+  }
+});
+
+// Uso de rastreios do mês vs limite do plano
+app.get('/rastreio/uso/:storeId', auth, (req, res) => {
+  try {
+    const storeId = String(req.params.storeId);
+    const usados = db.contarUsoRastreio(storeId);
+    const limite = getLimiteRastreio(storeId);
+    const plano = (db.getLicencaPorStore ? db.getLicencaPorStore(storeId)?.plano : null) || 'free';
+    res.json({ success: true, usados, limite, restante: Math.max(0, limite - usados), plano });
   } catch (e) {
     res.status(500).json({ error: e.message });
   }

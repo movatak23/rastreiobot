@@ -777,6 +777,15 @@ function migrar() {
       updated_at    TEXT DEFAULT (datetime('now'))
     )`);
   } catch(e) {}
+  try {
+    db.exec(`CREATE TABLE IF NOT EXISTS rastreio_uso (
+      store_id    TEXT,
+      ano_mes     TEXT,
+      codigo      TEXT,
+      created_at  TEXT DEFAULT (datetime('now')),
+      UNIQUE(store_id, ano_mes, codigo)
+    )`);
+  } catch(e) {}
     console.log('[DB] Migração concluída.');
 }
 
@@ -1309,6 +1318,23 @@ function getRastreioContexto(codigo) {
   return db.prepare('SELECT * FROM rastreio_contexto WHERE codigo = ?').get(String(codigo).toUpperCase()) || null;
 }
 
+// Uso de rastreios por loja no mês (1 rastreio = 1 código único no mês corrente)
+function registrarUsoRastreio(storeId, codigo) {
+  if (!storeId || !codigo) return;
+  db.prepare(`INSERT OR IGNORE INTO rastreio_uso (store_id, ano_mes, codigo)
+    VALUES (?, strftime('%Y-%m','now'), ?)`).run(String(storeId), String(codigo).toUpperCase());
+}
+function usoRastreioJaContado(storeId, codigo) {
+  const r = db.prepare(`SELECT 1 FROM rastreio_uso WHERE store_id=? AND ano_mes=strftime('%Y-%m','now') AND codigo=?`)
+    .get(String(storeId), String(codigo).toUpperCase());
+  return !!r;
+}
+function contarUsoRastreio(storeId) {
+  const r = db.prepare(`SELECT COUNT(*) c FROM rastreio_uso WHERE store_id=? AND ano_mes=strftime('%Y-%m','now')`)
+    .get(String(storeId));
+  return r?.c || 0;
+}
+
 function salvarNomeMovimentacao(storeId, origemId, nome) {
   const limpo = String(nome || '').trim();
   const info = db.prepare(`
@@ -1438,6 +1464,7 @@ module.exports = {
   salvarTetoSaidas, salvarMovimentacaoFinanceira, listarMovimentacoesFinanceiras, getResumoFinanceiro,
   salvarNomeMovimentacao, listarNomesMovimentacoes,
   salvarRastreioContexto, getRastreioContexto,
+  registrarUsoRastreio, usoRastreioJaContado, contarUsoRastreio,
   salvarRelatorioMercadoPago, getRelatorioMercadoPago, listarRelatoriosMercadoPago, marcarRelatorioMercadoPagoImportado,
     jaPedidoRecebido,
   salvarEnvioAvulso, getEnvioAvulso, listarEnviosAvulsos, listarEnviosAvulsosMonitorar,
