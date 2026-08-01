@@ -802,6 +802,14 @@ function migrar() {
       atualizado_em  TEXT DEFAULT (datetime('now'))
     )`);
   } catch(e) {}
+  try {
+    db.exec(`CREATE TABLE IF NOT EXISTS painel_reset (
+      store_id   TEXT PRIMARY KEY,
+      codigo     TEXT,
+      expira_em  TEXT,
+      criado_em  TEXT DEFAULT (datetime('now'))
+    )`);
+  } catch(e) {}
     console.log('[DB] Migração concluída.');
 }
 
@@ -946,6 +954,18 @@ function criarPainelUsuario(storeId, login, passwordHash) {
     INSERT INTO painel_usuarios (store_id, login, password_hash)
     VALUES (?, ?, ?)
   `).run(String(storeId), String(login), String(passwordHash));
+}
+
+function salvarResetPainel(storeId, codigo, expiraEm) {
+  db.prepare(`INSERT INTO painel_reset (store_id, codigo, expira_em, criado_em) VALUES (?, ?, ?, datetime('now'))
+    ON CONFLICT(store_id) DO UPDATE SET codigo=excluded.codigo, expira_em=excluded.expira_em, criado_em=datetime('now')`)
+    .run(String(storeId), String(codigo), String(expiraEm));
+}
+function getResetPainel(storeId) {
+  return db.prepare('SELECT * FROM painel_reset WHERE store_id = ?').get(String(storeId)) || null;
+}
+function deleteResetPainel(storeId) {
+  db.prepare('DELETE FROM painel_reset WHERE store_id = ?').run(String(storeId));
 }
 
 function getPainelUsuario(storeId) {
@@ -1530,6 +1550,7 @@ module.exports = {
   atualizarEnvioAvulsoStatus, marcarEnvioAvulsoPrimeiraMensagem,
   listarClientesOperacionais, getClienteOperacional, listarLogsPorStore, getResumoAutomacoesStore,
   criarPainelUsuario, getPainelUsuario, atualizarPainelCredenciais,
+  salvarResetPainel, getResetPainel, deleteResetPainel,
   criarPainelSessao, getPainelSessao, deletarPainelSessao,
   getPainelTemplates, salvarPainelTemplates,
   registrarLogAutomacao, listarLogsAutomacao, limparSessoesPainelExpiradas,

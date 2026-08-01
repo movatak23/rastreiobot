@@ -1173,6 +1173,18 @@ function painelHtml() {
       <label>Senha</label><input id="loginPass" type="password" placeholder="Sua senha">
       <div class="err" id="loginErr"></div>
       <button class="btn" onclick="login()">Entrar</button>
+      <p style="margin-top:14px;text-align:center"><a href="#" onclick="toggleEsqueci();return false" style="color:#4f8ef7;font-size:13px;text-decoration:none">Esqueci minha senha</a></p>
+
+      <div id="esqueciBox" style="display:none;margin-top:14px;border-top:1px solid rgba(255,255,255,.08);padding-top:16px">
+        <h2 style="font-size:16px;margin:0 0 10px">Recuperar senha</h2>
+        <label>Store ID</label><input id="recStore" placeholder="Ex: 4757590">
+        <div id="recCodigoBox" style="display:none">
+          <label>Código (enviado ao seu email)</label><input id="recCodigo" placeholder="6 dígitos">
+          <label>Nova senha</label><input id="recNovaSenha" type="password" placeholder="Nova senha (mín. 6)">
+        </div>
+        <div class="err" id="recErr"></div><div class="ok" id="recOk"></div>
+        <button class="btn" id="recBtn" onclick="enviarCodigoReset()">Enviar código por email</button>
+      </div>
     </div>
     <div class="card">
       <h1>Primeiro acesso</h1>
@@ -1270,6 +1282,28 @@ async function apiGet(path){
   return d;
 }
 
+function toggleEsqueci(){const b=document.getElementById('esqueciBox');b.style.display=(!b.style.display||b.style.display==='none')?'block':'none';}
+async function enviarCodigoReset(){
+  hide('recErr');hide('recOk');
+  const store=document.getElementById('recStore').value;
+  if(!store){show('recErr','Informe o Store ID.');return;}
+  try{
+    const d=await api('/painel/api/forgot',{store_id:store});
+    show('recOk','Se houver conta, enviamos um código para '+(d.email_mascarado||'seu email')+'. Confira também o spam.');
+    document.getElementById('recCodigoBox').style.display='block';
+    const btn=document.getElementById('recBtn');
+    btn.textContent='Redefinir senha';
+    btn.setAttribute('onclick','redefinirSenha()');
+  }catch(e){show('recErr',e.message);}
+}
+async function redefinirSenha(){
+  hide('recErr');hide('recOk');
+  try{
+    await api('/painel/api/reset',{store_id:document.getElementById('recStore').value,codigo:document.getElementById('recCodigo').value,senha:document.getElementById('recNovaSenha').value});
+    show('recOk','✅ Senha redefinida! Faça login com a nova senha.');
+    document.getElementById('recCodigoBox').style.display='none';
+  }catch(e){show('recErr',e.message);}
+}
 async function login(){
   hide('loginErr');
   try{
@@ -1390,6 +1424,43 @@ app.post('/painel/api/register', (req, res) => {
     console.error('[Painel] register:', e.message);
     res.status(500).json({ error: 'Erro ao criar acesso.' });
   }
+});
+
+// Esqueci minha senha — envia código de 6 dígitos por email (o login do painel é o email)
+app.post('/painel/api/forgot', async (req, res) => {
+  try {
+    const { store_id } = req.body || {};
+    if (!store_id) return res.status(400).json({ error: 'Informe o Store ID.' });
+    const user = db.getPainelUsuario ? db.getPainelUsuario(String(store_id)) : null;
+    if (!user) return res.json({ success: true, email_mascarado: null }); // não revela se existe
+    const email = String(user.login || '').trim();
+    if (!/^[^@\s]+@[^@\s]+\.[^@\s]+$/.test(email)) {
+      return res.status(400).json({ error: 'O login desta conta não é um email. Peça a redefinição ao suporte.' });
+    }
+    const codigo = String(Math.floor(100000 + Math.random() * 900000));
+    const expira = new Date(Date.now() + 30 * 60 * 1000).toISOString();
+    db.salvarResetPainel(String(store_id), codigo, expira);
+    try { await enviarCodigoResetEmail(email, codigo); } catch(e) { console.error('[Reset email]', e.message); }
+    const mascarado = email.replace(/^(.).*(@.*)$/, (m, a, b) => a + '***' + b);
+    res.json({ success: true, email_mascarado: mascarado });
+  } catch(e) { res.status(500).json({ error: e.message }); }
+});
+
+app.post('/painel/api/reset', (req, res) => {
+  try {
+    const { store_id, codigo, senha } = req.body || {};
+    if (!store_id || !codigo || !senha) return res.status(400).json({ error: 'Preencha o código e a nova senha.' });
+    if (String(senha).length < 6) return res.status(400).json({ error: 'A senha precisa ter pelo menos 6 caracteres.' });
+    const reset = db.getResetPainel ? db.getResetPainel(String(store_id)) : null;
+    if (!reset || !reset.codigo) return res.status(400).json({ error: 'Nenhum código pendente. Solicite um novo.' });
+    if (new Date(reset.expira_em) < new Date()) { db.deleteResetPainel(String(store_id)); return res.status(400).json({ error: 'Código expirado. Solicite um novo.' }); }
+    if (String(codigo).trim() !== String(reset.codigo)) return res.status(400).json({ error: 'Código incorreto.' });
+    const user = db.getPainelUsuario(String(store_id));
+    if (!user) return res.status(404).json({ error: 'Conta não encontrada.' });
+    db.atualizarPainelCredenciais(String(store_id), user.login, hashPassword(String(senha)));
+    db.deleteResetPainel(String(store_id));
+    res.json({ success: true });
+  } catch(e) { res.status(500).json({ error: e.message }); }
 });
 
 app.post('/painel/api/login', (req, res) => {
@@ -3928,6 +3999,19 @@ app.get('/auth/status', (req, res) => {
     res.json({ status: row.status });
   } catch(e) { res.json({ status: 'pending' }); }
 });
+
+async function enviarCodigoResetEmail(email, codigo) {
+  const resend = new Resend(process.env.RESEND_API_KEY);
+  await resend.emails.send({
+    from: 'LoggZap <contato@loggzap.com.br>', to: email, subject: 'Código de recuperação de senha - LoggZap',
+    html: '<div style="font-family:sans-serif;max-width:500px;margin:0 auto;background:#0d0d10;color:#ededf2;padding:32px;border-radius:12px">' +
+      '<h2 style="color:#4f8ef7">LoggZap Dashboard</h2>' +
+      '<p>Você pediu para redefinir a senha do seu painel. Use este código (válido por 30 minutos):</p>' +
+      '<div style="background:#1e1e25;border:1px solid #4f8ef7;border-radius:8px;padding:16px;text-align:center;margin:24px 0">' +
+      '<code style="font-size:30px;color:#00d084;letter-spacing:8px">' + codigo + '</code></div>' +
+      '<p style="color:#888;font-size:12px">Se não foi você, ignore este email. LoggZap | contato@loggzap.com.br</p></div>'
+  });
+}
 
 async function enviarChavePorEmail(email, chave, plano, expiraEm) {
   const resend = new Resend(process.env.RESEND_API_KEY);
