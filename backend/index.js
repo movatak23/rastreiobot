@@ -99,6 +99,7 @@ function adminLoggzapHtml() {
       <div class="metric"><strong id="mVencidos">--</strong><span>mensalidades vencidas</span></div>
       <div class="metric"><strong id="mFree">--</strong><span>contas free</span></div>
       <div class="metric"><strong id="mErros">--</strong><span>clientes com erro</span></div>
+      <div class="metric"><strong id="mRastreiosMes">--</strong><span>rastreios no mês (Seu Rastreio)</span></div>
     </div>
 
     <div class="card">
@@ -219,6 +220,7 @@ async function carregar(first=false){
     }
     const d=await api('/admin-loggzap/api/resumo');
     clientes=d.clientes||[]; logs=d.logs||[];
+    const rm=document.getElementById('mRastreiosMes'); if(rm) rm.textContent=((d.resumo_contas||{}).rastreios_mes_total||0);
     localStorage.setItem(ADMIN_SECRET_KEY, secret);
     document.getElementById('auth').classList.add('hidden');
     document.getElementById('painel').classList.remove('hidden');
@@ -563,7 +565,8 @@ app.get('/admin-loggzap/api/resumo', auth, async (req, res) => {
       total: clientes.length,
       free: clientes.filter(c => c.status_conta === 'free').length,
       ativos: clientes.filter(c => c.status_conta === 'ativo').length,
-      vencidos: clientes.filter(c => c.status_conta === 'vencido').length
+      vencidos: clientes.filter(c => c.status_conta === 'vencido').length,
+      rastreios_mes_total: db.totalRastreiosMes ? db.totalRastreiosMes() : 0
     };
 
     const logs = readLoggzapLogs ? readLoggzapLogs() : [];

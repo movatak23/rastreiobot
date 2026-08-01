@@ -1387,6 +1387,11 @@ function contarUsoRastreio(storeId) {
     .get(String(storeId));
   return r?.c || 0;
 }
+// Total de rastreios do mês somando TODAS as lojas (= consumo da conta Seu Rastreio)
+function totalRastreiosMes() {
+  const r = db.prepare(`SELECT COUNT(*) c FROM rastreio_uso WHERE ano_mes=strftime('%Y-%m','now')`).get();
+  return r?.c || 0;
+}
 
 function salvarNomeMovimentacao(storeId, origemId, nome) {
   const limpo = String(nome || '').trim();
@@ -1517,7 +1522,7 @@ module.exports = {
   salvarTetoSaidas, salvarMovimentacaoFinanceira, listarMovimentacoesFinanceiras, getResumoFinanceiro,
   salvarNomeMovimentacao, listarNomesMovimentacoes,
   salvarRastreioContexto, getRastreioContexto,
-  registrarUsoRastreio, usoRastreioJaContado, contarUsoRastreio,
+  registrarUsoRastreio, usoRastreioJaContado, contarUsoRastreio, totalRastreiosMes,
   upsertAssinatura, getAssinatura, ativarAssinaturaLicenca, cancelarAssinaturaLicenca, listarAssinaturas,
   salvarRelatorioMercadoPago, getRelatorioMercadoPago, listarRelatoriosMercadoPago, marcarRelatorioMercadoPagoImportado,
     jaPedidoRecebido,
