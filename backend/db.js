@@ -436,6 +436,11 @@ function statusRastreio(codigo) {
   return row ? row.status_atual : null;
 }
 
+// Info completa do rastreio (p/ decidir registrar 1x vs deixar o webhook cuidar)
+function getRastreioInfo(codigo) {
+  return db.prepare('SELECT status_atual, atualizado_em, created_at FROM rastreios WHERE codigo = ?').get(codigo) || null;
+}
+
 function atualizarStatusRastreio(codigo, statusAtual, atualizadoEm) {
   db.prepare(`
     INSERT INTO rastreios (codigo, status_atual, atualizado_em) VALUES (?, ?, ?)
@@ -1525,7 +1530,7 @@ module.exports = {
   registrarLogAutomacao, listarLogsAutomacao, limparSessoesPainelExpiradas,
   saveToken, getToken, getAllStores,
   marcarNotificado, jaNotificado,
-  statusRastreio, atualizarStatusRastreio, foiRastreioConsultadoHoje,
+  statusRastreio, getRastreioInfo, atualizarStatusRastreio, foiRastreioConsultadoHoje,
   jaConfirmacaoEnviada, marcarConfirmacaoEnviada,
   salvarInstancia, getInstancia, listarInstancias,
   jaSatisfacaoEnviada, marcarSatisfacaoEnviada,

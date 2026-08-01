@@ -2028,8 +2028,17 @@ async function verificarRastreios(storeId) {
       // Registra contexto (código → loja/pedido/telefone) para o webhook do Seu|Rastreio conseguir enviar.
       try { db.salvarRastreioContexto(rastreio, storeId, o.number, o.contact_name, telefone); } catch(e) {}
       if (db.statusRastreio(rastreio) === 'entregue') continue;
-      if (db.foiRastreioConsultadoHoje(rastreio)) continue; // limite SeuRastreio 200/mês
-      await new Promise(r => setTimeout(r, 2000)); // espaçamento entre requests
+      // Modelo recomendado pelo Seu Rastreio: registra o código 1x na API e deixa o webhook cuidar do resto.
+      // Só (re)consulta se: nunca foi registrado (1ª vez) OU rede de segurança (>3 dias sem nenhum evento).
+      const infoRast = db.getRastreioInfo ? db.getRastreioInfo(rastreio) : null;
+      let precisaConsultar = !infoRast;
+      if (infoRast && infoRast.atualizado_em) {
+        const diasSemEvento = (Date.now() - new Date(infoRast.atualizado_em).getTime()) / (24 * 60 * 60 * 1000);
+        if (diasSemEvento > 3) precisaConsultar = true; // fallback: webhook pode ter falhado
+      }
+      if (!precisaConsultar) continue; // já registrado e com eventos recentes → o webhook é a fonte
+      if (db.foiRastreioConsultadoHoje(rastreio)) continue; // respeita o limite de requisições (1/s → 1x/dia por código)
+      await new Promise(r => setTimeout(r, 2000)); // espaçamento entre requests (bem abaixo de 1/s)
       const evento = await consultarCorreios(rastreio);
       if (!evento) continue;
       const statusAnterior = db.statusRastreio(rastreio);
