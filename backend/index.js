@@ -4520,8 +4520,8 @@ app.get('/ranking/:storeId', auth, async (req, res) => {
 });
 
 app.get('/download/extensao', (req, res) => {
-  const file = path.join(__dirname, 'public', 'LoggZap_v2.9.0.zip');
-  res.download(file, 'LoggZap_Dashboard_v2.9.0.zip');
+  const file = path.join(__dirname, 'public', 'LoggZap_v2.9.1.zip');
+  res.download(file, 'LoggZap_Dashboard_v2.9.1.zip');
 });
 
 app.get('/manual', (req, res) => { res.sendFile(path.join(__dirname, 'public', 'manual-loggzap.html')); });
