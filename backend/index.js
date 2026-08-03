@@ -5020,35 +5020,56 @@ app.get('/privacy-policy', (req, res) => {
 });
 
 
-// ── Webhooks LGPD / Nuvemshop ────────────────────────────────────────────────
-app.post('/webhooks/lgpd/store-redact', async (req, res) => {
+// ── Webhooks LGPD / Nuvemshop (obrigatórios: verificam assinatura e apagam dados) ──
+function verificarHmacNuvem(req) {
   try {
-    console.log('[LGPD] store redact recebido:', req.body);
-    return res.status(200).json({ success: true });
-  } catch (e) {
-    console.error('[LGPD] erro store redact:', e.message);
-    return res.status(500).json({ success: false });
-  }
+    const secret = NUVEM_CLIENT_SECRET;
+    if (!secret) return true; // sem secret configurado (ambiente de teste): não bloqueia
+    const header = String(req.headers['x-linkedstore-hmac-sha256'] || '');
+    if (!header || !req.rawBody) return false;
+    const hex = crypto.createHmac('sha256', secret).update(req.rawBody).digest('hex');
+    const b64 = crypto.createHmac('sha256', secret).update(req.rawBody).digest('base64');
+    const bate = (a, b) => a.length === b.length && crypto.timingSafeEqual(Buffer.from(a), Buffer.from(b));
+    return bate(header, hex) || bate(header, b64);
+  } catch (e) { return false; }
+}
+function clienteDoWebhook(body) {
+  const c = body.customer || {};
+  return {
+    phone: c.phone || c.telephone || c.identification || body.phone || null,
+    email: c.email || body.email || null,
+  };
+}
+
+app.post('/webhooks/lgpd/store-redact', (req, res) => {
+  if (!verificarHmacNuvem(req)) return res.status(401).json({ error: 'assinatura inválida' });
+  try {
+    const storeId = String(req.body.store_id || req.body.store || '');
+    const r = db.redactStore(storeId);
+    console.log(`[LGPD] store-redact loja ${storeId}: ${r.deleted} registro(s) apagado(s) [${r.tabelas.join(', ')}]`);
+    return res.status(200).json({ success: true, deleted: r.deleted });
+  } catch (e) { console.error('[LGPD] store-redact erro:', e.message); return res.status(200).json({ success: false }); }
 });
 
-app.post('/webhooks/lgpd/customers-redact', async (req, res) => {
+app.post('/webhooks/lgpd/customers-redact', (req, res) => {
+  if (!verificarHmacNuvem(req)) return res.status(401).json({ error: 'assinatura inválida' });
   try {
-    console.log('[LGPD] customers redact recebido:', req.body);
-    return res.status(200).json({ success: true });
-  } catch (e) {
-    console.error('[LGPD] erro customers redact:', e.message);
-    return res.status(500).json({ success: false });
-  }
+    const storeId = String(req.body.store_id || req.body.store || '');
+    const r = db.redactCustomer(storeId, clienteDoWebhook(req.body));
+    console.log(`[LGPD] customers-redact loja ${storeId}: ${r.deleted} registro(s) apagado(s) [${r.tabelas.join(', ')}]`);
+    return res.status(200).json({ success: true, deleted: r.deleted });
+  } catch (e) { console.error('[LGPD] customers-redact erro:', e.message); return res.status(200).json({ success: false }); }
 });
 
-app.post('/webhooks/lgpd/customers-data-request', async (req, res) => {
+app.post('/webhooks/lgpd/customers-data-request', (req, res) => {
+  if (!verificarHmacNuvem(req)) return res.status(401).json({ error: 'assinatura inválida' });
   try {
-    console.log('[LGPD] customers data request recebido:', req.body);
-    return res.status(200).json({ success: true });
-  } catch (e) {
-    console.error('[LGPD] erro customers data request:', e.message);
-    return res.status(500).json({ success: false });
-  }
+    const storeId = String(req.body.store_id || req.body.store || '');
+    const dados = db.collectCustomerData(storeId, clienteDoWebhook(req.body));
+    const qtd = Object.values(dados).reduce((s, arr) => s + arr.length, 0);
+    console.log(`[LGPD] customers-data-request loja ${storeId}: ${qtd} registro(s) encontrado(s)`);
+    return res.status(200).json({ success: true, data: dados });
+  } catch (e) { console.error('[LGPD] customers-data-request erro:', e.message); return res.status(200).json({ success: false }); }
 });
 
 app.listen(PORT, () => {

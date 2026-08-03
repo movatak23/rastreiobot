@@ -1535,8 +1535,71 @@ function limparSessoesPainelExpiradas() {
   db.prepare('DELETE FROM painel_sessoes WHERE expires_at < ?').run(Date.now());
 }
 
+// ── LGPD: redação de dados (usado pelos webhooks obrigatórios da Nuvemshop) ──
+function _tabelasComColuna(coluna) {
+  const tabelas = db.prepare("SELECT name FROM sqlite_master WHERE type='table' AND name NOT LIKE 'sqlite_%'").all().map(r => r.name);
+  return tabelas.filter(t => {
+    try { return db.prepare(`PRAGMA table_info(${t})`).all().some(c => c.name === coluna); }
+    catch (e) { return false; }
+  });
+}
+function _variacoesTelefone(tel) {
+  const d = String(tel || '').replace(/\D/g, '');
+  if (!d) return [];
+  const set = new Set([d]);
+  if (d.startsWith('55') && d.length > 11) set.add(d.slice(2)); else set.add('55' + d);
+  return [...set];
+}
+// store/redact — apaga TODOS os dados de uma loja (token, logs, configs, contatos, financeiro).
+function redactStore(storeId) {
+  if (!storeId) return { deleted: 0, tabelas: [] };
+  const sid = String(storeId);
+  let deleted = 0; const detalhe = [];
+  for (const t of _tabelasComColuna('store_id')) {
+    try {
+      const info = db.prepare(`DELETE FROM ${t} WHERE store_id = ?`).run(sid);
+      if (info.changes) { deleted += info.changes; detalhe.push(`${t}:${info.changes}`); }
+    } catch (e) { /* ignora tabela incompatível */ }
+  }
+  return { deleted, tabelas: detalhe };
+}
+// customers/redact — apaga os dados de um cliente (por telefone/e-mail), na loja informada.
+function redactCustomer(storeId, { phone, email } = {}) {
+  const sid = storeId ? String(storeId) : null;
+  let deleted = 0; const detalhe = [];
+  const del = (t, coluna, valor) => {
+    const cols = db.prepare(`PRAGMA table_info(${t})`).all().map(c => c.name);
+    const temStore = cols.includes('store_id');
+    const sql = `DELETE FROM ${t} WHERE ${coluna} = ?` + (temStore && sid ? ' AND store_id = ?' : '');
+    try {
+      const info = db.prepare(sql).run(...(temStore && sid ? [valor, sid] : [valor]));
+      if (info.changes) { deleted += info.changes; detalhe.push(`${t}.${coluna}:${info.changes}`); }
+    } catch (e) { /* ignora */ }
+  };
+  for (const t of _tabelasComColuna('telefone')) for (const f of _variacoesTelefone(phone)) del(t, 'telefone', f);
+  if (email) for (const t of _tabelasComColuna('email')) del(t, 'email', String(email));
+  return { deleted, tabelas: detalhe };
+}
+// customers/data_request — reúne os dados que o app guarda de um cliente.
+function collectCustomerData(storeId, { phone, email } = {}) {
+  const sid = storeId ? String(storeId) : null;
+  const dados = {};
+  const busca = (t, coluna, valores) => {
+    const cols = db.prepare(`PRAGMA table_info(${t})`).all().map(c => c.name);
+    const temStore = cols.includes('store_id');
+    for (const v of valores) {
+      const sql = `SELECT * FROM ${t} WHERE ${coluna} = ?` + (temStore && sid ? ' AND store_id = ?' : '');
+      try { const rows = db.prepare(sql).all(...(temStore && sid ? [v, sid] : [v])); if (rows.length) (dados[t] = dados[t] || []).push(...rows); }
+      catch (e) { /* ignora */ }
+    }
+  };
+  for (const t of _tabelasComColuna('telefone')) busca(t, 'telefone', _variacoesTelefone(phone));
+  if (email) for (const t of _tabelasComColuna('email')) busca(t, 'email', [String(email)]);
+  return dados;
+}
 
 module.exports = {
+  redactStore, redactCustomer, collectCustomerData,
   criarFinanceiroState, getFinanceiroState, deleteFinanceiroState,
   salvarMercadoPagoConexao, getMercadoPagoConexao, desconectarMercadoPago,
   salvarTetoSaidas, salvarMovimentacaoFinanceira, listarMovimentacoesFinanceiras, getResumoFinanceiro,
