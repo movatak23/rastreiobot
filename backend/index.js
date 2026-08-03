@@ -172,6 +172,7 @@ function adminLoggzapHtml() {
           <button onclick="testarWhatsApp()">Enviar teste real</button>
           <button class="btn2" onclick="statusZapi()">Consultar Z-API</button>
           <br><br><button onclick="simularApresentacao()" style="background:#4f8ef7;color:#fff">🎬 Simular apresentação — envia TODAS as automações</button>
+          <br><br><button onclick="verificarRastreiosAgora()" style="background:#00b37e;color:#fff">📦 Verificar rastreios agora (varredura real Seu|Rastreio)</button>
         </div>
         <div>
           <label>Resetar login do cliente</label><input id="resetLogin" placeholder="Novo login">
@@ -299,6 +300,16 @@ async function simularApresentacao(){
   try{
     const d=await api('/admin-loggzap/api/simular-automacoes',{method:'POST',body:JSON.stringify({store_id:acaoStore.value,telefone:acaoTelefone.value})});
     show('acaoOk','✅ Simulação enviada: '+d.total+'/'+d.de+' mensagens → '+(d.enviados||[]).join(', '));
+    await carregar();
+  }catch(e){show('acaoErr',e.message);}
+}
+async function verificarRastreiosAgora(){
+  hide('acaoErr');hide('acaoOk');
+  if(!acaoStore.value){show('acaoErr','Informe o Store ID.');return;}
+  show('acaoOk','⏳ Rodando a varredura real de rastreios... (registra no Seu|Rastreio e dispara a notificação do status atual)');
+  try{
+    const d=await api('/admin-loggzap/api/verificar-rastreios-agora',{method:'POST',body:JSON.stringify({store_id:acaoStore.value})});
+    show('acaoOk','✅ '+(d.msg||'Varredura executada.'));
     await carregar();
   }catch(e){show('acaoErr',e.message);}
 }
@@ -459,6 +470,19 @@ app.post('/admin-loggzap/api/simular-automacoes', auth, async (req, res) => {
     res.json({ success: true, enviados, total: enviados.length, de: tipos.length });
   } catch(e) {
     console.error('[Simulação automações]', e.message);
+    res.status(500).json({ error: e.response?.data?.message || e.message });
+  }
+});
+
+// Dispara a varredura REAL de rastreios na hora (registra no Seu|Rastreio + notifica o status atual).
+app.post('/admin-loggzap/api/verificar-rastreios-agora', auth, async (req, res) => {
+  const { store_id } = req.body || {};
+  if (!store_id) return res.status(400).json({ error: 'Informe o Store ID.' });
+  try {
+    await verificarRastreios(String(store_id));
+    res.json({ success: true, msg: 'Varredura executada. Pedido pago com código Correios (AA000000000BR) foi registrado no Seu|Rastreio e a notificação do status atual foi disparada ao cliente.' });
+  } catch (e) {
+    console.error('[Verificar rastreios agora]', e.message);
     res.status(500).json({ error: e.response?.data?.message || e.message });
   }
 });
