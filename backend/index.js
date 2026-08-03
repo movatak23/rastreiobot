@@ -475,16 +475,13 @@ app.post('/admin-loggzap/api/simular-automacoes', auth, async (req, res) => {
 });
 
 // Dispara a varredura REAL de rastreios na hora (registra no Seu|Rastreio + notifica o status atual).
-app.post('/admin-loggzap/api/verificar-rastreios-agora', auth, async (req, res) => {
+app.post('/admin-loggzap/api/verificar-rastreios-agora', auth, (req, res) => {
   const { store_id } = req.body || {};
   if (!store_id) return res.status(400).json({ error: 'Informe o Store ID.' });
-  try {
-    await verificarRastreios(String(store_id));
-    res.json({ success: true, msg: 'Varredura executada. Pedido pago com código Correios (AA000000000BR) foi registrado no Seu|Rastreio e a notificação do status atual foi disparada ao cliente.' });
-  } catch (e) {
-    console.error('[Verificar rastreios agora]', e.message);
-    res.status(500).json({ error: e.response?.data?.message || e.message });
-  }
+  // Responde NA HORA (a varredura pode levar minutos pelo espaçamento do Seu|Rastreio) e roda em segundo plano,
+  // senão o Cloudflare corta em 100s (erro 524). A notificação sai sozinha quando a varredura chega no pedido.
+  res.json({ success: true, msg: 'Varredura iniciada em segundo plano. Se houver pedido pago com código Correios (AA000000000BR) ainda não notificado, a mensagem sai em instantes no WhatsApp do cliente.' });
+  verificarRastreios(String(store_id)).catch(e => console.error('[Verificar rastreios agora]', e.message));
 });
 
 app.get('/admin-loggzap/api/resumo', auth, async (req, res) => {
