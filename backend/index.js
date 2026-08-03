@@ -4435,13 +4435,6 @@ app.post('/cadastro', async (req, res) => {
                 <a href="https://cliente.loggzap.com.br/manual" style="display:inline-block;border:1px solid rgba(255,255,255,0.15);color:#eef0f8;padding:12px 28px;border-radius:8px;text-decoration:none;font-weight:600;font-size:14px">📖 Ver manual de instalação</a>
               </div>
 
-              <div style="background:#11151e;border-radius:10px;padding:20px">
-                <div style="font-size:12px;font-weight:700;letter-spacing:2px;color:#00d084;text-transform:uppercase;margin-bottom:12px">Dados de configuração</div>
-                <p style="color:#8b93a8;font-size:14px;margin:0 0 8px">Use estes dados quando for configurar a extensão:</p>
-                <div style="background:#07090e;border-radius:6px;padding:14px;font-family:monospace;font-size:13px;color:#00d084">
-                  Chave Secreta: MinhaChave2024Secreta
-                </div>
-              </div>
             </div>
 
             <div style="text-align:center;margin-top:32px">
