@@ -1850,10 +1850,40 @@ function montarMensagem(template, pedido) {
     .replace(/{link}/g,           link);
 }
 
+// Nome da transportadora a partir do método de frete da Nuvemshop (+ formato do código).
+// Código no formato dos Correios (AA000000000BR) é sempre Correios, independentemente do texto.
+function nomeTransportadora(shippingOption, codigo) {
+  if (/^[A-Z]{2}\d{9}[A-Z]{2}$/i.test(String(codigo || ''))) return 'Correios';
+  const s = String(shippingOption || '').toLowerCase();
+  if (/jadlog/.test(s)) return 'Jadlog';
+  if (/loggi/.test(s)) return 'Loggi';
+  if (/total\s*express/.test(s)) return 'Total Express';
+  if (/azul/.test(s)) return 'Azul Cargo';
+  if (/\bj&t\b|jt\s*express/.test(s)) return 'J&T Express';
+  if (/correios|pac|sedex/.test(s)) return 'Correios';
+  const nome = String(shippingOption || '').trim();
+  return nome ? nome.slice(0, 40) : 'Transportadora';
+}
+
+// Link de rastreio correto por transportadora. Correios pelo site dos Correios; demais
+// pelo rastreador da própria transportadora. Se desconhecida, cai no rastreador do
+// agregador (Seu|Rastreio) que resolve por código, evitando link quebrado dos Correios.
+function linkRastreio(codigo, transportadora) {
+  const c = encodeURIComponent(String(codigo || ''));
+  if (/^[A-Z]{2}\d{9}[A-Z]{2}$/i.test(String(codigo || ''))) return `https://rastreamento.correios.com.br/app/index.php?objeto=${c}`;
+  const t = String(transportadora || '').toLowerCase();
+  if (/jadlog/.test(t))        return `https://www.jadlog.com.br/siteInstitucional/tracking.jad?cte=${c}`;
+  if (/loggi/.test(t))         return `https://www.loggi.com/rastreador/${c}`;
+  if (/total\s*express/.test(t)) return `https://tracking.totalexpress.com.br/poupup_new.php?reid=&pedido=${c}`;
+  if (/azul/.test(t))          return `https://www.azulcargo.com.br/rastreio?codigo=${c}`;
+  if (/correios|pac|sedex/.test(t)) return `https://rastreamento.correios.com.br/app/index.php?objeto=${c}`;
+  return `https://seurastreio.com.br/${c}`; // agregador multi-transportadora (resolve pelo código)
+}
+
 function montarMensagemRastreio(pedido, evento) {
   const nome   = pedido.cliente || 'Cliente';
   const numero = pedido.numero;
-  const link   = `https://rastreamento.correios.com.br/app/index.php?objeto=${pedido.rastreio}`;
+  const link   = linkRastreio(pedido.rastreio, pedido.transportadora);
   const desc   = (evento.descricao || '').toLowerCase();
   const data   = evento.data || '';
   const hora   = evento.hora || '';
@@ -2106,7 +2136,7 @@ async function verificarRastreios(storeId) {
     const orders = await nuvemGet(storeId, '/orders', {
       per_page: 200,
       payment_status: 'paid',
-      fields: 'id,number,contact_name,contact_phone,shipping_status,shipping_tracking_number,created_at'
+      fields: 'id,number,contact_name,contact_phone,shipping_status,shipping_tracking_number,shipping_option,created_at'
     });
     for (const o of orders) {
       if (o.status === 'cancelled') continue;
@@ -2114,14 +2144,24 @@ async function verificarRastreios(storeId) {
       if (!rastreio) continue;
       const telefone = formatTel(o.contact_phone);
       if (!telefone) continue;
-      if (!/^[A-Z]{2}\d{9}[A-Z]{2}$/i.test(rastreio)) continue;
+      // Aceita Correios (AA000000000BR) E códigos de TRANSPORTADORA (Jadlog/Loggi/etc.).
+      // Antes o filtro só deixava passar o formato dos Correios — por isso pedidos de
+      // transportadora nunca eram rastreados nem recebiam mensagem. O agregador
+      // Seu|Rastreio resolve a transportadora pelo próprio código.
+      const rastreioLimpo = String(rastreio).replace(/\s+/g, '');
+      const ehCorreios = /^[A-Z]{2}\d{9}[A-Z]{2}$/i.test(rastreioLimpo);
+      // Código de transportadora: alfanumérico, 8-40, com ao menos um dígito (evita
+      // registrar textos que a loja às vezes digita no campo, ex.: "aguardando").
+      const ehCodigoValido = ehCorreios || (/^[A-Za-z0-9-]{8,40}$/.test(rastreioLimpo) && /\d/.test(rastreioLimpo));
+      if (!ehCodigoValido) continue;
+      const transp = nomeTransportadora(o.shipping_option, rastreio);
       // Limite de rastreios do plano: só bloqueia CÓDIGO NOVO acima do limite (os já rastreados no mês continuam).
       if (!db.usoRastreioJaContado(storeId, rastreio)) {
         if (db.contarUsoRastreio(storeId) >= getLimiteRastreio(storeId)) continue; // plano no limite → não inicia rastreio novo
         db.registrarUsoRastreio(storeId, rastreio);
       }
       // Registra contexto (código → loja/pedido/telefone) para o webhook do Seu|Rastreio conseguir enviar.
-      try { db.salvarRastreioContexto(rastreio, storeId, o.number, o.contact_name, telefone); } catch(e) {}
+      try { db.salvarRastreioContexto(rastreio, storeId, o.number, o.contact_name, telefone, transp); } catch(e) {}
       if (db.statusRastreio(rastreio) === 'entregue') continue;
       // Modelo recomendado pelo Seu Rastreio: registra o código 1x na API e deixa o webhook cuidar do resto.
       // Só (re)consulta se: nunca foi registrado (1ª vez) OU rede de segurança (>3 dias sem nenhum evento).
@@ -2140,10 +2180,10 @@ async function verificarRastreios(storeId) {
       const statusNovo = evento.entregue ? 'entregue' : evento.descricao;
       if (statusNovo && statusNovo !== statusAnterior) {
         console.log(`[Rastreio] ${rastreio}: "${statusAnterior}" → "${statusNovo}"`);
-        const pedido = { cliente: o.contact_name, numero: o.number, rastreio };
+        const pedido = { cliente: o.contact_name, numero: o.number, rastreio, transportadora: transp };
         try {
           if (!await podEnviar(telefone, storeId)) continue;
-          await sendWhatsApp(telefone, getMensagemTemplate(storeId, getRastreioTemplateKey(evento), montarMensagemRastreio(pedido, evento), { nome: o.contact_name || 'Cliente', numero: o.number, codigo: rastreio, link: `https://rastreamento.correios.com.br/app/index.php?objeto=${rastreio}`, transportadora: 'Correios', status: evento.descricao || evento.status || '', data: evento.data || '', hora: evento.hora || '' }), storeId);
+          await sendWhatsApp(telefone, getMensagemTemplate(storeId, getRastreioTemplateKey(evento), montarMensagemRastreio(pedido, evento), { nome: o.contact_name || 'Cliente', numero: o.number, codigo: rastreio, link: linkRastreio(rastreio, transp), transportadora: transp, status: evento.descricao || evento.status || '', data: evento.data || '', hora: evento.hora || '' }), storeId);
           db.registrarMensagem(telefone);
           db.registrarClienteAtivo(telefone, storeId);
           console.log(`[Rastreio] WhatsApp enviado para #${o.number}`);
@@ -4925,13 +4965,14 @@ app.post('/webhook/seurastreio', async (req, res) => {
     if (!await podEnviar(ctx.telefone)) return;
 
     const evento = { descricao, status: descricao, entregue, data: '', hora: '' };
-    const pedido = { cliente: ctx.contact_name, numero: ctx.order_number, rastreio: codigo };
+    const transpCtx = nomeTransportadora(ctx.transportadora, codigo);
+    const pedido = { cliente: ctx.contact_name, numero: ctx.order_number, rastreio: codigo, transportadora: transpCtx };
     await sendWhatsApp(
       ctx.telefone,
       getMensagemTemplate(ctx.store_id, getRastreioTemplateKey(evento), montarMensagemRastreio(pedido, evento),
         { nome: ctx.contact_name || 'Cliente', numero: ctx.order_number, codigo,
-          link: `https://rastreamento.correios.com.br/app/index.php?objeto=${codigo}`,
-          transportadora: 'Correios', status: descricao, data: '', hora: '' }),
+          link: linkRastreio(codigo, transpCtx),
+          transportadora: transpCtx, status: descricao, data: '', hora: '' }),
       ctx.store_id
     );
     db.atualizarStatusRastreio(codigo, statusNovo);

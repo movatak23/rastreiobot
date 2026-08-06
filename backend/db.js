@@ -779,9 +779,13 @@ function migrar() {
       order_number  TEXT,
       contact_name  TEXT,
       telefone      TEXT,
+      transportadora TEXT,
       updated_at    TEXT DEFAULT (datetime('now'))
     )`);
   } catch(e) {}
+  // Migração aditiva: tabelas antigas não tinham 'transportadora' (rastreio de
+  // transportadora — Jadlog/Loggi/etc. — passou a ser suportado, não só Correios).
+  try { db.exec(`ALTER TABLE rastreio_contexto ADD COLUMN transportadora TEXT`); } catch(e) {}
   try {
     db.exec(`CREATE TABLE IF NOT EXISTS rastreio_uso (
       store_id    TEXT,
@@ -1372,18 +1376,19 @@ function salvarMovimentacaoFinanceira(m) {
   );
 }
 
-function salvarRastreioContexto(codigo, storeId, orderNumber, contactName, telefone) {
+function salvarRastreioContexto(codigo, storeId, orderNumber, contactName, telefone, transportadora) {
   if (!codigo) return;
   db.prepare(`
-    INSERT INTO rastreio_contexto (codigo, store_id, order_number, contact_name, telefone, updated_at)
-    VALUES (?, ?, ?, ?, ?, datetime('now'))
+    INSERT INTO rastreio_contexto (codigo, store_id, order_number, contact_name, telefone, transportadora, updated_at)
+    VALUES (?, ?, ?, ?, ?, ?, datetime('now'))
     ON CONFLICT(codigo) DO UPDATE SET
       store_id = excluded.store_id,
       order_number = excluded.order_number,
       contact_name = excluded.contact_name,
       telefone = excluded.telefone,
+      transportadora = COALESCE(excluded.transportadora, rastreio_contexto.transportadora),
       updated_at = datetime('now')
-  `).run(String(codigo).toUpperCase(), String(storeId || ''), String(orderNumber || ''), contactName || null, telefone || null);
+  `).run(String(codigo).toUpperCase(), String(storeId || ''), String(orderNumber || ''), contactName || null, telefone || null, transportadora || null);
 }
 
 function getRastreioContexto(codigo) {
