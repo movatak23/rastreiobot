@@ -1643,18 +1643,32 @@ function auth(req, res, next) {
   next();
 }
 
+// User-Agent conforme boas práticas da Nuvemshop: nome do app + appID + e-mail de contato.
+// (Homologação Partners: o header deve identificar o app e um canal para o suporte acionar.)
+const NUVEM_USER_AGENT = 'LoggZap/2.5.1 (30935; contato@loggzap.com.br)';
+
 async function nuvemGet(storeId, path, params = {}) {
   const row = db.getToken(storeId);
   if (!row) throw new Error('Loja não autenticada.');
-  const res = await axios.get(`https://api.nuvemshop.com.br/v1/${storeId}${path}`, {
-    headers: {
-      'Authentication': `bearer ${row.access_token}`,
-      'User-Agent': `RastreioBot (${APP_URL})`,
-      'Content-Type': 'application/json'
-    },
-    params
-  });
-  return res.data;
+  try {
+    const res = await axios.get(`https://api.nuvemshop.com.br/v1/${storeId}${path}`, {
+      headers: {
+        'Authentication': `bearer ${row.access_token}`,
+        'User-Agent': NUVEM_USER_AGENT,
+        'Content-Type': 'application/json'
+      },
+      params
+    });
+    return res.data;
+  } catch (e) {
+    // A Nuvemshop responde 404 "Last page is 0" quando uma consulta paginada
+    // (ex.: /orders com um filtro) não tem nenhum resultado. Não é erro: tratamos
+    // como lista vazia, num único lugar, sem lançar exceção e sem retry.
+    const status = e.response?.status;
+    const desc = e.response?.data?.description || '';
+    if (status === 404 && desc.includes('Last page is 0')) return [];
+    throw e;
+  }
 }
 
 function formatTel(tel) {
@@ -1913,17 +1927,54 @@ cron.schedule('0 3 * * 0', () => {
   catch(e) { console.error('[Limpeza] Erro:', e.message); }
 });
 
+// Lojas sem NENHUM pedido/checkout: marcadas aqui (em memória) para pular as consultas
+// à Nuvemshop nos próximos ciclos, revalidando de hora em hora. Evita o volume de 404
+// "Last page is 0" que uma loja vazia geraria a cada 30 min. Reseta a cada deploy (re-sonda).
+const lojasVazias = new Map(); // store_id -> timestamp (ms) da última confirmação de "vazia"
+const LOJA_VAZIA_TTL_MS = 60 * 60 * 1000; // revalida de hora em hora
+
 cron.schedule('*/30 * * * *', async () => {
   console.log('[Cron] Iniciando verificação...');
   try {
     const stores = db.getAllStores();
     for (const store of stores) {
-      await verificarPagamentos(store.store_id);
-      await verificarBoletosPendentes(store.store_id);
-      await verificarCarrinhosAbandonados(store.store_id);
-      await verificarEnviosAvulsos(store.store_id);
-      await verificarPosEntrega(store.store_id);
-      await verificarPedidosParados(store.store_id);
+      const sid = store.store_id;
+
+      // Loja confirmada vazia há menos de 1h: pula as consultas à Nuvemshop.
+      // (Rastreios de envios avulsos são locais, não batem na Nuvemshop → seguem rodando.)
+      const marcada = lojasVazias.get(sid);
+      if (marcada && (Date.now() - marcada) < LOJA_VAZIA_TTL_MS) {
+        await verificarEnviosAvulsos(sid);
+        continue;
+      }
+
+      // ── Consolidação: busca os pedidos PAGOS uma única vez por ciclo ──
+      // Antes, 4 funções faziam essa mesma consulta separadamente (4x /orders por loja).
+      // Campos = superset do que essas funções usam.
+      let pedidosPagos = [];
+      try {
+        pedidosPagos = await nuvemGet(sid, '/orders', {
+          per_page: 200,
+          payment_status: 'paid',
+          fields: 'id,number,contact_name,contact_phone,status,shipping_status,shipping_tracking_number,created_at'
+        });
+      } catch(e) { console.error(`[Cron] Falha ao buscar pedidos pagos loja ${sid}:`, e.response?.data || e.message); }
+
+      await verificarPagamentos(sid, pedidosPagos);
+      const pendCount = await verificarBoletosPendentes(sid);          // consulta própria (pending)
+      const checkoutCount = await verificarCarrinhosAbandonados(sid, pedidosPagos); // /checkouts + pagos reaproveitados
+      await verificarEnviosAvulsos(sid);                               // local (sem Nuvemshop)
+      await verificarPosEntrega(sid, pedidosPagos);
+      await verificarPedidosParados(sid, pedidosPagos);
+
+      // Só marca "vazia" se TODAS as três contagens foram efetivamente checadas e deram 0.
+      // (null = recurso desligado ou erro → não marca, para não pular loja com dados.)
+      if (pedidosPagos.length === 0 && pendCount === 0 && checkoutCount === 0) {
+        if (!lojasVazias.has(sid)) console.log(`[Cron] Loja ${sid} sem pedidos/checkouts → pausando consultas por 1h.`);
+        lojasVazias.set(sid, Date.now());
+      } else {
+        lojasVazias.delete(sid);
+      }
     }
   } catch(e) { console.error('[Cron] Erro geral:', e.message); }
 });
@@ -1965,7 +2016,7 @@ function montarMensagemBoleto(etapa, nome, numero, gateway) {
 async function verificarBoletosPendentes(storeId) {
   try {
     const cfg = db.getConfig(storeId) || {};
-    if (cfg.boleto_ativo === 0) { console.log(`[DIAG-PEND] loja ${storeId}: boleto_ativo=0 (desligado)`); return; }
+    if (cfg.boleto_ativo === 0) { console.log(`[DIAG-PEND] loja ${storeId}: boleto_ativo=0 (desligado)`); return null; }
     const orders = await nuvemGet(storeId, '/orders', {
       per_page: 100,
       payment_status: 'pending'
@@ -2021,17 +2072,19 @@ async function verificarBoletosPendentes(storeId) {
       await new Promise(r => setTimeout(r, 500));
     }
     console.log(`[DIAG-PEND] loja ${storeId}: resumo → enviados=${enviados} | cancelado=${puladoCancelado} cartao=${puladoCartao} semTel=${puladoSemTel} idade+7d=${puladoIdade} foraEtapa=${puladoEtapa} jaEnviado=${puladoJaEnviado}`);
+    return orders.length; // contagem de pendentes (0 = sem pedido pendente)
   } catch(e) {
     const msg = e.response?.data?.description || e.message || '';
-    if (msg.includes('Last page is 0')) { console.log(`[DIAG-PEND] loja ${storeId}: Nuvemshop retornou 'Last page is 0' (query sem resultados)`); return; }
+    if (msg.includes('Last page is 0')) { console.log(`[DIAG-PEND] loja ${storeId}: Nuvemshop retornou 'Last page is 0' (query sem resultados)`); return 0; }
     console.error(`[Boleto] Erro loja ${storeId}:`, e.response?.data || e.message);
+    return null; // erro real → desconhecido (não marca a loja como vazia)
   }
 }
 
-async function verificarCarrinhosAbandonados(storeId) {
+async function verificarCarrinhosAbandonados(storeId, pedidosPagos = null) {
   try {
     const cfg = db.getConfig(storeId) || {};
-    if (cfg.carrinho_ativo === 0) return;
+    if (cfg.carrinho_ativo === 0) return null;
     const carrinhos = await nuvemGet(storeId, '/checkouts', {
       per_page: 50,
       fields: 'id,contact_name,contact_phone,abandoned_checkout_url,created_at'
@@ -2069,33 +2122,42 @@ async function verificarCarrinhosAbandonados(storeId) {
       await new Promise(r => setTimeout(r, 500));
     }
     try {
-      const pedidosPagos = await nuvemGet(storeId, '/orders', {
+      // Reaproveita os pedidos pagos já buscados no ciclo (consolidação).
+      // Se chamada isolada, busca só os campos que esta parte usa.
+      const pagos = pedidosPagos || await nuvemGet(storeId, '/orders', {
         per_page: 100,
         payment_status: 'paid',
         fields: 'id,contact_phone,created_at'
       });
-      for (const o of pedidosPagos) {
+      for (const o of pagos) {
         const tel = formatTel(o.contact_phone);
         if (tel) db.marcarCarrinhoRecuperado(tel, storeId);
       }
     } catch(e) { /* silencioso */ }
+    return Array.isArray(carrinhos) ? carrinhos.length : 0; // qtd de carrinhos abandonados
   } catch(e) {
     const msg = e.response?.data?.description || e.message || '';
-    if (msg.includes('Last page is 0')) return;
+    if (msg.includes('Last page is 0')) return 0;
     console.error(`[Carrinho] Erro loja ${storeId}:`, e.response?.data || e.message);
+    return null; // erro real → desconhecido (não marca a loja como vazia)
   }
 }
 
-async function verificarPagamentos(storeId) {
+async function verificarPagamentos(storeId, pedidosPagos = null) {
   try {
     const cfg = db.getConfig(storeId) || {};
     if (cfg.pagamento_ativo === 0) return;
-    const desde = new Date(Date.now() - 2 * 60 * 60 * 1000).toISOString();
-    const orders = await nuvemGet(storeId, '/orders', {
-      per_page: 50,
-      payment_status: 'paid',
-      created_at_min: desde
-    });
+    const desdeMs = Date.now() - 2 * 60 * 60 * 1000;
+    // Se a lista de pedidos pagos já foi buscada no ciclo (consolidação), reaproveita
+    // e filtra as últimas 2h em memória — mantém a trava de só notificar pedidos recentes.
+    // Se chamada isolada (botão "verificar agora"), busca como antes.
+    const orders = pedidosPagos
+      ? pedidosPagos.filter(o => new Date(o.created_at).getTime() >= desdeMs)
+      : await nuvemGet(storeId, '/orders', {
+          per_page: 50,
+          payment_status: 'paid',
+          created_at_min: new Date(desdeMs).toISOString()
+        });
     for (const o of orders) {
       if (o.status === 'cancelled') continue;
       if (db.jaConfirmacaoEnviada(String(o.id))) continue;
@@ -4663,7 +4725,7 @@ app.get('/diagnostico/:storeId', async (req, res) => {
     let nuvemRes = null, nuvemErro = null;
     try {
       const r = await axios.get(`https://api.nuvemshop.com.br/v1/${storeId}/orders`, {
-        headers: { 'Authentication': `bearer ${token}`, 'User-Agent': `RastreioBot (${APP_URL})` },
+        headers: { 'Authentication': `bearer ${token}`, 'User-Agent': NUVEM_USER_AGENT },
         params: { per_page: 1 }
       });
       nuvemRes = { status: r.status, total: Array.isArray(r.data) ? r.data.length : 'nao array' };
@@ -4793,11 +4855,12 @@ app.get('/rastreio/uso/:storeId', auth, (req, res) => {
   }
 });
 
-async function verificarPosEntrega(storeId) {
+async function verificarPosEntrega(storeId, pedidosPagos = null) {
   try {
     const cfg = db.getConfig(storeId) || {};
     if (cfg.pos_entrega_ativo === 0) return;
-    const orders = await nuvemGet(storeId, '/orders', { per_page: 100, payment_status: 'paid', fields: 'id,number,contact_name,contact_phone,shipping_status,created_at' });
+    // Reaproveita a lista de pedidos pagos do ciclo; se chamada isolada, busca.
+    const orders = pedidosPagos || await nuvemGet(storeId, '/orders', { per_page: 100, payment_status: 'paid', fields: 'id,number,contact_name,contact_phone,shipping_status,created_at' });
     const templatePadrao = `Olá, {nome}! 🎉\n\nSeu pedido *#{numero}* foi entregue! Esperamos que você tenha adorado.\n\nConta pra gente o que achou? Sua opinião é muito importante para nós! 😊`;
     const template = cfg.template_pos_entrega || templatePadrao;
     for (const o of orders) {
@@ -4825,12 +4888,13 @@ async function verificarPosEntrega(storeId) {
   }
 }
 
-async function verificarPedidosParados(storeId) {
+async function verificarPedidosParados(storeId, pedidosPagos = null) {
   try {
     const cfg = db.getConfig(storeId) || {};
     if (cfg.parado_ativo === 0) return;
     const diasLimite = cfg.alerta_parado_dias || 5;
-    const orders = await nuvemGet(storeId, '/orders', { per_page: 100, payment_status: 'paid', fields: 'id,number,contact_name,contact_phone,shipping_status,shipping_tracking_number,created_at' });
+    // Reaproveita a lista de pedidos pagos do ciclo; se chamada isolada, busca.
+    const orders = pedidosPagos || await nuvemGet(storeId, '/orders', { per_page: 100, payment_status: 'paid', fields: 'id,number,contact_name,contact_phone,shipping_status,shipping_tracking_number,created_at' });
     const inst = db.getInstancia(storeId);
     if (!inst) return;
     for (const o of orders) {
