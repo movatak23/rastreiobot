@@ -1671,6 +1671,36 @@ async function nuvemGet(storeId, path, params = {}) {
   }
 }
 
+// Eventos de webhook que substituem o polling. order/* cobrem pagamento, criação,
+// atualização (envio/entrega) e cancelamento; checkout/* cobrem carrinho abandonado.
+const NUVEM_WEBHOOK_EVENTS = ['order/created', 'order/paid', 'order/updated', 'order/cancelled', 'checkout/created', 'checkout/updated'];
+
+// Registra (idempotente) os webhooks de pedido/checkout de uma loja apontando para o
+// nosso receptor. Chamado no /auth/callback (instalação) e na rota de backfill.
+async function registrarWebhooksNuvem(storeId) {
+  const row = db.getToken(storeId);
+  if (!row) return { ok: false, erro: 'loja sem token' };
+  const url = `${BACKEND_URL}/webhooks/nuvemshop/orders`;
+  let existentes = [];
+  try { existentes = await nuvemGet(storeId, '/webhooks', { per_page: 200 }); } catch (e) { existentes = []; }
+  const jaTem = new Set((Array.isArray(existentes) ? existentes : []).filter(w => w && w.url === url).map(w => w.event));
+  const resultados = [];
+  for (const event of NUVEM_WEBHOOK_EVENTS) {
+    if (jaTem.has(event)) { resultados.push({ event, status: 'ja-existe' }); continue; }
+    try {
+      await axios.post(`https://api.nuvemshop.com.br/v1/${storeId}/webhooks`,
+        { event, url },
+        { headers: { 'Authentication': `bearer ${row.access_token}`, 'User-Agent': NUVEM_USER_AGENT, 'Content-Type': 'application/json' }, timeout: 15000 });
+      resultados.push({ event, status: 'criado' });
+    } catch (e) {
+      // 422 = evento já existe/indisponível no plano da loja; não é fatal, seguimos.
+      resultados.push({ event, status: 'erro', http: e.response?.status, desc: String(e.response?.data?.description || e.response?.data || e.message).slice(0, 120) });
+    }
+  }
+  console.log(`[Webhooks] loja ${storeId}: ` + resultados.map(r => `${r.event}=${r.status}`).join(' '));
+  return { ok: true, resultados };
+}
+
 function formatTel(tel) {
   if (!tel) return null;
   const d = String(tel).replace(/\D/g, '');
@@ -1933,48 +1963,59 @@ cron.schedule('0 3 * * 0', () => {
 const lojasVazias = new Map(); // store_id -> timestamp (ms) da última confirmação de "vazia"
 const LOJA_VAZIA_TTL_MS = 60 * 60 * 1000; // revalida de hora em hora
 
+// Event-gating: o cron só consulta a Nuvemshop de lojas que tiveram um evento de
+// pedido/checkout (via webhook) dentro desta janela. Lojas paradas não são consultadas
+// → acaba o volume de LIST /orders vazios (404) que travava a homologação Partners.
+const JANELA_ATIVIDADE_MS = (parseInt(process.env.JANELA_ATIVIDADE_DIAS || '21', 10) || 21) * 24 * 60 * 60 * 1000;
+
+// Processa um ciclo de automações de UMA loja (bate na Nuvemshop). Extraído para ser
+// reusado pelo cron E pelo webhook de pedidos (processamento imediato do evento).
+// NÃO chama verificarEnviosAvulsos — isso é local e roda sempre, no laço do cron.
+async function processarLojaCiclo(store) {
+  const sid = store.store_id;
+
+  // Loja confirmada vazia há menos de 1h: pula as consultas à Nuvemshop.
+  const marcada = lojasVazias.get(sid);
+  if (marcada && (Date.now() - marcada) < LOJA_VAZIA_TTL_MS) return;
+
+  // ── Consolidação: busca os pedidos PAGOS uma única vez por ciclo ──
+  // Alimenta 4 das automações (evita 4x /orders por loja).
+  let pedidosPagos = [];
+  try {
+    pedidosPagos = await nuvemGet(sid, '/orders', {
+      per_page: 200,
+      payment_status: 'paid',
+      fields: 'id,number,contact_name,contact_phone,status,shipping_status,shipping_tracking_number,created_at'
+    });
+  } catch(e) { console.error(`[Cron] Falha ao buscar pedidos pagos loja ${sid}:`, e.response?.data || e.message); }
+
+  await verificarPagamentos(sid, pedidosPagos);
+  const pendCount = await verificarBoletosPendentes(sid);          // consulta própria (pending)
+  const checkoutCount = await verificarCarrinhosAbandonados(sid, pedidosPagos); // /checkouts + pagos reaproveitados
+  await verificarPosEntrega(sid, pedidosPagos);
+  await verificarPedidosParados(sid, pedidosPagos);
+
+  // Só marca "vazia" se TODAS as contagens deram 0.
+  if (pedidosPagos.length === 0 && pendCount === 0 && checkoutCount === 0) {
+    if (!lojasVazias.has(sid)) console.log(`[Cron] Loja ${sid} sem pedidos/checkouts → pausando consultas por 1h.`);
+    lojasVazias.set(sid, Date.now());
+  } else {
+    lojasVazias.delete(sid);
+  }
+}
+
 cron.schedule('*/30 * * * *', async () => {
   console.log('[Cron] Iniciando verificação...');
   try {
     const stores = db.getAllStores();
     for (const store of stores) {
       const sid = store.store_id;
-
-      // Loja confirmada vazia há menos de 1h: pula as consultas à Nuvemshop.
-      // (Rastreios de envios avulsos são locais, não batem na Nuvemshop → seguem rodando.)
-      const marcada = lojasVazias.get(sid);
-      if (marcada && (Date.now() - marcada) < LOJA_VAZIA_TTL_MS) {
-        await verificarEnviosAvulsos(sid);
-        continue;
-      }
-
-      // ── Consolidação: busca os pedidos PAGOS uma única vez por ciclo ──
-      // Antes, 4 funções faziam essa mesma consulta separadamente (4x /orders por loja).
-      // Campos = superset do que essas funções usam.
-      let pedidosPagos = [];
-      try {
-        pedidosPagos = await nuvemGet(sid, '/orders', {
-          per_page: 200,
-          payment_status: 'paid',
-          fields: 'id,number,contact_name,contact_phone,status,shipping_status,shipping_tracking_number,created_at'
-        });
-      } catch(e) { console.error(`[Cron] Falha ao buscar pedidos pagos loja ${sid}:`, e.response?.data || e.message); }
-
-      await verificarPagamentos(sid, pedidosPagos);
-      const pendCount = await verificarBoletosPendentes(sid);          // consulta própria (pending)
-      const checkoutCount = await verificarCarrinhosAbandonados(sid, pedidosPagos); // /checkouts + pagos reaproveitados
-      await verificarEnviosAvulsos(sid);                               // local (sem Nuvemshop)
-      await verificarPosEntrega(sid, pedidosPagos);
-      await verificarPedidosParados(sid, pedidosPagos);
-
-      // Só marca "vazia" se TODAS as três contagens foram efetivamente checadas e deram 0.
-      // (null = recurso desligado ou erro → não marca, para não pular loja com dados.)
-      if (pedidosPagos.length === 0 && pendCount === 0 && checkoutCount === 0) {
-        if (!lojasVazias.has(sid)) console.log(`[Cron] Loja ${sid} sem pedidos/checkouts → pausando consultas por 1h.`);
-        lojasVazias.set(sid, Date.now());
-      } else {
-        lojasVazias.delete(sid);
-      }
+      // Envios avulsos são LOCAIS (Correios/SeuRastreio) — rodam sempre, não batem na Nuvemshop.
+      await verificarEnviosAvulsos(sid);
+      // Nuvemshop: só processa lojas com evento de pedido recente (event-gated pelo webhook).
+      // Loja sem webhook recente = nada novo → não consulta a API (elimina os 404 de loja parada).
+      if (!db.lojaComEventoRecente(sid, JANELA_ATIVIDADE_MS)) continue;
+      await processarLojaCiclo(store);
     }
   } catch(e) { console.error('[Cron] Erro geral:', e.message); }
 });
@@ -2292,6 +2333,8 @@ app.get('/auth/callback', async (req, res) => {
     const sessionCode = rawState.startsWith('ext_') ? rawState.slice(4) : null;
     const sid = String(data.user_id || (sessionCode ? '' : storeId));
     if (sid) db.saveToken(sid, data.access_token);
+    // Registra os webhooks de pedido/checkout desta loja (não bloqueia a resposta ao lojista).
+    if (sid) registrarWebhooksNuvem(sid).catch(e => console.error('[Webhooks] install erro:', e.message));
     if (sessionCode) {
       const realSid = String(data.user_id || sid);
       if (realSid) db.saveToken(realSid, data.access_token);
@@ -5191,9 +5234,55 @@ app.post('/webhooks/lgpd/customers-data-request', (req, res) => {
   } catch (e) { console.error('[LGPD] customers-data-request erro:', e.message); return res.status(200).json({ success: false }); }
 });
 
+// ── Webhook de PEDIDOS/CHECKOUTS da Nuvemshop (event-gated: substitui o polling) ──
+// Marca a loja como "com atividade" e processa na hora. O cron */30 passa a só varrer
+// lojas com evento recente → some o volume de LIST /orders vazios (404) das lojas paradas.
+const webhookDebounce = new Map(); // store_id -> ts (ms) do último processamento imediato
+const WEBHOOK_DEBOUNCE_MS = 60 * 1000; // evita rajada de eventos virar rajada de LIST
+
+app.post('/webhooks/nuvemshop/orders', (req, res) => {
+  if (!verificarHmacNuvem(req)) return res.status(401).json({ error: 'assinatura inválida' });
+  const sid = String(req.body?.store_id || req.body?.store || '');
+  const event = String(req.body?.event || '');
+  // A Nuvemshop exige 2xx ágil: responde já e processa em background.
+  res.status(200).json({ ok: true });
+  if (!sid) return;
+  try {
+    db.marcarEventoLoja(sid);
+    lojasVazias.delete(sid); // novo evento → a loja não está mais "vazia"
+  } catch (e) { console.error('[WebhookNuvem] marcar evento erro:', e.message); }
+  console.log(`[WebhookNuvem] loja ${sid} evento ${event}`);
+  // Processamento imediato (com debounce por loja para não transformar uma rajada de
+  // eventos numa rajada de LIST). O cron continua como rede de segurança.
+  const agora = Date.now();
+  if (agora - (webhookDebounce.get(sid) || 0) < WEBHOOK_DEBOUNCE_MS) return;
+  webhookDebounce.set(sid, agora);
+  processarLojaCiclo({ store_id: sid }).catch(e => console.error(`[WebhookNuvem] processar loja ${sid} erro:`, e.message));
+});
+
+// Backfill: registra os webhooks nas lojas JÁ instaladas (rodar uma vez). Protegido por auth admin.
+app.post('/admin-loggzap/api/registrar-webhooks', auth, async (req, res) => {
+  try {
+    const stores = db.getAllStores();
+    const resultado = [];
+    for (const s of stores) {
+      const r = await registrarWebhooksNuvem(s.store_id).catch(e => ({ ok: false, erro: e.message }));
+      // Semeia atividade (uma vez) se a loja já tem pedido pago, para ela continuar
+      // recebendo automação sem esperar o próximo webhook. Loja parada NÃO é semeada.
+      let semeada = false;
+      try {
+        const probe = await nuvemGet(s.store_id, '/orders', { payment_status: 'paid', per_page: 1, fields: 'id' });
+        if (Array.isArray(probe) && probe.length) { db.marcarEventoLoja(s.store_id); semeada = true; }
+      } catch (e) { /* loja vazia → 404 tratado, não semeia */ }
+      resultado.push({ store_id: s.store_id, semeada, ...r });
+    }
+    res.json({ ok: true, total: stores.length, resultado });
+  } catch (e) { res.status(500).json({ error: e.message }); }
+});
+
 app.listen(PORT, () => {
   console.log(`RastreioBot v2.5.1 rodando na porta ${PORT}`);
-  console.log('Cron ativo: verificação a cada 30 minutos');
+  console.log('Cron ativo: verificação a cada 30 minutos (event-gated por webhook)');
 });
 
 const APP_URL_PING = process.env.APP_URL || '';

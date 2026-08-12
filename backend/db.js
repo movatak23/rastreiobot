@@ -262,6 +262,23 @@ function getAllStores() {
   return db.prepare('SELECT store_id FROM tokens').all();
 }
 
+// Marca que a loja teve um evento de pedido/checkout (via webhook Nuvemshop).
+// O cron passa a só consultar a Nuvemshop de lojas com evento recente → elimina
+// o polling de lojas paradas (fonte dos 404 "Last page is 0").
+function marcarEventoLoja(storeId) {
+  try {
+    db.prepare("UPDATE tokens SET ultimo_evento_em = datetime('now') WHERE store_id = ?").run(String(storeId));
+  } catch (e) { /* coluna garantida no migrar(); ignora corrida de boot */ }
+}
+
+function lojaComEventoRecente(storeId, janelaMs) {
+  const row = db.prepare('SELECT ultimo_evento_em FROM tokens WHERE store_id = ?').get(String(storeId));
+  if (!row || !row.ultimo_evento_em) return false;
+  const t = Date.parse(String(row.ultimo_evento_em).replace(' ', 'T') + 'Z');
+  if (isNaN(t)) return false;
+  return (Date.now() - t) < janelaMs;
+}
+
 // ── Instâncias Z-API por cliente ─────────────────────────────────────────────
 function jaSatisfacaoEnviada(orderId) {
   return !!db.prepare('SELECT 1 FROM satisfacao WHERE order_id = ?').get(orderId);
@@ -707,6 +724,7 @@ function migrar() {
   );
   `);
   // Adiciona coluna device_id se não existir
+  try { db.exec("ALTER TABLE tokens ADD COLUMN ultimo_evento_em TEXT"); } catch(e) {}
   try { db.exec("ALTER TABLE licencas ADD COLUMN device_id TEXT"); } catch(e) {}
   // Licença multi-dispositivo (0 = trava em 1 aparelho, 1 = libera vários)
   try { db.exec("ALTER TABLE licencas ADD COLUMN multi_dispositivo INTEGER DEFAULT 0"); } catch(e) {}
@@ -1623,6 +1641,7 @@ module.exports = {
   getPainelTemplates, salvarPainelTemplates,
   registrarLogAutomacao, listarLogsAutomacao, limparSessoesPainelExpiradas,
   saveToken, getToken, getAllStores,
+  marcarEventoLoja, lojaComEventoRecente,
   marcarNotificado, jaNotificado,
   statusRastreio, getRastreioInfo, atualizarStatusRastreio, foiRastreioConsultadoHoje,
   jaConfirmacaoEnviada, marcarConfirmacaoEnviada,
