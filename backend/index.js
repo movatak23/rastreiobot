@@ -1248,7 +1248,7 @@ function painelHtml() {
 
     <div class="card">
       <h2>Teste real de WhatsApp</h2>
-      <p>Envie uma mensagem real para validar se a automação e a Z-API estão funcionando. Faça isso antes de liberar o Premium ao cliente.</p>
+      <p>Envie uma mensagem real para o seu WhatsApp e confira se as automações estão funcionando como você quer.</p>
       <label>Telefone para teste</label><input id="realTestPhone" placeholder="5581999999999">
       <label>Tipo de mensagem</label>
       <select id="realTestType">
@@ -1264,7 +1264,7 @@ function painelHtml() {
 
     <div class="card">
       <h2>Alterar login e senha</h2>
-      <p>Use esta área apenas se o cliente pedir para trocar o acesso administrativo.</p>
+      <p>Use esta área para trocar o login e a senha de acesso a este painel.</p>
       <label>Novo login</label><input id="newLogin" placeholder="Novo login">
       <label>Nova senha</label><input id="newPass" type="password" placeholder="Nova senha">
       <div class="err" id="credErr"></div><div class="ok" id="credOk"></div>
