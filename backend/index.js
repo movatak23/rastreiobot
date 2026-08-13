@@ -1647,8 +1647,8 @@ app.post('/painel/api/test-whatsapp-real', painelAuth, async (req, res) => {
     : (await getZapiStatusForStore(storeId)).conectado;
   if (!conectado) return res.status(400).json({ error: 'Seu WhatsApp ainda não está conectado. Conecte pelo QR no topo do painel e tente novamente.' });
 
-  const mensagem = renderTemplateTeste(storeId, tipo || 'pagamento_confirmado');
   try {
+    const mensagem = renderTemplateTesteAdmin(storeId, tipo || 'pagamento_confirmado');
     const result = await sendWhatsApp(telefone, mensagem, storeId);
     safeLogAutomacao({ store_id: storeId, tipo: 'teste_cliente_' + (tipo || 'pagamento_confirmado'), telefone, mensagem });
     res.json({ success: true, result });
