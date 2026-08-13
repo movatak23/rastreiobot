@@ -1946,11 +1946,19 @@ function checklistPremium(storeId) {
 }
 
 async function sendWhatsApp(telefone, mensagem, storeId) {
-  // REGRA PADRÃO: se o WhatsApp DESTA loja está conectado na Evolution, o envio sai
-  // pelo número do PRÓPRIO lojista. Senão, mantém o fluxo atual (Z-API) como ponte
-  // até a loja conectar. Evolution usa número completo com DDI (55...).
-  const preferirEvolution = (WHATSAPP_PROVIDER === 'evolution') || await lojaEvolutionConectada(storeId);
-  if (preferirEvolution) {
+  // REGRA PADRÃO: o envio sai pelo WhatsApp do PRÓPRIO lojista (Evolution).
+  // - WHATSAPP_PROVIDER=evolution (corte seco): SEMPRE Evolution; loja sem conexão
+  //   NÃO envia (erro WA_NAO_CONECTADO), sem cair no Z-API central.
+  // - Caso contrário (ponte, pré-corte): loja conectada usa o próprio número;
+  //   loja ainda não conectada cai no Z-API central.
+  const modoEvolution = WHATSAPP_PROVIDER === 'evolution';
+  const conectada = await lojaEvolutionConectada(storeId);
+  if (modoEvolution || conectada) {
+    if (modoEvolution && !conectada) {
+      const err = new Error('WhatsApp da loja não conectado (Evolution). Conecte pelo QR no painel.');
+      err.code = 'WA_NAO_CONECTADO';
+      throw err;
+    }
     let full = String(telefone).replace(/\D/g, '');
     if (!full.startsWith('55')) full = '55' + full;
     return await sendViaEvolution(full, mensagem, storeId);
