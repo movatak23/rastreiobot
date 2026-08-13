@@ -1221,6 +1221,22 @@ function painelHtml() {
   </div>
 
   <div id="panelArea" class="hidden">
+    <div class="card" id="whatsappConnectBox">
+      <h2>📱 Conecte seu WhatsApp</h2>
+      <p>As mensagens automáticas são enviadas pelo <strong>seu próprio número de WhatsApp</strong>. Conecte-o uma vez escaneando o QR Code — é rápido e só precisa fazer isso uma vez.</p>
+      <div id="waStatus" class="info">Verificando conexão...</div>
+      <div id="waQrWrap" style="display:none;text-align:center;margin:14px 0">
+        <img id="waQr" alt="QR Code do WhatsApp" style="max-width:260px;border-radius:8px;background:#fff;padding:8px">
+        <p class="muted">No celular: WhatsApp → <strong>Aparelhos conectados</strong> → <strong>Conectar um aparelho</strong> → aponte a câmera para o código acima.</p>
+      </div>
+      <div class="actions">
+        <button class="btn" id="waConnectBtn" onclick="connectWhatsApp()">Conectar / mostrar QR</button>
+        <button class="btn2" id="waRefreshBtn" onclick="loadWhatsAppStatus()">Atualizar status</button>
+        <button class="btn2" id="waLogoutBtn" onclick="disconnectWhatsApp()" style="display:none">Desconectar</button>
+      </div>
+      <div class="err" id="waErr"></div>
+    </div>
+
     <div class="card">
       <h1>Mensagens automáticas</h1>
       <p>Edite as mensagens usadas nas automações Premium. Antes de salvar, clique em <strong>Verificar mensagens</strong>. O sistema só permitirá salvar se a verificação estiver 100% OK.</p>
@@ -1401,7 +1417,51 @@ async function changeCredentials(){
   }catch(e){show('credErr',e.message);}
 }
 document.getElementById('logoutBtn').onclick = async ()=>{ await api('/painel/api/logout',{}).catch(()=>{}); localStorage.removeItem('lz_painel_token'); location.reload(); };
-apiGet('/painel/api/me').then(loadPanel).then(loadChecklist).catch(()=>{});
+// ── Conexão do WhatsApp do lojista (Evolution / QR) ──
+let waPollTimer = null;
+function setWaStatus(txt, cls){ const el=document.getElementById('waStatus'); if(!el) return; el.textContent=txt; el.className=(cls||'info'); }
+async function loadWhatsAppStatus(){
+  try{
+    const d = await apiGet('/painel/api/whatsapp/status');
+    const connectBtn=document.getElementById('waConnectBtn'), logoutBtn=document.getElementById('waLogoutBtn'), qrWrap=document.getElementById('waQrWrap');
+    if(!d.disponivel){ setWaStatus('Conexão de WhatsApp indisponível no momento. Fale com o suporte.','info'); if(connectBtn) connectBtn.style.display='none'; return; }
+    if(d.conectado){
+      setWaStatus('✅ WhatsApp conectado. Suas automações saem do seu número.','ok');
+      if(qrWrap) qrWrap.style.display='none';
+      if(connectBtn) connectBtn.style.display='none';
+      if(logoutBtn) logoutBtn.style.display='inline-block';
+      if(waPollTimer){ clearInterval(waPollTimer); waPollTimer=null; }
+    } else {
+      setWaStatus('⚠️ WhatsApp ainda não conectado. Clique em "Conectar / mostrar QR" e escaneie o código.','info');
+      if(connectBtn) connectBtn.style.display='inline-block';
+      if(logoutBtn) logoutBtn.style.display='none';
+    }
+  }catch(e){ setWaStatus('Erro ao verificar conexão: '+e.message,'err'); }
+}
+async function connectWhatsApp(){
+  hide('waErr');
+  try{
+    const d = await api('/painel/api/whatsapp/conectar');
+    if(d.conectado){ await loadWhatsAppStatus(); return; }
+    if(d.qr){
+      document.getElementById('waQr').src = d.qr;
+      document.getElementById('waQrWrap').style.display='block';
+      setWaStatus('Escaneie o QR Code abaixo com o WhatsApp do seu celular.','info');
+      if(waPollTimer) clearInterval(waPollTimer);
+      waPollTimer = setInterval(loadWhatsAppStatus, 4000);
+    } else {
+      show('waErr','Não foi possível gerar o QR agora. Clique em "Atualizar status" e tente novamente.');
+    }
+  }catch(e){ show('waErr', e.message); }
+}
+async function disconnectWhatsApp(){
+  if(!confirm('Desconectar o WhatsApp? As automações param de enviar até você reconectar.')) return;
+  hide('waErr');
+  try{ await api('/painel/api/whatsapp/desconectar'); await loadWhatsAppStatus(); }
+  catch(e){ show('waErr', e.message); }
+}
+
+apiGet('/painel/api/me').then(loadPanel).then(loadChecklist).then(loadWhatsAppStatus).catch(()=>{});
 </script>
 </body>
 </html>`;
