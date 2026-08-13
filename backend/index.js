@@ -2528,6 +2528,31 @@ async function dispararCapiInstalacao(req, storeId) {
   }
 }
 
+// Diagnóstico do CAPI: confirma se o token está neste serviço e se o Meta aceita o evento.
+app.get('/admin-loggzap/api/testar-capi', auth, async (req, res) => {
+  if (!META_CAPI_TOKEN) return res.json({ ok: false, capiTokenConfigurado: false, msg: 'META_CAPI_TOKEN NAO esta setado neste servico (rastreiobot).' });
+  try {
+    const payload = { data: [{
+      event_name: 'CompleteRegistration',
+      event_time: Math.floor(Date.now() / 1000),
+      action_source: 'website',
+      event_source_url: 'https://loggzap.com.br',
+      event_id: 'capi_test_' + Date.now(),
+      user_data: {
+        client_ip_address: '8.8.8.8',
+        client_user_agent: 'LoggZapCapiTest/1.0',
+        external_id: crypto.createHash('sha256').update('teste-capi').digest('hex')
+      },
+      custom_data: { content_name: 'Teste CAPI LoggZap' }
+    }] };
+    if (req.query.test_code) payload.test_event_code = req.query.test_code;
+    const r = await axios.post(`https://graph.facebook.com/v19.0/${META_PIXEL_ID}/events?access_token=${encodeURIComponent(META_CAPI_TOKEN)}`, payload, { timeout: 10000 });
+    res.json({ ok: true, capiTokenConfigurado: true, pixel: META_PIXEL_ID, metaResposta: r.data });
+  } catch (e) {
+    res.json({ ok: false, capiTokenConfigurado: true, erroMeta: e.response?.data?.error || e.message });
+  }
+});
+
 app.get('/auth/callback', async (req, res) => {
   const { code, state: storeId } = req.query;
   if (!code) return res.status(400).send('Código OAuth ausente.');
