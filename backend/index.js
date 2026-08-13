@@ -2371,12 +2371,28 @@ async function verificarPagamentos(storeId, pedidosPagos = null) {
 }
 
 // Limite de rastreios/mês por plano (1 rastreio = 1 código único no mês).
-// free/trial=50, basic=300, premium=1000, enterprise=ilimitado (na prática).
-const RASTREIO_LIMITES = { free: 50, trial: 50, basic: 300, premium: 1000, enterprise: 1000000 };
+// free=50, trial=Pro completo (1000), basic=300, premium=1000, enterprise=ilimitado.
+// O trial dá a experiência COMPLETA por 7 dias; depois cai para o free (50) até pagar.
+const RASTREIO_LIMITES = { free: 50, trial: 1000, basic: 300, premium: 1000, enterprise: 1000000 };
+const TRIAL_DIAS = 7;
 function getLimiteRastreio(storeId) {
   const lic = db.getLicencaPorStore ? db.getLicencaPorStore(storeId) : null;
-  const plano = String(lic?.plano || 'free').toLowerCase();
-  return RASTREIO_LIMITES[plano] != null ? RASTREIO_LIMITES[plano] : 50;
+  const pago = !!(lic && lic.plano && (lic.status ? lic.status === 'ativa' : true) && (!lic.expira_em || new Date(lic.expira_em) > new Date()));
+  if (pago) {
+    const plano = String(lic.plano).toLowerCase();
+    return RASTREIO_LIMITES[plano] != null ? RASTREIO_LIMITES[plano] : 50;
+  }
+  // Não pago: nos primeiros TRIAL_DIAS após instalar, libera o limite de trial (Pro completo).
+  try {
+    const tok = db.getToken ? db.getToken(storeId) : null;
+    if (tok && tok.created_at) {
+      const inicio = Date.parse(String(tok.created_at).replace(' ', 'T') + 'Z');
+      if (!isNaN(inicio) && (Date.now() - inicio) < TRIAL_DIAS * 86400000) {
+        return RASTREIO_LIMITES.trial;
+      }
+    }
+  } catch (e) {}
+  return RASTREIO_LIMITES.free;
 }
 
 async function verificarRastreios(storeId) {
