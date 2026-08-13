@@ -1621,10 +1621,17 @@ app.post('/painel/api/test-templates', painelAuth, (req, res) => {
 
 app.get('/painel/api/checklist', painelAuth, async (req, res) => {
   try {
-    const checklist = checklistPremium(String(req.painel.store_id));
-    const zapi = await getZapiStatusForStore(String(req.painel.store_id));
-    const items = checklist.items.map(i => i.key === 'zapi_config' ? { ...i, ok: !!zapi.conectado, detalhe: zapi.erro || zapi.estado || '' } : i);
-    res.json({ success: true, pronto: items.every(i => i.ok), items, zapi });
+    const sid = String(req.painel.store_id);
+    const checklist = checklistPremium(sid);
+    let conn;
+    if (EVOLUTION_URL && EVOLUTION_API_KEY) {
+      const st = await evolutionState(sid);
+      conn = { conectado: st.conectado, estado: st.state, erro: st.conectado ? '' : 'Conecte pelo QR no topo do painel.' };
+    } else {
+      conn = await getZapiStatusForStore(sid);
+    }
+    const items = checklist.items.map(i => i.key === 'zapi_config' ? { ...i, ok: !!conn.conectado, detalhe: conn.conectado ? 'Conectado' : (conn.erro || conn.estado || '') } : i);
+    res.json({ success: true, pronto: items.every(i => i.ok), items, conn });
   } catch(e) {
     res.status(500).json({ error: e.message });
   }
@@ -1635,8 +1642,10 @@ app.post('/painel/api/test-whatsapp-real', painelAuth, async (req, res) => {
   if (!telefone) return res.status(400).json({ error: 'Informe um telefone para teste.' });
 
   const storeId = String(req.painel.store_id);
-  const status = await getZapiStatusForStore(storeId);
-  if (!status.conectado) return res.status(400).json({ error: 'WhatsApp/Z-API ainda não está conectado. Peça ajuda ao suporte.', status });
+  const conectado = (EVOLUTION_URL && EVOLUTION_API_KEY)
+    ? await lojaEvolutionConectada(storeId)
+    : (await getZapiStatusForStore(storeId)).conectado;
+  if (!conectado) return res.status(400).json({ error: 'Seu WhatsApp ainda não está conectado. Conecte pelo QR no topo do painel e tente novamente.' });
 
   const mensagem = renderTemplateTeste(storeId, tipo || 'pagamento_confirmado');
   try {
@@ -1908,9 +1917,40 @@ async function evolutionLogout(storeId) {
   return { instance };
 }
 
+// Cache curto (60s) do estado de conexão Evolution por loja, para não bater na API
+// da Evolution a cada envio de automação.
+const _evoStateCache = new Map();
+async function lojaEvolutionConectada(storeId) {
+  if (!EVOLUTION_URL || !EVOLUTION_API_KEY || !storeId) return false;
+  const key = String(storeId);
+  const c = _evoStateCache.get(key);
+  if (c && (Date.now() - c.ts) < 60000) return c.open;
+  const st = await evolutionState(key).catch(() => ({ conectado: false }));
+  _evoStateCache.set(key, { open: !!st.conectado, ts: Date.now() });
+  return !!st.conectado;
+}
+
+// Checklist do painel Premium (função estava sendo chamada mas não existia → corrige o 500).
+function checklistPremium(storeId) {
+  const items = [
+    { key: 'zapi_config', label: 'WhatsApp conectado', ok: false, detalhe: '' } // preenchido na rota com o status real
+  ];
+  try {
+    const lic = db.getLicencaPorStore ? db.getLicencaPorStore(String(storeId)) : null;
+    const ativa = !!(lic && (lic.status ? lic.status === 'ativa' : true) && (!lic.expira_em || new Date(lic.expira_em) > new Date()));
+    items.push({ key: 'plano', label: 'Licença Premium ativa', ok: ativa, detalhe: ativa ? ('Plano ' + (lic.plano || '')) : 'Ative sua chave Premium para liberar as automações.' });
+  } catch (e) {
+    items.push({ key: 'plano', label: 'Licença Premium ativa', ok: false, detalhe: '' });
+  }
+  return { items };
+}
+
 async function sendWhatsApp(telefone, mensagem, storeId) {
-  // Evolution usa número completo com DDI (55...). Z-API mantém o comportamento atual.
-  if (WHATSAPP_PROVIDER === 'evolution') {
+  // REGRA PADRÃO: se o WhatsApp DESTA loja está conectado na Evolution, o envio sai
+  // pelo número do PRÓPRIO lojista. Senão, mantém o fluxo atual (Z-API) como ponte
+  // até a loja conectar. Evolution usa número completo com DDI (55...).
+  const preferirEvolution = (WHATSAPP_PROVIDER === 'evolution') || await lojaEvolutionConectada(storeId);
+  if (preferirEvolution) {
     let full = String(telefone).replace(/\D/g, '');
     if (!full.startsWith('55')) full = '55' + full;
     return await sendViaEvolution(full, mensagem, storeId);
