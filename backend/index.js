@@ -1937,16 +1937,23 @@ function checklistPremium(storeId) {
     { key: 'zapi_config', label: 'WhatsApp conectado', ok: false, detalhe: '' } // preenchido na rota com o status real
   ];
   try {
-    const lic = db.getLicencaPorStore ? db.getLicencaPorStore(String(storeId)) : null;
-    const ativa = !!(lic && (lic.status ? lic.status === 'ativa' : true) && (!lic.expira_em || new Date(lic.expira_em) > new Date()));
-    items.push({ key: 'plano', label: 'Licença Premium ativa', ok: ativa, detalhe: ativa ? ('Plano ' + (lic.plano || '')) : 'Ative sua chave Premium para liberar as automações.' });
+    const sp = statusPlanoLoja(String(storeId));
+    if (sp.pago) items.push({ key: 'plano', label: 'Plano ativo', ok: true, detalhe: 'Plano ' + sp.plano });
+    else if (sp.emTrial) items.push({ key: 'plano', label: 'Plano ativo', ok: true, detalhe: 'Em teste (7 dias grátis) — todas as funções liberadas' });
+    else items.push({ key: 'plano', label: 'Plano ativo', ok: false, detalhe: 'Teste encerrado — ative um plano para voltar a enviar.' });
   } catch (e) {
-    items.push({ key: 'plano', label: 'Licença Premium ativa', ok: false, detalhe: '' });
+    items.push({ key: 'plano', label: 'Plano ativo', ok: false, detalhe: '' });
   }
   return { items };
 }
 
 async function sendWhatsApp(telefone, mensagem, storeId) {
+  // PLANO FREE (trial encerrado, sem pagar) = só visualização, SEM disparos.
+  if (storeId && !statusPlanoLoja(String(storeId)).podeDisparar) {
+    const err = new Error('Sem disparos no plano free (teste encerrado). Ative um plano para voltar a enviar.');
+    err.code = 'PLANO_SEM_DISPARO';
+    throw err;
+  }
   // REGRA PADRÃO: o envio sai pelo WhatsApp do PRÓPRIO lojista (Evolution).
   // - WHATSAPP_PROVIDER=evolution (corte seco): SEMPRE Evolution; loja sem conexão
   //   NÃO envia (erro WA_NAO_CONECTADO), sem cair no Z-API central.
@@ -2120,6 +2127,8 @@ const JANELA_ATIVIDADE_MS = (parseInt(process.env.JANELA_ATIVIDADE_DIAS || '21',
 // NÃO chama verificarEnviosAvulsos — isso é local e roda sempre, no laço do cron.
 async function processarLojaCiclo(store) {
   const sid = store.store_id;
+  // FREE (teste encerrado, sem plano) = sem disparos → nem consulta a Nuvemshop.
+  if (!statusPlanoLoja(String(sid)).podeDisparar) return;
 
   // Loja confirmada vazia há menos de 1h: pula as consultas à Nuvemshop.
   const marcada = lojasVazias.get(sid);
@@ -2371,28 +2380,32 @@ async function verificarPagamentos(storeId, pedidosPagos = null) {
 }
 
 // Limite de rastreios/mês por plano (1 rastreio = 1 código único no mês).
-// free=50, trial=Pro completo (1000), basic=300, premium=1000, enterprise=ilimitado.
-// O trial dá a experiência COMPLETA por 7 dias; depois cai para o free (50) até pagar.
-const RASTREIO_LIMITES = { free: 50, trial: 1000, basic: 300, premium: 1000, enterprise: 1000000 };
+// free=50 (só visualização, SEM disparos), trial=50 (TODAS as funções, rastreio
+// travado em 50 p/ não estourar a cota), basic=300, premium=1000, enterprise=ilimitado.
+const RASTREIO_LIMITES = { free: 50, trial: 50, basic: 300, premium: 1000, enterprise: 1000000 };
 const TRIAL_DIAS = 7;
-function getLimiteRastreio(storeId) {
+
+// Estado do plano da loja. Trial = 7 dias após instalar (tokens.created_at), com TODAS
+// as funções liberadas. Fora do trial e sem pagar = free (só visualização, sem disparos).
+function statusPlanoLoja(storeId) {
   const lic = db.getLicencaPorStore ? db.getLicencaPorStore(storeId) : null;
   const pago = !!(lic && lic.plano && (lic.status ? lic.status === 'ativa' : true) && (!lic.expira_em || new Date(lic.expira_em) > new Date()));
-  if (pago) {
-    const plano = String(lic.plano).toLowerCase();
-    return RASTREIO_LIMITES[plano] != null ? RASTREIO_LIMITES[plano] : 50;
-  }
-  // Não pago: nos primeiros TRIAL_DIAS após instalar, libera o limite de trial (Pro completo).
-  try {
-    const tok = db.getToken ? db.getToken(storeId) : null;
-    if (tok && tok.created_at) {
-      const inicio = Date.parse(String(tok.created_at).replace(' ', 'T') + 'Z');
-      if (!isNaN(inicio) && (Date.now() - inicio) < TRIAL_DIAS * 86400000) {
-        return RASTREIO_LIMITES.trial;
+  let emTrial = false;
+  if (!pago) {
+    try {
+      const tok = db.getToken ? db.getToken(storeId) : null;
+      if (tok && tok.created_at) {
+        const inicio = Date.parse(String(tok.created_at).replace(' ', 'T') + 'Z');
+        emTrial = !isNaN(inicio) && (Date.now() - inicio) < TRIAL_DIAS * 86400000;
       }
-    }
-  } catch (e) {}
-  return RASTREIO_LIMITES.free;
+    } catch (e) {}
+  }
+  const plano = pago ? String(lic.plano).toLowerCase() : (emTrial ? 'trial' : 'free');
+  return { pago, emTrial, plano, podeDisparar: pago || emTrial };
+}
+function getLimiteRastreio(storeId) {
+  const { plano } = statusPlanoLoja(storeId);
+  return RASTREIO_LIMITES[plano] != null ? RASTREIO_LIMITES[plano] : 50;
 }
 
 async function verificarRastreios(storeId) {
@@ -3860,9 +3873,9 @@ const processarEnvioAvulsoHandler = async (req, res) => {
   if (!texto || String(texto).trim().length < 10) return res.status(400).json({ error: 'Cole os dados do envio avulso.' });
 
   try {
-    const lic = db.getLicencaPorStore ? db.getLicencaPorStore(storeId) : null;
-    if (!lic || lic.plano !== 'premium') {
-      return res.status(403).json({ error: 'Envios avulsos automáticos estão disponíveis apenas no plano Premium.' });
+    const sp = statusPlanoLoja(storeId);
+    if (!(sp.emTrial || sp.plano === 'premium')) {
+      return res.status(403).json({ error: 'Envios avulsos automáticos: disponíveis no período de teste e no plano Pro.' });
     }
 
     const parsed = extrairEnvioAvulsoDoTexto(texto);
