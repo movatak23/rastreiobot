@@ -2498,6 +2498,36 @@ app.get('/auth/install', (req, res) => {
   res.redirect(`https://www.nuvemshop.com.br/apps/${NUVEM_CLIENT_ID}/authorize?state=${state}`);
 });
 
+// ── Meta CAPI: rastreia a INSTALAÇÃO real (server-side) quando a loja conecta. ──
+// A conversão de verdade acontece fora do site (OAuth), então o pixel do browser
+// não a enxerga; aqui mandamos o evento direto pro Meta. Requer META_CAPI_TOKEN no Railway.
+const META_PIXEL_ID = process.env.META_PIXEL_ID || '2038947806731470';
+const META_CAPI_TOKEN = process.env.META_CAPI_TOKEN || '';
+async function dispararCapiInstalacao(req, storeId) {
+  if (!META_CAPI_TOKEN) return; // sem token → no-op (não quebra o fluxo)
+  try {
+    const ip = String(req.headers['x-forwarded-for'] || '').split(',')[0].trim() || req.socket?.remoteAddress || '';
+    const ua = req.headers['user-agent'] || '';
+    const payload = { data: [{
+      event_name: 'CompleteRegistration',
+      event_time: Math.floor(Date.now() / 1000),
+      action_source: 'website',
+      event_source_url: 'https://loggzap.com.br',
+      event_id: 'install_' + String(storeId), // dedup
+      user_data: {
+        client_ip_address: ip,
+        client_user_agent: ua,
+        external_id: crypto.createHash('sha256').update(String(storeId)).digest('hex')
+      },
+      custom_data: { content_name: 'Instalacao LoggZap', store_id: String(storeId) }
+    }]};
+    await axios.post(`https://graph.facebook.com/v19.0/${META_PIXEL_ID}/events?access_token=${encodeURIComponent(META_CAPI_TOKEN)}`, payload, { timeout: 8000 });
+    console.log('[CAPI] Instalação enviada ao Meta (loja ' + storeId + ')');
+  } catch (e) {
+    console.error('[CAPI] falha:', e.response?.data?.error?.message || e.message);
+  }
+}
+
 app.get('/auth/callback', async (req, res) => {
   const { code, state: storeId } = req.query;
   if (!code) return res.status(400).send('Código OAuth ausente.');
@@ -2511,6 +2541,8 @@ app.get('/auth/callback', async (req, res) => {
     if (sid) db.saveToken(sid, data.access_token);
     // Registra os webhooks de pedido/checkout desta loja (não bloqueia a resposta ao lojista).
     if (sid) registrarWebhooksNuvem(sid).catch(e => console.error('[Webhooks] install erro:', e.message));
+    // Rastreia a instalação no Meta (CAPI server-side) — conversão real do anúncio.
+    if (sid) dispararCapiInstalacao(req, sid).catch(() => {});
     if (sessionCode) {
       const realSid = String(data.user_id || sid);
       if (realSid) db.saveToken(realSid, data.access_token);
