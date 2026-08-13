@@ -1841,8 +1841,9 @@ async function podEnviar(telefone) {
 }
 
 // ── Provedor de WhatsApp: 'zapi' (padrão) | 'evolution' ─────────────────────
-// Troca via variável de ambiente WHATSAPP_PROVIDER no Railway. Downgrade = voltar pra 'zapi'.
-const WHATSAPP_PROVIDER = (process.env.WHATSAPP_PROVIDER || 'zapi').toLowerCase();
+// CORTE SECO: default = evolution (cada loja envia pelo próprio WhatsApp).
+// Rollback de emergência = setar WHATSAPP_PROVIDER=zapi no Railway (volta a ponte central).
+const WHATSAPP_PROVIDER = (process.env.WHATSAPP_PROVIDER || 'evolution').toLowerCase();
 const EVOLUTION_URL = (process.env.EVOLUTION_URL || '').replace(/\/$/, '');
 const EVOLUTION_API_KEY = process.env.EVOLUTION_API_KEY || '';
 
