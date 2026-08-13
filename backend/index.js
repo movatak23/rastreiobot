@@ -1590,6 +1590,44 @@ app.post('/painel/api/test-whatsapp-real', painelAuth, async (req, res) => {
 });
 
 
+// ── Lojista: conectar o PRÓPRIO WhatsApp (Evolution) via QR, pelo painel ──
+// Funciona sempre que a Evolution estiver configurada — independente do provedor de
+// ENVIO atual — para o lojista pré-conectar o número dele antes do corte p/ Evolution.
+app.post('/painel/api/whatsapp/conectar', painelAuth, async (req, res) => {
+  const storeId = String(req.painel.store_id);
+  if (!EVOLUTION_URL || !EVOLUTION_API_KEY)
+    return res.status(400).json({ error: 'Conexão de WhatsApp indisponível no momento. Fale com o suporte.' });
+  try {
+    const out = await evolutionConnect(storeId);
+    const st = await evolutionState(storeId);
+    res.json({ success: true, qr: out.qr, code: out.code, estado: st.state, conectado: st.conectado });
+  } catch (e) {
+    res.status(500).json({ error: e.response?.data?.message || e.message });
+  }
+});
+
+app.get('/painel/api/whatsapp/status', painelAuth, async (req, res) => {
+  const storeId = String(req.painel.store_id);
+  if (!EVOLUTION_URL || !EVOLUTION_API_KEY)
+    return res.json({ success: true, disponivel: false, conectado: false });
+  try {
+    const st = await evolutionState(storeId);
+    res.json({ success: true, disponivel: true, conectado: st.conectado, estado: st.state });
+  } catch (e) {
+    res.status(500).json({ error: e.message });
+  }
+});
+
+app.post('/painel/api/whatsapp/desconectar', painelAuth, async (req, res) => {
+  const storeId = String(req.painel.store_id);
+  try {
+    await evolutionLogout(storeId);
+    res.json({ success: true });
+  } catch (e) {
+    res.status(500).json({ error: e.message });
+  }
+});
+
 app.post('/painel/api/credentials', painelAuth, (req, res) => {
   try {
     const { login, senha } = req.body || {};
@@ -4854,8 +4892,8 @@ app.post('/whatsapp/criar-instancia', auth, (req, res) => { res.json({ success: 
 app.post('/whatsapp/conectar', auth, async (req, res) => {
   const { store_id } = req.body || {};
   if (!store_id) return res.status(400).json({ error: 'store_id obrigatório.' });
-  if (WHATSAPP_PROVIDER !== 'evolution')
-    return res.status(400).json({ error: 'Conexão por QR disponível apenas no provedor Evolution.' });
+  if (!EVOLUTION_URL || !EVOLUTION_API_KEY)
+    return res.status(400).json({ error: 'Evolution não configurada neste serviço (EVOLUTION_URL/EVOLUTION_API_KEY).' });
   try {
     const out = await evolutionConnect(String(store_id));
     const st = await evolutionState(String(store_id));
