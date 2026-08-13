@@ -2382,7 +2382,7 @@ async function verificarPagamentos(storeId, pedidosPagos = null) {
 // Limite de rastreios/mês por plano (1 rastreio = 1 código único no mês).
 // free=50 (só visualização, SEM disparos), trial=50 (TODAS as funções, rastreio
 // travado em 50 p/ não estourar a cota), basic=300, premium=1000, enterprise=ilimitado.
-const RASTREIO_LIMITES = { free: 50, trial: 50, basic: 300, premium: 1000, enterprise: 1000000 };
+const RASTREIO_LIMITES = { free: 50, trial: 50, basic: 200, premium: 500, enterprise: 1000000 };
 const TRIAL_DIAS = 7;
 
 // Estado do plano da loja. Trial = 7 dias após instalar (tokens.created_at), com TODAS
@@ -4409,14 +4409,14 @@ app.get('/assinar', (req, res) => {
       nome: 'Essencial',
       preco: 'R$ 97/mês',
       titulo: 'Assinar Plano Essencial',
-      descricao: 'Dashboard, financeiro e rastreio automático — até 300 rastreios/mês.',
+      descricao: 'Dashboard, financeiro e rastreio automático — até 200 rastreios/mês.',
       badge: 'PLANO ESSENCIAL'
     },
     premium: {
       nome: 'Pro',
       preco: 'R$ 147/mês',
       titulo: 'Assinar Plano Pro',
-      descricao: 'Tudo do Essencial + automações via WhatsApp — até 1.000 rastreios/mês.',
+      descricao: 'Tudo do Essencial + automações via WhatsApp — até 500 rastreios/mês.',
       badge: 'PLANO PRO'
     }
   };
