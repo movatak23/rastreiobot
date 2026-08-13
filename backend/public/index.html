@@ -65,6 +65,11 @@ src="https://www.facebook.com/tr?id=1905327720020686&ev=PageView&noscript=1"
   .hbtns{display:flex;align-items:center;justify-content:center;gap:14px;flex-wrap:wrap;animation:fu .5s .3s ease both}
   .btnp{display:inline-flex;align-items:center;gap:8px;background:var(--green);color:#000;padding:16px 32px;border-radius:10px;font-weight:700;font-size:16px;text-decoration:none;transition:transform .2s,box-shadow .2s;box-shadow:0 0 48px rgba(0,208,132,.3)}
   .btnp:hover{transform:translateY(-2px);box-shadow:0 0 72px rgba(0,208,132,.45)}
+  .btnwa{display:inline-flex;align-items:center;gap:8px;background:#25D366;color:#052e15;padding:16px 28px;border-radius:10px;font-weight:700;font-size:16px;text-decoration:none;transition:transform .2s,box-shadow .2s;box-shadow:0 0 40px rgba(37,211,102,.28)}
+  .btnwa:hover{transform:translateY(-2px);box-shadow:0 0 64px rgba(37,211,102,.42)}
+  .wafloat{position:fixed;right:20px;bottom:20px;z-index:9999;display:inline-flex;align-items:center;gap:9px;background:#25D366;color:#fff;padding:13px 20px;border-radius:50px;font-weight:700;font-size:15px;text-decoration:none;box-shadow:0 8px 30px rgba(0,0,0,.35);transition:transform .2s}
+  .wafloat:hover{transform:scale(1.05)}
+  .wafloat svg{width:22px;height:22px;fill:#fff}
   .btng{display:inline-flex;align-items:center;gap:8px;border:1px solid var(--border2);color:var(--text2);padding:16px 32px;border-radius:10px;font-weight:500;font-size:16px;text-decoration:none;transition:border-color .2s,color .2s}
   .btng:hover{border-color:var(--green);color:var(--text)}
   .hvis{margin-top:72px;animation:fu .5s .4s ease both}
@@ -251,8 +256,8 @@ src="https://www.facebook.com/tr?id=1905327720020686&ev=PageView&noscript=1"
     <h1>Sua loja monitorada<br><span class="g">em tempo real.</span><br><span class="d">Sem abrir o painel.</span></h1>
     <p>Dashboard inteligente que monitora suas vendas, rastreios e pedidos na barra lateral do Chrome. Com automação WhatsApp completa no Premium.</p>
     <div class="hbtns">
-      <a href="#planos" class="btnp">⚡ Testar grátis por 7 dias</a>
-      <a href="#funcionalidades" class="btng">Ver funcionalidades →</a>
+      <a href="https://wa.me/5581976041948?text=Ol%C3%A1!%20Quero%20testar%20o%20LoggZap%20na%20minha%20loja%20Nuvemshop" target="_blank" rel="noopener" class="btnwa" onclick="if(window.fbq)fbq('track','Lead');">💬 Testar no WhatsApp</a>
+      <a href="#planos" class="btng">Ver planos →</a>
     </div>
     <div class="hvis">
       <div class="hvisw"><img src="hero.png" alt="LoggZap Dashboard" style="width:100%;height:100%;object-fit:cover;object-position:top"></div>
@@ -696,6 +701,12 @@ src="https://www.facebook.com/tr?id=1905327720020686&ev=PageView&noscript=1"
     <button onclick="fecharTudo()" style="background:transparent;border:1px solid rgba(255,255,255,0.1);color:#8b93a8;border-radius:10px;padding:10px 24px;font-size:13px;cursor:pointer;font-family:inherit;margin-top:8px">Fechar</button>
   </div>
 </div>
+
+<!-- Botão flutuante de WhatsApp (lead) -->
+<a href="https://wa.me/5581976041948?text=Ol%C3%A1!%20Quero%20testar%20o%20LoggZap%20na%20minha%20loja%20Nuvemshop" target="_blank" rel="noopener" class="wafloat" onclick="if(window.fbq)fbq('track','Lead');" aria-label="Falar no WhatsApp">
+  <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M.06 24l1.68-6.13A11.87 11.87 0 010 5.94 11.9 11.9 0 0111.9 0c3.18 0 6.17 1.24 8.41 3.49a11.82 11.82 0 013.48 8.42c0 6.56-5.34 11.9-11.9 11.9a11.9 11.9 0 01-5.68-1.45L.06 24zM6.6 20.13c1.62.96 3.17 1.54 5.3 1.54 5.45 0 9.9-4.43 9.9-9.88 0-2.64-1.03-5.12-2.9-6.99A9.82 9.82 0 0011.9 2C6.45 2 2 6.44 2 11.89c0 2.24.65 3.92 1.74 5.68l-.99 3.62 3.85-1.06zM17.5 14.6c-.07-.12-.27-.19-.56-.34-.29-.14-1.72-.85-1.99-.94-.27-.1-.46-.15-.66.15-.19.29-.76.94-.93 1.13-.17.19-.34.22-.63.07-.29-.14-1.23-.45-2.34-1.44-.86-.77-1.45-1.72-1.62-2.01-.17-.29-.02-.45.13-.59.13-.13.29-.34.44-.51.15-.17.19-.29.29-.48.1-.19.05-.36-.02-.51-.07-.14-.66-1.59-.9-2.18-.24-.57-.48-.49-.66-.5l-.56-.01c-.19 0-.51.07-.77.36-.27.29-1.01.99-1.01 2.42 0 1.43 1.04 2.81 1.19 3 .14.19 2.05 3.13 4.96 4.39.69.3 1.23.48 1.65.61.69.22 1.32.19 1.82.12.56-.08 1.72-.7 1.96-1.38.24-.68.24-1.26.17-1.38z"/></svg>
+  Testar grátis
+</a>
 
 </body>
 </html>
