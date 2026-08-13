@@ -2344,7 +2344,7 @@ app.get('/auth/callback', async (req, res) => {
     res.send(`<!DOCTYPE html><html><head><meta charset="UTF-8"/>
     <style>*{font-family:sans-serif;text-align:center;}body{background:#0d0d10;color:#fff;padding:3rem;}
     h2{color:#00d084;}code{background:#1e1e25;padding:4px 10px;border-radius:6px;font-size:18px;color:#00d084;}</style></head>
-    <body><h2>✅ RastreioBot conectado!</h2><p>Loja autenticada com sucesso.</p>
+    <body><h2>✅ LoggZap conectado!</h2><p>Loja autenticada com sucesso.</p>
     <p style="margin-top:1.5rem;">Seu <strong>Store ID</strong>:</p><code>${sid}</code>
     ${isExt ? '<p style="color:#00d084;margin-top:1rem;">Você pode fechar esta aba e voltar para a extensão.</p>' : '<p style="color:#888;margin-top:1.5rem;">Cole esse ID nas configurações da extensão.</p>'}
     </body></html>`);
@@ -5281,7 +5281,7 @@ app.post('/admin-loggzap/api/registrar-webhooks', auth, async (req, res) => {
 });
 
 app.listen(PORT, () => {
-  console.log(`RastreioBot v2.5.1 rodando na porta ${PORT}`);
+  console.log(`LoggZap v2.5.1 rodando na porta ${PORT}`);
   console.log('Cron ativo: verificação a cada 30 minutos (event-gated por webhook)');
 });
 
