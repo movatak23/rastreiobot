@@ -56,6 +56,16 @@
   .leg{display:flex;gap:16px;margin-top:12px;font-size:12px;color:var(--text2)}
   .leg i{display:inline-block;width:10px;height:10px;border-radius:2px;margin-right:5px}
   .status{font-size:12px;color:var(--text3);text-align:right}
+  table{width:100%;border-collapse:collapse;font-size:13px;min-width:640px}
+  th{text-align:left;color:var(--text3);font-size:11px;text-transform:uppercase;letter-spacing:.5px;padding:8px 10px;border-bottom:1px solid var(--border)}
+  td{padding:10px;border-bottom:1px solid var(--border);color:var(--text)}
+  tr:hover td{background:var(--bg3)}
+  .tag{font-size:11px;font-weight:700;padding:2px 9px;border-radius:20px;white-space:nowrap}
+  .tag.Pro{background:rgba(0,208,132,.15);color:var(--green)}
+  .tag.Essencial{background:rgba(0,208,132,.12);color:var(--green)}
+  .tag.Trial{background:rgba(79,142,247,.15);color:var(--blue)}
+  .tag.Free{background:var(--bg3);color:var(--text3)}
+  td.muted{color:var(--text3)}
 </style>
 </head>
 <body>
@@ -129,6 +139,17 @@
     <div class="leg"><span><i style="background:var(--blue)"></i>Visitas</span><span><i style="background:var(--green)"></i>Instalações</span></div>
   </div>
 
+  <!-- Lojas instaladas (detalhado) -->
+  <div class="sect">
+    <h3>Lojas instaladas <span id="lojas-count" style="color:var(--text3);font-weight:400;text-transform:none;letter-spacing:0"></span></h3>
+    <div style="overflow-x:auto">
+      <table>
+        <thead><tr><th>Loja</th><th>Email</th><th>WhatsApp</th><th>Versão</th><th>Instalado</th></tr></thead>
+        <tbody id="lojas-body"><tr><td colspan="5" class="muted">Carregando lojas…</td></tr></tbody>
+      </table>
+    </div>
+  </div>
+
   <div class="status" id="status"></div>
 </div>
 
@@ -189,6 +210,7 @@ function render(d){
   $('p-pro').textContent = fmt(p.pro);
   renderChart(v.serie||[], i.serie||[]);
   $('status').textContent = 'Atualizado ' + new Date().toLocaleTimeString('pt-BR');
+  carregarLojas();
 }
 
 function renderChart(visSerie, instSerie){
@@ -210,6 +232,29 @@ function renderChart(visSerie, instSerie){
       + '</div><div class="d">'+d.slice(8,10)+'/'+d.slice(5,7)+'</div>';
     el.appendChild(col);
   });
+}
+
+function esc(s){return String(s==null?'':s).replace(/[&<>"]/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;'}[c]));}
+async function carregarLojas(){
+  const s = localStorage.getItem(KEY); if(!s) return;
+  const body = $('lojas-body');
+  try{
+    const r = await fetch('/admin-loggzap/api/lojas', { headers: { 'x-secret': s } });
+    const d = await r.json();
+    if(!r.ok || d.error) throw new Error(d.error||'erro');
+    $('lojas-count').textContent = '('+(d.total||0)+')';
+    if(!d.lojas || !d.lojas.length){ body.innerHTML='<tr><td colspan="5" class="muted">Nenhuma loja ainda.</td></tr>'; return; }
+    body.innerHTML = d.lojas.map(l=>{
+      const dt = l.instalado_em ? l.instalado_em.slice(0,10).split('-').reverse().join('/') : '—';
+      return '<tr>'
+        + '<td>'+(l.nome?esc(l.nome):'<span class="muted">#'+esc(l.store_id)+'</span>')+'</td>'
+        + '<td class="'+(l.email?'':'muted')+'">'+(l.email?esc(l.email):'—')+'</td>'
+        + '<td class="'+(l.whatsapp?'':'muted')+'">'+(l.whatsapp?esc(l.whatsapp):'—')+'</td>'
+        + '<td><span class="tag '+esc(l.plano)+'">'+esc(l.plano)+'</span></td>'
+        + '<td class="muted">'+dt+'</td>'
+        + '</tr>';
+    }).join('');
+  }catch(e){ body.innerHTML='<tr><td colspan="5" class="muted">Erro ao carregar lojas: '+esc(e.message)+'</td></tr>'; }
 }
 
 // Boot: se já tem chave salva, entra direto.

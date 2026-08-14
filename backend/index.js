@@ -397,6 +397,37 @@ app.get('/admin-loggzap/api/gestao', auth, (req, res) => {
   catch (e) { res.status(500).json({ error: e.message }); }
 });
 
+// Lista detalhada das lojas: nome, email, whatsapp (da Nuvemshop) + versão/plano.
+function rotuloPlanoLoja(sp) {
+  if (sp.pago) return sp.plano === 'premium' ? 'Pro' : 'Essencial';
+  if (sp.emTrial) return 'Trial';
+  return 'Free';
+}
+app.get('/admin-loggzap/api/lojas', auth, async (req, res) => {
+  try {
+    const stores = db.getAllStores();
+    const lojas = await Promise.all(stores.map(async (s) => {
+      const sid = String(s.store_id);
+      let nome = '', email = '', whatsapp = '';
+      try {
+        const st = await nuvemGet(sid, '/store');
+        nome = (st && st.name && (typeof st.name === 'object' ? Object.values(st.name)[0] : st.name)) || (st && st.business_name) || '';
+        email = (st && (st.email || st.contact_email)) || '';
+        whatsapp = (st && (st.whatsapp_phone_number || st.phone)) || '';
+      } catch (e) { /* loja sem acesso/token → deixa em branco */ }
+      const tok = db.getToken(sid);
+      let plano = 'Free';
+      try { plano = rotuloPlanoLoja(statusPlanoLoja(sid)); } catch (e) {}
+      return { store_id: sid, nome, email, whatsapp, plano, instalado_em: tok?.created_at || null };
+    }));
+    // Ordena por data de instalação (mais recente primeiro).
+    lojas.sort((a, b) => String(b.instalado_em || '').localeCompare(String(a.instalado_em || '')));
+    res.json({ success: true, total: lojas.length, lojas });
+  } catch (e) {
+    res.status(500).json({ error: e.message });
+  }
+});
+
 app.get('/admin-loggzap/api/logs', auth, (req, res) => {
   const logs = readLoggzapLogs();
   res.json({ success: true, total: logs.length, logs });
