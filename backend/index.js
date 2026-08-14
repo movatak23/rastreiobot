@@ -418,7 +418,18 @@ app.get('/admin-loggzap/api/lojas', auth, async (req, res) => {
       const tok = db.getToken(sid);
       let plano = 'Free';
       try { plano = rotuloPlanoLoja(statusPlanoLoja(sid)); } catch (e) {}
-      return { store_id: sid, nome, email, whatsapp, plano, instalado_em: tok?.created_at || null };
+      // Uso (ativação): quanto a loja realmente usou o LoggZap.
+      let rastreiosMes = 0, limite = 0, msgsMes = 0;
+      try { rastreiosMes = db.contarUsoRastreio ? db.contarUsoRastreio(sid) : 0; } catch (e) {}
+      try { limite = getLimiteRastreio(sid); } catch (e) {}
+      try { msgsMes = (db.getLojistaStats ? db.getLojistaStats(sid).mensagensMes : 0) || 0; } catch (e) {}
+      return {
+        store_id: sid, nome, email, whatsapp, plano,
+        instalado_em: tok?.created_at || null,
+        rastreios_mes: rastreiosMes, limite,
+        msgs_mes: msgsMes,
+        ultima_atividade: tok?.ultimo_evento_em || null
+      };
     }));
     // Ordena por data de instalação (mais recente primeiro).
     lojas.sort((a, b) => String(b.instalado_em || '').localeCompare(String(a.instalado_em || '')));
