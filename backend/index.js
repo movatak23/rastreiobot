@@ -397,6 +397,22 @@ app.get('/admin-loggzap/api/gestao', auth, (req, res) => {
   catch (e) { res.status(500).json({ error: e.message }); }
 });
 
+// Diagnóstico: mostra o que a API /store da Nuvemshop realmente devolve por loja.
+app.get('/admin-loggzap/api/diag-store', auth, async (req, res) => {
+  const stores = db.getAllStores();
+  const out = [];
+  for (const s of stores) {
+    const sid = String(s.store_id);
+    try {
+      const st = await nuvemGet(sid, '/store');
+      out.push({ store_id: sid, chaves: Object.keys(st || {}), name: st?.name, original_domain: st?.original_domain, domains: st?.domains, url: st?.url });
+    } catch (e) {
+      out.push({ store_id: sid, erro: e.response?.data?.description || e.message, http: e.response?.status });
+    }
+  }
+  res.json({ out });
+});
+
 // Lista detalhada das lojas: nome, email, whatsapp (da Nuvemshop) + versão/plano.
 function rotuloPlanoLoja(sp) {
   if (sp.pago) return sp.plano === 'premium' ? 'Pro' : 'Essencial';
