@@ -246,9 +246,12 @@ async function carregarLojas(){
     if(!d.lojas || !d.lojas.length){ body.innerHTML='<tr><td colspan="8" class="muted">Nenhuma loja ainda.</td></tr>'; return; }
     const dcurta = (s)=> s ? s.slice(0,10).split('-').reverse().join('/') : '—';
     body.innerHTML = d.lojas.map(l=>{
-      const semUso = (!l.rastreios_mes && !l.msgs_mes);
+      const nomeTxt = l.nome ? esc(l.nome) : '#'+esc(l.store_id);
+      const nomeCell = l.url
+        ? '<a href="'+esc(l.url)+'" target="_blank" rel="noopener" style="color:var(--green);text-decoration:none;font-weight:600" title="Abrir o site da loja">'+nomeTxt+' ↗</a>'
+        : (l.nome ? nomeTxt : '<span class="muted">'+nomeTxt+'</span>');
       return '<tr>'
-        + '<td>'+(l.nome?esc(l.nome):'<span class="muted">#'+esc(l.store_id)+'</span>')+'</td>'
+        + '<td>'+nomeCell+'</td>'
         + '<td class="'+(l.email?'':'muted')+'">'+(l.email?esc(l.email):'—')+'</td>'
         + '<td class="'+(l.whatsapp?'':'muted')+'">'+(l.whatsapp?esc(l.whatsapp):'—')+'</td>'
         + '<td><span class="tag '+esc(l.plano)+'">'+esc(l.plano)+'</span></td>'

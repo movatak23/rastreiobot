@@ -408,12 +408,14 @@ app.get('/admin-loggzap/api/lojas', auth, async (req, res) => {
     const stores = db.getAllStores();
     const lojas = await Promise.all(stores.map(async (s) => {
       const sid = String(s.store_id);
-      let nome = '', email = '', whatsapp = '';
+      let nome = '', email = '', whatsapp = '', url = '';
       try {
         const st = await nuvemGet(sid, '/store');
         nome = (st && st.name && (typeof st.name === 'object' ? Object.values(st.name)[0] : st.name)) || (st && st.business_name) || '';
         email = (st && (st.email || st.contact_email)) || '';
         whatsapp = (st && (st.whatsapp_phone_number || st.phone)) || '';
+        url = (st && st.url && (typeof st.url === 'object' ? Object.values(st.url)[0] : st.url)) || (st && st.original_domain) || (st && Array.isArray(st.domains) && st.domains[0]) || '';
+        if (url && !/^https?:\/\//.test(url)) url = 'https://' + url;
       } catch (e) { /* loja sem acesso/token → deixa em branco */ }
       const tok = db.getToken(sid);
       let plano = 'Free';
@@ -424,7 +426,7 @@ app.get('/admin-loggzap/api/lojas', auth, async (req, res) => {
       try { limite = getLimiteRastreio(sid); } catch (e) {}
       try { msgsMes = (db.getLojistaStats ? db.getLojistaStats(sid).mensagensMes : 0) || 0; } catch (e) {}
       return {
-        store_id: sid, nome, email, whatsapp, plano,
+        store_id: sid, nome, email, whatsapp, url, plano,
         instalado_em: tok?.created_at || null,
         rastreios_mes: rastreiosMes, limite,
         msgs_mes: msgsMes,
