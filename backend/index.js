@@ -430,7 +430,9 @@ app.get('/admin-loggzap/api/lojas', auth, async (req, res) => {
         nome = (st && st.name && (typeof st.name === 'object' ? Object.values(st.name)[0] : st.name)) || (st && st.business_name) || '';
         email = (st && (st.email || st.contact_email)) || '';
         whatsapp = (st && (st.whatsapp_phone_number || st.phone)) || '';
-        url = (st && st.url && (typeof st.url === 'object' ? Object.values(st.url)[0] : st.url)) || (st && st.original_domain) || (st && Array.isArray(st.domains) && st.domains[0]) || '';
+        if (st && Array.isArray(st.domains) && st.domains.length) url = st.domains[0];
+        else if (st && st.url_with_protocol) url = st.url_with_protocol;
+        else if (st && st.original_domain) url = st.original_domain;
         if (url && !/^https?:\/\//.test(url)) url = 'https://' + url;
       } catch (e) { /* loja sem acesso/token → deixa em branco */ }
       const tok = db.getToken(sid);
