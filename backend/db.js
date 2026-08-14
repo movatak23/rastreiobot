@@ -622,6 +622,66 @@ function getAdminStats() {
   };
 }
 
+// Registra 1 visita da landing no dia de hoje (contador simples de pageviews).
+function registrarVisita() {
+  try {
+    db.prepare(`INSERT INTO visitas (dia, total) VALUES (date('now'), 1)
+                ON CONFLICT(dia) DO UPDATE SET total = total + 1`).run();
+  } catch (e) {}
+}
+
+// Painel de gestão / funil: visitas → instalações → pagantes, com MRR e breakdown.
+function getGestaoStats() {
+  const n = (sql) => { try { return db.prepare(sql).get()?.n || 0; } catch (e) { return 0; } };
+
+  const instalacoes = {
+    total: n('SELECT COUNT(*) n FROM tokens'),
+    hoje:  n("SELECT COUNT(*) n FROM tokens WHERE created_at >= date('now')"),
+    d7:    n("SELECT COUNT(*) n FROM tokens WHERE created_at >= datetime('now','-7 days')"),
+    d30:   n("SELECT COUNT(*) n FROM tokens WHERE created_at >= datetime('now','-30 days')"),
+    serie: (() => { try { return db.prepare("SELECT date(created_at) dia, COUNT(*) total FROM tokens WHERE created_at >= datetime('now','-13 days') GROUP BY date(created_at) ORDER BY dia").all(); } catch (e) { return []; } })()
+  };
+
+  // Pagantes = lojas com licença ativa, não expirada, de plano pago (basic/premium).
+  let pagantesRows = [];
+  try {
+    pagantesRows = db.prepare(`SELECT store_id, LOWER(plano) plano FROM licencas
+       WHERE status='ativa' AND expira_em > datetime('now') AND LOWER(plano) IN ('basic','premium') AND store_id IS NOT NULL
+       GROUP BY store_id`).all();
+  } catch (e) { pagantesRows = []; }
+  const essencial = pagantesRows.filter(r => r.plano === 'basic').length;
+  const pro       = pagantesRows.filter(r => r.plano === 'premium').length;
+  const pagantes  = pagantesRows.length;
+  const mrr       = essencial * 97 + pro * 147;
+
+  // Trial vs Free entre as lojas não-pagantes (trial = instalou há < 7 dias).
+  const pagosSet = new Set(pagantesRows.map(r => String(r.store_id)));
+  let stores = [];
+  try { stores = db.prepare('SELECT store_id, created_at FROM tokens').all(); } catch (e) { stores = []; }
+  const seteDias = 7 * 86400000;
+  let trial = 0;
+  for (const s of stores) {
+    if (pagosSet.has(String(s.store_id))) continue;
+    const t = Date.parse(String(s.created_at || '').replace(' ', 'T') + 'Z');
+    if (!isNaN(t) && (Date.now() - t) < seteDias) trial++;
+  }
+  const free = Math.max(0, instalacoes.total - pagantes - trial);
+
+  const visitas = {
+    total: n('SELECT COALESCE(SUM(total),0) n FROM visitas'),
+    hoje:  n("SELECT COALESCE(SUM(total),0) n FROM visitas WHERE dia = date('now')"),
+    d7:    n("SELECT COALESCE(SUM(total),0) n FROM visitas WHERE dia >= date('now','-7 days')"),
+    serie: (() => { try { return db.prepare("SELECT dia, total FROM visitas WHERE dia >= date('now','-13 days') ORDER BY dia").all(); } catch (e) { return []; } })()
+  };
+
+  const taxas = {
+    visita_para_install: visitas.d7 > 0 ? +(instalacoes.d7 / visitas.d7 * 100).toFixed(1) : null,
+    install_para_pagante: instalacoes.total > 0 ? +(pagantes / instalacoes.total * 100).toFixed(1) : null
+  };
+
+  return { visitas, instalacoes, planos: { pagantes, essencial, pro, trial, free }, mrr, taxas };
+}
+
 function getLojistaStats(storeId) {
   const notifTotal = db.prepare('SELECT COUNT(*) as n FROM notificados WHERE store_id = ?').get(storeId)?.n || 0;
   const notifHoje  = db.prepare(`SELECT COUNT(*) as n FROM notificados WHERE store_id = ? AND created_at >= date('now')`).get(storeId)?.n || 0;
@@ -725,6 +785,8 @@ function migrar() {
   `);
   // Adiciona coluna device_id se não existir
   try { db.exec("ALTER TABLE tokens ADD COLUMN ultimo_evento_em TEXT"); } catch(e) {}
+  // Contador de visitas da landing (para o painel de gestão / funil).
+  try { db.exec("CREATE TABLE IF NOT EXISTS visitas (dia TEXT PRIMARY KEY, total INTEGER DEFAULT 0)"); } catch(e) {}
   try { db.exec("ALTER TABLE licencas ADD COLUMN device_id TEXT"); } catch(e) {}
   // Licença multi-dispositivo (0 = trava em 1 aparelho, 1 = libera vários)
   try { db.exec("ALTER TABLE licencas ADD COLUMN multi_dispositivo INTEGER DEFAULT 0"); } catch(e) {}
@@ -1657,7 +1719,7 @@ module.exports = {
   jaAlertaParadoEnviado, marcarAlertaParadoEnviado,
   jaNotificadoPorTelefone, listarNotificadosRecentes,
   registrarClienteAtivo, jaClienteAtivo,
-  getAdminStats, getLojistaStats,
+  getAdminStats, getLojistaStats, registrarVisita, getGestaoStats,
   upsertAuthSession, getAuthSession, completeAuthSession, deleteAuthSession,
   criarLicenca, getLicenca, getLicencaPorStore, vincularLicenca, validarLicenca,
   getLicencasPorPayment, salvarPaymentId, getLicencaPorChave, getMetas, salvarMetas, desvincularDispositivo, setMultiDispositivo,

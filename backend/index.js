@@ -15,6 +15,8 @@ const app = express();
 // Guarda o corpo cru (necessário p/ verificar assinatura HMAC de webhooks, ex.: Seu|Rastreio)
 app.use(express.json({ verify: (req, _res, buf) => { req.rawBody = buf; } }));
 app.use(cors({ origin: '*' }));
+// Contador de visitas da landing (página inicial) para o painel de gestão.
+app.get('/', (req, res, next) => { try { db.registrarVisita(); } catch (e) {} next(); });
 app.use(express.static(path.join(__dirname, 'public')));
 
 
@@ -386,6 +388,13 @@ if(secret){
 
 app.get('/admin-loggzap', (req, res) => {
   res.send(adminLoggzapHtml());
+});
+
+// ── Painel de GESTÃO / funil (visitas → instalações → pagantes) ──
+app.get('/admin-loggzap/gestao', (req, res) => res.sendFile(path.join(__dirname, 'public', 'gestao.html')));
+app.get('/admin-loggzap/api/gestao', auth, (req, res) => {
+  try { res.json({ success: true, ...db.getGestaoStats() }); }
+  catch (e) { res.status(500).json({ error: e.message }); }
 });
 
 app.get('/admin-loggzap/api/logs', auth, (req, res) => {

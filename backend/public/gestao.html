@@ -1,0 +1,223 @@
+<!DOCTYPE html>
+<html lang="pt-br">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>LoggZap — Gestão</title>
+<link rel="icon" type="image/png" href="/favicon.png">
+<style>
+  :root{--bg:#0b0e14;--bg2:#131824;--bg3:#1b2233;--border:#26304a;--text:#e9edf6;--text2:#9aa6bd;--text3:#5f6b85;--green:#00d084;--blue:#4f8ef7;--amber:#f5a623;--red:#ff5a5a}
+  *{box-sizing:border-box;margin:0;padding:0}
+  body{background:var(--bg);color:var(--text);font-family:-apple-system,Segoe UI,Roboto,sans-serif;padding:24px;line-height:1.4}
+  .wrap{max-width:960px;margin:0 auto}
+  h1{font-size:22px;font-weight:800;display:flex;align-items:center;gap:10px}
+  h1 span{color:var(--green)}
+  .sub{color:var(--text2);font-size:13px;margin-top:4px}
+  .top{display:flex;justify-content:space-between;align-items:flex-start;margin-bottom:24px;flex-wrap:wrap;gap:12px}
+  .btn{background:var(--bg3);border:1px solid var(--border);color:var(--text);border-radius:9px;padding:9px 16px;font-size:13px;font-weight:600;cursor:pointer;font-family:inherit}
+  .btn:hover{border-color:var(--green)}
+  .btn.g{background:var(--green);color:#062e16;border:none}
+  input{background:var(--bg2);border:1px solid var(--border);border-radius:9px;color:var(--text);padding:11px 14px;font-size:14px;font-family:inherit;width:100%}
+  input:focus{outline:none;border-color:var(--green)}
+  .login{max-width:360px;margin:80px auto;background:var(--bg2);border:1px solid var(--border);border-radius:14px;padding:28px}
+  .login h2{font-size:17px;margin-bottom:6px}
+  .login p{color:var(--text2);font-size:13px;margin-bottom:16px}
+  .err{color:var(--red);font-size:13px;margin-top:10px;min-height:16px}
+  .hidden{display:none}
+
+  /* Funil */
+  .funil{display:grid;grid-template-columns:1fr auto 1fr auto 1fr;align-items:center;gap:8px;margin-bottom:12px}
+  .fbox{background:var(--bg2);border:1px solid var(--border);border-radius:14px;padding:20px 18px;text-align:center}
+  .fbox .lbl{color:var(--text2);font-size:12px;text-transform:uppercase;letter-spacing:.5px}
+  .fbox .val{font-size:34px;font-weight:800;margin-top:6px}
+  .fbox .foot{color:var(--text3);font-size:11px;margin-top:4px}
+  .arrow{text-align:center;color:var(--text3)}
+  .arrow .pct{display:block;font-size:12px;font-weight:700;color:var(--green)}
+  .arrow .car{font-size:22px;color:var(--border)}
+
+  .mrr{background:linear-gradient(135deg,rgba(0,208,132,.12),var(--bg2));border:1px solid rgba(0,208,132,.35);border-radius:14px;padding:18px 22px;display:flex;align-items:center;justify-content:space-between;margin-bottom:24px}
+  .mrr .val{font-size:30px;font-weight:800;color:var(--green)}
+
+  .grid{display:grid;grid-template-columns:repeat(auto-fit,minmax(150px,1fr));gap:12px;margin-bottom:24px}
+  .card{background:var(--bg2);border:1px solid var(--border);border-radius:12px;padding:16px}
+  .card .lbl{color:var(--text2);font-size:12px}
+  .card .val{font-size:24px;font-weight:700;margin-top:4px}
+  .card small{color:var(--text3);font-size:11px}
+
+  .sect{background:var(--bg2);border:1px solid var(--border);border-radius:14px;padding:18px 20px;margin-bottom:20px}
+  .sect h3{font-size:14px;color:var(--text2);text-transform:uppercase;letter-spacing:.5px;margin-bottom:16px}
+  .chart{display:flex;align-items:flex-end;gap:6px;height:150px}
+  .col{flex:1;display:flex;flex-direction:column;align-items:center;gap:4px;height:100%;justify-content:flex-end}
+  .bars{display:flex;gap:3px;align-items:flex-end;height:100%;width:100%;justify-content:center}
+  .bar{width:9px;border-radius:3px 3px 0 0;min-height:2px}
+  .bar.v{background:var(--blue)}
+  .bar.i{background:var(--green)}
+  .col .d{font-size:9px;color:var(--text3);white-space:nowrap}
+  .leg{display:flex;gap:16px;margin-top:12px;font-size:12px;color:var(--text2)}
+  .leg i{display:inline-block;width:10px;height:10px;border-radius:2px;margin-right:5px}
+  .status{font-size:12px;color:var(--text3);text-align:right}
+</style>
+</head>
+<body>
+
+<div id="login" class="login">
+  <h2>🔒 Painel de Gestão LoggZap</h2>
+  <p>Informe a chave de admin para acessar.</p>
+  <input id="secret" type="password" placeholder="Chave de admin" onkeydown="if(event.key==='Enter')entrar()">
+  <div style="margin-top:14px"><button class="btn g" style="width:100%" onclick="entrar()">Entrar</button></div>
+  <div class="err" id="loginErr"></div>
+</div>
+
+<div id="app" class="wrap hidden">
+  <div class="top">
+    <div>
+      <h1>📊 <span>LoggZap</span> · Gestão</h1>
+      <div class="sub">Funil da operação — visitas, instalações e pagantes</div>
+    </div>
+    <div style="display:flex;gap:8px;align-items:center">
+      <button class="btn" onclick="carregar()">↻ Atualizar</button>
+      <button class="btn" onclick="sair()">Sair</button>
+    </div>
+  </div>
+
+  <!-- Funil (7 dias) -->
+  <div class="funil">
+    <div class="fbox">
+      <div class="lbl">Visitas <small style="color:var(--text3)">(7d)</small></div>
+      <div class="val" id="f-visitas" style="color:var(--blue)">—</div>
+      <div class="foot">na landing</div>
+    </div>
+    <div class="arrow"><span class="car">→</span><span class="pct" id="t-install">—</span></div>
+    <div class="fbox">
+      <div class="lbl">Instalações <small style="color:var(--text3)">(7d)</small></div>
+      <div class="val" id="f-install" style="color:var(--green)">—</div>
+      <div class="foot">lojas conectadas</div>
+    </div>
+    <div class="arrow"><span class="car">→</span><span class="pct" id="t-pagante">—</span></div>
+    <div class="fbox">
+      <div class="lbl">Pagantes</div>
+      <div class="val" id="f-pagantes" style="color:var(--amber)">—</div>
+      <div class="foot">planos ativos</div>
+    </div>
+  </div>
+
+  <div class="mrr">
+    <div><div style="color:var(--text2);font-size:12px;text-transform:uppercase;letter-spacing:.5px">Receita recorrente (MRR)</div><div class="val" id="mrr">—</div></div>
+    <div style="text-align:right;color:var(--text3);font-size:12px" id="mrr-break">—</div>
+  </div>
+
+  <!-- Instalações por período -->
+  <div class="grid">
+    <div class="card"><div class="lbl">Instalações hoje</div><div class="val" id="i-hoje">—</div></div>
+    <div class="card"><div class="lbl">Últimos 7 dias</div><div class="val" id="i-7">—</div></div>
+    <div class="card"><div class="lbl">Últimos 30 dias</div><div class="val" id="i-30">—</div></div>
+    <div class="card"><div class="lbl">Total instalado</div><div class="val" id="i-total">—</div></div>
+  </div>
+
+  <!-- Breakdown de planos -->
+  <div class="grid">
+    <div class="card"><div class="lbl">Em teste (trial)</div><div class="val" id="p-trial" style="color:var(--blue)">—</div><small>7 dias grátis</small></div>
+    <div class="card"><div class="lbl">Free (pós-trial)</div><div class="val" id="p-free" style="color:var(--text3)">—</div><small>só visualização</small></div>
+    <div class="card"><div class="lbl">Essencial (R$97)</div><div class="val" id="p-ess" style="color:var(--green)">—</div></div>
+    <div class="card"><div class="lbl">Pro (R$147)</div><div class="val" id="p-pro" style="color:var(--green)">—</div></div>
+  </div>
+
+  <!-- Gráfico 14 dias -->
+  <div class="sect">
+    <h3>Últimos 14 dias</h3>
+    <div class="chart" id="chart"></div>
+    <div class="leg"><span><i style="background:var(--blue)"></i>Visitas</span><span><i style="background:var(--green)"></i>Instalações</span></div>
+  </div>
+
+  <div class="status" id="status"></div>
+</div>
+
+<script>
+const KEY = 'lz_admin_loggzap_secret';
+function $(id){return document.getElementById(id);}
+function fmt(n){return (n||0).toLocaleString('pt-BR');}
+function brl(n){return 'R$ ' + (n||0).toLocaleString('pt-BR',{minimumFractionDigits:2,maximumFractionDigits:2});}
+
+async function fetchGestao(secret){
+  const r = await fetch('/admin-loggzap/api/gestao', { headers: { 'x-secret': secret } });
+  if(r.status===401) throw new Error('Chave inválida.');
+  const d = await r.json();
+  if(!r.ok || d.error) throw new Error(d.error || 'Erro ao carregar.');
+  return d;
+}
+
+async function entrar(){
+  const s = $('secret').value.trim();
+  if(!s){ $('loginErr').textContent='Informe a chave.'; return; }
+  try{
+    const d = await fetchGestao(s);
+    localStorage.setItem(KEY, s);
+    mostrarApp(d);
+  }catch(e){ $('loginErr').textContent = e.message; }
+}
+function sair(){ localStorage.removeItem(KEY); location.reload(); }
+
+function mostrarApp(d){
+  $('login').classList.add('hidden');
+  $('app').classList.remove('hidden');
+  render(d);
+}
+
+async function carregar(){
+  const s = localStorage.getItem(KEY);
+  if(!s) return;
+  try{ render(await fetchGestao(s)); }
+  catch(e){ $('status').textContent = 'Erro: ' + e.message; }
+}
+
+function render(d){
+  const v = d.visitas||{}, i = d.instalacoes||{}, p = d.planos||{}, t = d.taxas||{};
+  $('f-visitas').textContent = fmt(v.d7);
+  $('f-install').textContent = fmt(i.d7);
+  $('f-pagantes').textContent = fmt(p.pagantes);
+  $('t-install').textContent = t.visita_para_install!=null ? t.visita_para_install+'%' : '—';
+  $('t-pagante').textContent = t.install_para_pagante!=null ? t.install_para_pagante+'%' : '—';
+  $('mrr').textContent = brl(d.mrr);
+  $('mrr-break').innerHTML = (p.essencial||0)+' Essencial · '+(p.pro||0)+' Pro';
+  $('i-hoje').textContent = fmt(i.hoje);
+  $('i-7').textContent = fmt(i.d7);
+  $('i-30').textContent = fmt(i.d30);
+  $('i-total').textContent = fmt(i.total);
+  $('p-trial').textContent = fmt(p.trial);
+  $('p-free').textContent = fmt(p.free);
+  $('p-ess').textContent = fmt(p.essencial);
+  $('p-pro').textContent = fmt(p.pro);
+  renderChart(v.serie||[], i.serie||[]);
+  $('status').textContent = 'Atualizado ' + new Date().toLocaleTimeString('pt-BR');
+}
+
+function renderChart(visSerie, instSerie){
+  // Monta 14 dias (hoje - 13 até hoje)
+  const dias = [];
+  for(let k=13;k>=0;k--){ const dt=new Date(); dt.setDate(dt.getDate()-k); dias.push(dt.toISOString().slice(0,10)); }
+  const vMap = {}; visSerie.forEach(x=>vMap[x.dia]=x.total);
+  const iMap = {}; instSerie.forEach(x=>iMap[x.dia]=x.total);
+  const maxV = Math.max(1, ...dias.map(d=>vMap[d]||0));
+  const maxI = Math.max(1, ...dias.map(d=>iMap[d]||0));
+  const el = $('chart'); el.innerHTML='';
+  dias.forEach(d=>{
+    const vv = vMap[d]||0, ii = iMap[d]||0;
+    const col = document.createElement('div'); col.className='col';
+    const hv = Math.round((vv/maxV)*120), hi = Math.round((ii/maxI)*120);
+    col.innerHTML = '<div class="bars">'
+      + '<div class="bar v" style="height:'+hv+'px" title="'+vv+' visitas"></div>'
+      + '<div class="bar i" style="height:'+hi+'px" title="'+ii+' instalações"></div>'
+      + '</div><div class="d">'+d.slice(8,10)+'/'+d.slice(5,7)+'</div>';
+    el.appendChild(col);
+  });
+}
+
+// Boot: se já tem chave salva, entra direto.
+(function(){
+  const s = localStorage.getItem(KEY);
+  if(s){ fetchGestao(s).then(mostrarApp).catch(()=>{ localStorage.removeItem(KEY); }); }
+  setInterval(carregar, 60000); // auto-refresh 1 min
+})();
+</script>
+</body>
+</html>
