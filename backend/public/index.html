@@ -725,5 +725,33 @@ src="https://www.facebook.com/tr?id=1905327720020686&ev=PageView&noscript=1"
   Testar grátis
 </a>
 
+<script>
+// Detecção de dispositivo: no CELULAR a extensão do Chrome não existe, então os botões
+// "Instalar grátis" (que apontam pra Chrome Web Store) passam a mandar pro WhatsApp.
+// No COMPUTADOR nada muda — segue o fluxo normal de instalar a extensão.
+(function () {
+  function ehMobile() {
+    var ua = navigator.userAgent || navigator.vendor || '';
+    if (/Android|iPhone|iPad|iPod|IEMobile|BlackBerry|Opera Mini|Mobile/i.test(ua)) return true;
+    // iPad recente se identifica como "Macintosh" — detecta pelo touch:
+    if (/Macintosh/i.test(ua) && navigator.maxTouchPoints > 1) return true;
+    return false;
+  }
+  if (!ehMobile()) return;
+  var ZAP = 'https://wa.me/5581976041948?text=Ol%C3%A1!%20Quero%20testar%20o%20LoggZap%20na%20minha%20loja%20Nuvemshop';
+  var alvos = document.querySelectorAll('a[href*="chromewebstore.google.com"]');
+  for (var i = 0; i < alvos.length; i++) {
+    var a = alvos[i];
+    a.setAttribute('href', ZAP);
+    a.setAttribute('target', '_blank');
+    a.setAttribute('rel', 'noopener');
+    // No celular não faz sentido dizer "instalar" — ajusta o rótulo pro WhatsApp.
+    if (/instalar/i.test(a.textContent)) {
+      a.innerHTML = a.innerHTML.replace(/Instalar\s+gr[áa]tis/i, 'Testar no WhatsApp');
+    }
+  }
+})();
+</script>
+
 </body>
 </html>
