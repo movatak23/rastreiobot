@@ -1280,9 +1280,9 @@ function painelHtml() {
     </div>
     <div class="card">
       <h1>Primeiro acesso</h1>
-      <p>Crie o acesso administrativo da loja. Para segurança, informe a chave Premium recebida por e-mail.</p>
+      <p>Crie o acesso administrativo da loja. Para segurança, informe a chave de ativação recebida por e-mail.</p>
       <label>Store ID</label><input id="regStore" placeholder="Ex: 4757590">
-      <label>Chave Premium</label><input id="regKey" placeholder="LZP-XXXX-XXXX-XXXX">
+      <label>Chave de ativação</label><input id="regKey" placeholder="LZB-XXXX-XXXX-XXXX ou LZP-...">
       <label>Login desejado</label><input id="regUser" placeholder="Ex: minha-loja">
       <label>Senha</label><input id="regPass" type="password" placeholder="Mínimo 6 caracteres">
       <div class="warning">Guarde esse acesso. Depois você poderá alterar login e senha dentro do painel.</div>
@@ -1553,9 +1553,11 @@ app.post('/painel/api/register', (req, res) => {
     if (!store_id || !chave || !login || !senha) return res.status(400).json({ error: 'Preencha Store ID, chave Premium, login e senha.' });
     if (String(senha).length < 6) return res.status(400).json({ error: 'A senha precisa ter pelo menos 6 caracteres.' });
 
+    // Aceita qualquer licença ATIVA (Essencial/basic ou Pro/premium). O painel/dashboard
+    // faz parte do plano Essencial; features exclusivas do Pro seguem gated em seus próprios pontos.
     const validacao = db.validarLicenca(String(chave).trim(), String(store_id).trim());
-    if (!validacao?.valida || validacao.plano !== 'premium') {
-      return res.status(403).json({ error: 'Chave Premium inválida para esta loja.' });
+    if (!validacao?.valida) {
+      return res.status(403).json({ error: validacao?.motivo || 'Chave inválida ou não corresponde a esta loja.' });
     }
 
     if (db.getPainelUsuario && db.getPainelUsuario(String(store_id))) {
