@@ -4506,6 +4506,26 @@ function gerarChave(plano) {
   return prefixo + '-' + rand.slice(0,4) + '-' + rand.slice(4,8) + '-' + rand.slice(8);
 }
 
+// Email de boas-vindas da ASSINATURA vinculada à loja (chave SUB-<store_id>).
+// Disparado apenas na 1ª ativação — nunca nas renovações mensais.
+async function enviarChaveAssinaturaEmail(email, chave, plano, proximaCobranca) {
+  const resend = new Resend(process.env.RESEND_API_KEY);
+  const nomePlano = plano === 'premium' ? 'Pro — R$147/mês' : 'Essencial — R$97/mês';
+  const prox = proximaCobranca ? new Date(proximaCobranca).toLocaleDateString('pt-BR') : null;
+  await resend.emails.send({
+    from: 'LoggZap <contato@loggzap.com.br>', to: email, subject: 'Sua assinatura LoggZap foi ativada',
+    html: '<div style="font-family:sans-serif;max-width:500px;margin:0 auto;background:#0d0d10;color:#ededf2;padding:32px;border-radius:12px">' +
+      '<h2 style="color:#4f8ef7">LoggZap Dashboard</h2><p>Sua assinatura foi confirmada e já está ativa! Aqui esta sua chave de ativacao:</p>' +
+      '<div style="background:#1e1e25;border:1px solid #4f8ef7;border-radius:8px;padding:16px;text-align:center;margin:24px 0">' +
+      '<code style="font-size:20px;color:#00d084;letter-spacing:2px">' + chave + '</code></div>' +
+      '<p><strong>Plano:</strong> ' + nomePlano + '</p>' +
+      (prox ? '<p><strong>Proxima cobranca:</strong> ' + prox + ' (renovacao automatica)</p>' : '') +
+      '<p style="margin-top:24px">Para ativar: abra a extensao → Configuracoes → Cole a chave → Ativar chave.</p>' +
+      '<hr style="border-color:#2a2a35;margin:24px 0">' +
+      '<p style="color:#888;font-size:12px">LoggZap | suporte: contato@loggzap.com.br</p></div>'
+  });
+}
+
 app.get('/teste/email', async (req, res) => {
   const email = req.query.email;
   if (!email) return res.status(400).json({ error: 'Informe ?email=seu@email.com' });
@@ -4701,10 +4721,17 @@ app.post('/webhook/mp', async (req, res) => {
       let ref = {}; try { ref = JSON.parse(sub.external_reference || '{}'); } catch(_) {}
       if (ref.store_id) {
         // Fluxo vinculado à loja: renova licença (+35 dias) e marca assinatura ativa
+        const jaAtivadaAntes = (() => { try { const a = db.getAssinatura(String(ref.store_id)); return !!(a && a.status === 'authorized'); } catch(_) { return false; } })();
         db.ativarAssinaturaLicenca(String(ref.store_id), ref.plano || 'premium', 35);
         db.upsertAssinatura(String(ref.store_id), preapprovalId, ref.plano || 'premium', 'authorized', sub.payer_email, sub.next_payment_date || null);
         db.salvarPaymentId('SUB-' + ref.store_id, String(data.id));
         console.log('[MP Sub] Renovada loja ' + ref.store_id + ' — ' + (ref.plano || 'premium'));
+        // 1ª ativação → manda a chave por email (renovações mensais não reenviam)
+        const emailCliente = ref.email || sub.payer_email;
+        if (!jaAtivadaAntes && emailCliente) {
+          try { await enviarChaveAssinaturaEmail(emailCliente, 'SUB-' + ref.store_id, ref.plano || 'premium', sub.next_payment_date); console.log('[MP Sub] Chave enviada para ' + emailCliente); }
+          catch(e) { console.error('[MP Sub email]', e.message); }
+        }
       } else if (sub.preapproval_plan_id === SUBSCRIPTION_PREMIUM_ID && sub.payer_email) {
         // Compat: plano antigo por e-mail (gera chave)
         const chave = gerarChave('premium');
@@ -4722,10 +4749,17 @@ app.post('/webhook/mp', async (req, res) => {
       const { data: sub } = await axios.get('https://api.mercadopago.com/preapproval/' + data.id, { headers: mpHeaders });
       let ref = {}; try { ref = JSON.parse(sub.external_reference || '{}'); } catch(_) {}
       if (!ref.store_id) return;
+      const jaAtivadaAntes = (() => { try { const a = db.getAssinatura(String(ref.store_id)); return !!(a && a.status === 'authorized'); } catch(_) { return false; } })();
       db.upsertAssinatura(String(ref.store_id), String(data.id), ref.plano || 'premium', sub.status, sub.payer_email, sub.next_payment_date || null);
       if (sub.status === 'authorized') {
         db.ativarAssinaturaLicenca(String(ref.store_id), ref.plano || 'premium', 35);
         console.log('[MP Sub] Autorizada loja ' + ref.store_id);
+        // 1ª ativação → manda a chave por email (não reenvia se já estava autorizada)
+        const emailCliente = ref.email || sub.payer_email;
+        if (!jaAtivadaAntes && emailCliente) {
+          try { await enviarChaveAssinaturaEmail(emailCliente, 'SUB-' + ref.store_id, ref.plano || 'premium', sub.next_payment_date); console.log('[MP Sub] Chave enviada para ' + emailCliente); }
+          catch(e) { console.error('[MP Sub email]', e.message); }
+        }
       } else if (sub.status === 'cancelled' || sub.status === 'paused') {
         db.cancelarAssinaturaLicenca(String(ref.store_id), sub.status);
         console.log('[MP Sub] ' + sub.status + ' loja ' + ref.store_id);
