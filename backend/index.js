@@ -1356,16 +1356,19 @@ function painelHtml() {
     <button class="btn2 hidden" id="logoutBtn">Sair</button>
   </div>
 
-  <div id="authArea" class="grid">
-    <div class="card">
+  <div id="authArea" class="grid" style="grid-template-columns:1fr;max-width:520px;margin:0 auto;gap:20px">
+    <div class="card" id="loginCard" style="display:none">
       <h1>Entrar no painel</h1>
-      <p>Acesse para configurar mensagens automáticas, trocar login e senha e testar os textos antes de salvar.</p>
-      <label>Store ID</label><input id="loginStore" placeholder="Ex: 4757590">
+      <p>Já tem acesso? Entre com seu login e senha.</p>
+      <button class="btn2" type="button" onclick="conectarNuvemshop('loginStore','loginConnMsg')" style="margin-bottom:8px">🔗 Conectar com Nuvemshop (pega o Store ID)</button>
+      <div id="loginConnMsg" class="muted" style="font-size:13px;margin:2px 0 8px;display:none"></div>
+      <label>Store ID <span style="font-weight:400;color:#8b93a8">(preenche ao conectar)</span></label><input id="loginStore" placeholder="Conecte acima — ou digite">
       <label>Login</label><input id="loginUser" placeholder="Seu login">
       <label>Senha</label><input id="loginPass" type="password" placeholder="Sua senha">
       <div class="err" id="loginErr"></div>
       <button class="btn" onclick="login()">Entrar</button>
       <p style="margin-top:14px;text-align:center"><a href="#" onclick="toggleEsqueci();return false" style="color:#4f8ef7;font-size:13px;text-decoration:none">Esqueci minha senha</a></p>
+      <p style="margin-top:8px;text-align:center"><a href="#" onclick="mostrarRegistro();return false" style="color:#8b93a8;font-size:13px;text-decoration:none">← Primeira vez? Criar acesso</a></p>
 
       <div id="esqueciBox" style="display:none;margin-top:14px;border-top:1px solid rgba(255,255,255,.08);padding-top:16px">
         <h2 style="font-size:16px;margin:0 0 10px">Recuperar senha</h2>
@@ -1378,18 +1381,20 @@ function painelHtml() {
         <button class="btn" id="recBtn" onclick="enviarCodigoReset()">Enviar código por email</button>
       </div>
     </div>
-    <div class="card">
-      <h1>Primeiro acesso</h1>
-      <p>Crie o acesso administrativo da loja. Não sabe seu Store ID? É só conectar com a Nuvemshop que ele é preenchido sozinho.</p>
-      <button class="btn2" type="button" onclick="conectarNuvemshop()" style="margin-bottom:8px">🔗 Conectar com Nuvemshop (pega o Store ID sozinho)</button>
+    <div class="card" id="regCard">
+      <h1>Começar agora</h1>
+      <p>Primeira vez? Conecte sua loja Nuvemshop — o Store ID é capturado sozinho. Depois é só criar seu login e senha.</p>
+      <button class="btn2" type="button" onclick="conectarNuvemshop('regStore','regConnMsg')" style="margin-bottom:8px">🔗 Conectar com Nuvemshop</button>
       <div id="regConnMsg" class="muted" style="font-size:13px;margin:2px 0 8px;display:none"></div>
-      <label>Store ID <span style="font-weight:400;color:#8b93a8">(preenche sozinho ao conectar)</span></label><input id="regStore" placeholder="Toque em “Conectar” acima — ou digite">
+      <div id="regStoreWrap" style="display:none"><label>Store ID</label><input id="regStore" placeholder="Ex: 4757590"></div>
       <label>Chave de ativação</label><input id="regKey" placeholder="LZB-XXXX-XXXX-XXXX ou LZP-...">
       <label>Login desejado</label><input id="regUser" placeholder="Ex: minha-loja">
       <label>Senha</label><input id="regPass" type="password" placeholder="Mínimo 6 caracteres">
       <div class="warning">Guarde esse acesso. Depois você poderá alterar login e senha dentro do painel.</div>
       <div class="err" id="regErr"></div>
       <button class="btn" onclick="register()">Criar acesso</button>
+      <p style="margin-top:16px;text-align:center;border-top:1px solid rgba(255,255,255,.08);padding-top:14px"><a href="#" onclick="mostrarLogin();return false" style="color:#4f8ef7;font-size:14px;font-weight:700;text-decoration:none">Já sou cadastrado — ENTRAR →</a></p>
+      <p style="text-align:center;margin-top:6px"><a href="#" onclick="mostrarStoreManual();return false" style="color:#8b93a8;font-size:12px;text-decoration:none">Não consegui conectar? Informar Store ID manualmente</a></p>
     </div>
   </div>
 
@@ -1531,9 +1536,10 @@ async function register(){
 }
 // Captura o Store ID automaticamente via OAuth da Nuvemshop (mesmo mecanismo da extensão):
 // abre a autorização, e consulta /auth/status até a loja conectar, preenchendo o campo sozinho.
-function conectarNuvemshop(){
+function conectarNuvemshop(targetId, msgId){
+  targetId = targetId || 'regStore'; msgId = msgId || 'regConnMsg';
   var code = 'web_' + Date.now() + '_' + Math.random().toString(36).slice(2,8);
-  var msg = document.getElementById('regConnMsg');
+  var msg = document.getElementById(msgId);
   msg.style.display = 'block';
   msg.textContent = 'Abrindo a Nuvemshop… autorize o LoggZap e volte para esta tela.';
   var win = window.open('/auth/install?session_code=' + encodeURIComponent(code), '_blank');
@@ -1543,14 +1549,17 @@ function conectarNuvemshop(){
     fetch('/auth/status?code=' + encodeURIComponent(code)).then(function(r){ return r.json(); }).then(function(d){
       if (d && d.status === 'done' && d.store_id){
         clearInterval(timer);
-        document.getElementById('regStore').value = d.store_id;
-        msg.innerHTML = '✅ Loja conectada! Store ID <b>' + d.store_id + '</b> preenchido. Agora é só a chave, login e senha.';
+        document.getElementById(targetId).value = d.store_id;
+        msg.innerHTML = '✅ Loja conectada! Store ID detectado. Agora é só ' + (targetId === 'loginStore' ? 'login e senha.' : 'a chave, login e senha.');
         try { if (win && !win.closed) win.close(); } catch(e){}
       }
     }).catch(function(){});
     if (tries > 150){ clearInterval(timer); msg.textContent = 'Não consegui detectar sozinho. Você pode digitar o Store ID manualmente.'; }
   }, 2000);
 }
+function mostrarLogin(){ var l=document.getElementById('loginCard'), r=document.getElementById('regCard'); if(r)r.style.display='none'; if(l)l.style.display='block'; }
+function mostrarRegistro(){ var l=document.getElementById('loginCard'), r=document.getElementById('regCard'); if(l)l.style.display='none'; if(r)r.style.display='block'; }
+function mostrarStoreManual(){ var w=document.getElementById('regStoreWrap'); if(w){ w.style.display='block'; var i=document.getElementById('regStore'); if(i)i.focus(); } }
 async function loadPanel(){
   const data = await apiGet('/painel/api/templates');
   document.getElementById('authArea').classList.add('hidden');
