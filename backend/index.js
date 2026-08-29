@@ -2224,7 +2224,8 @@ async function evolutionConnect(storeId, numero) {
   const instance = await evolutionEnsureInstance(storeId);
   // Com número → a Evolution devolve o CÓDIGO DE PAREAMENTO (conectar pelo telefone, sem QR).
   // Sem número → devolve o QR (base64) pra escanear de outro aparelho.
-  const num = numero ? String(numero).replace(/\D/g, '') : '';
+  let num = numero ? String(numero).replace(/\D/g, '') : '';
+  if (num && num.length <= 11) num = '55' + num; // Brasil: garante o DDI pro pareamento
   const qs = num ? ('?number=' + encodeURIComponent(num)) : '';
   const r = await axios.get(`${EVOLUTION_URL}/instance/connect/${instance}${qs}`,
     { headers: { apikey: EVOLUTION_API_KEY }, timeout: 30000 });
