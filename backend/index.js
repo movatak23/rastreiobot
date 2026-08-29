@@ -1629,7 +1629,7 @@ async function loadChecklist(){
   try{
     const d = await apiGet('/painel/api/checklist');
     const html = d.items.map(i => (i.ok ? '✅ ' : '⚠️ ') + i.label + (i.detalhe ? ' — ' + i.detalhe : '')).join('<br>');
-    document.getElementById('checklistStatus').innerHTML = (d.pronto ? '<strong>✅ Premium pronto para operar</strong><br>' : '<strong>⚠️ Premium ainda precisa de atenção</strong><br>') + html;
+    document.getElementById('checklistStatus').innerHTML = (d.pronto ? '<strong>✅ Tudo pronto para operar</strong><br>' : '<strong>⚠️ Ainda precisa de atenção</strong><br>') + html;
   }catch(e){ document.getElementById('checklistStatus').innerHTML = 'Erro ao carregar checklist: '+e.message; }
 }
 async function sendRealWhatsAppTest(){
@@ -2277,9 +2277,9 @@ function checklistPremium(storeId) {
   ];
   try {
     const sp = statusPlanoLoja(String(storeId));
-    if (sp.pago) items.push({ key: 'plano', label: 'Plano ativo', ok: true, detalhe: 'Plano ' + sp.plano });
-    else if (sp.emTrial) items.push({ key: 'plano', label: 'Plano ativo', ok: true, detalhe: 'Em teste (7 dias grátis) — todas as funções liberadas' });
-    else items.push({ key: 'plano', label: 'Plano ativo', ok: false, detalhe: 'Teste encerrado — ative um plano para voltar a enviar.' });
+    if (sp.pago) items.push({ key: 'plano', label: 'Plano', ok: true, detalhe: 'Plano ' + (sp.plano === 'premium' ? 'Pro' : 'Essencial') + ' (pago)' });
+    else if (sp.emTrial) items.push({ key: 'plano', label: 'Teste grátis', ok: true, detalhe: 'Teste grátis (Pro) — ' + (sp.diasRestantes != null ? sp.diasRestantes + ' dia(s) restante(s)' : '7 dias') + '. Todas as funções liberadas. Escolha um plano antes de acabar.' });
+    else items.push({ key: 'plano', label: 'Plano', ok: false, detalhe: 'Teste encerrado — ative um plano para voltar a enviar.' });
   } catch (e) {
     items.push({ key: 'plano', label: 'Plano ativo', ok: false, detalhe: '' });
   }
@@ -2728,19 +2728,28 @@ const TRIAL_DIAS = 7;
 // as funções liberadas. Fora do trial e sem pagar = free (só visualização, sem disparos).
 function statusPlanoLoja(storeId) {
   const lic = db.getLicencaPorStore ? db.getLicencaPorStore(storeId) : null;
-  const pago = !!(lic && lic.plano && (lic.status ? lic.status === 'ativa' : true) && (!lic.expira_em || new Date(lic.expira_em) > new Date()));
-  let emTrial = false;
-  if (!pago) {
+  const licAtiva = !!(lic && lic.plano && (lic.status ? lic.status === 'ativa' : true) && (!lic.expira_em || new Date(lic.expira_em) > new Date()));
+  // Licença de TESTE (chave TRIAL-*) NÃO é "pago" — é trial (mesmo tendo features Pro).
+  const ehTrialLic = licAtiva && String(lic.chave || '').toUpperCase().startsWith('TRIAL-');
+  const pago = licAtiva && !ehTrialLic;
+  let emTrial = ehTrialLic;
+  let diasRestantes = null;
+  if (ehTrialLic && lic.expira_em) diasRestantes = Math.max(0, Math.ceil((new Date(lic.expira_em) - Date.now()) / 86400000));
+  if (!pago && !emTrial) {
     try {
       const tok = db.getToken ? db.getToken(storeId) : null;
       if (tok && tok.created_at) {
         const inicio = Date.parse(String(tok.created_at).replace(' ', 'T') + 'Z');
-        emTrial = !isNaN(inicio) && (Date.now() - inicio) < TRIAL_DIAS * 86400000;
+        if (!isNaN(inicio) && (Date.now() - inicio) < TRIAL_DIAS * 86400000) {
+          emTrial = true;
+          diasRestantes = Math.max(0, Math.ceil((TRIAL_DIAS * 86400000 - (Date.now() - inicio)) / 86400000));
+        }
       }
     } catch (e) {}
   }
-  const plano = pago ? String(lic.plano).toLowerCase() : (emTrial ? 'trial' : 'free');
-  return { pago, emTrial, plano, podeDisparar: pago || emTrial };
+  // Features/limites: trial usa o plano da licença (premium = Pro completo); só o RÓTULO é "teste".
+  const plano = (lic && lic.plano && (pago || emTrial)) ? String(lic.plano).toLowerCase() : (emTrial ? 'premium' : 'free');
+  return { pago, emTrial, plano, diasRestantes, podeDisparar: pago || emTrial };
 }
 function getLimiteRastreio(storeId) {
   const { plano } = statusPlanoLoja(storeId);
