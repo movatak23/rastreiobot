@@ -1380,8 +1380,10 @@ function painelHtml() {
     </div>
     <div class="card">
       <h1>Primeiro acesso</h1>
-      <p>Crie o acesso administrativo da loja. Para segurança, informe a chave de ativação recebida por e-mail.</p>
-      <label>Store ID</label><input id="regStore" placeholder="Ex: 4757590">
+      <p>Crie o acesso administrativo da loja. Não sabe seu Store ID? É só conectar com a Nuvemshop que ele é preenchido sozinho.</p>
+      <button class="btn2" type="button" onclick="conectarNuvemshop()" style="margin-bottom:8px">🔗 Conectar com Nuvemshop (pega o Store ID sozinho)</button>
+      <div id="regConnMsg" class="muted" style="font-size:13px;margin:2px 0 8px;display:none"></div>
+      <label>Store ID <span style="font-weight:400;color:#8b93a8">(preenche sozinho ao conectar)</span></label><input id="regStore" placeholder="Toque em “Conectar” acima — ou digite">
       <label>Chave de ativação</label><input id="regKey" placeholder="LZB-XXXX-XXXX-XXXX ou LZP-...">
       <label>Login desejado</label><input id="regUser" placeholder="Ex: minha-loja">
       <label>Senha</label><input id="regPass" type="password" placeholder="Mínimo 6 caracteres">
@@ -1526,6 +1528,28 @@ async function register(){
     await api('/painel/api/register',{store_id:regStore.value,chave:regKey.value,login:regUser.value,senha:regPass.value});
     await loadPanel();
   }catch(e){show('regErr',e.message);}
+}
+// Captura o Store ID automaticamente via OAuth da Nuvemshop (mesmo mecanismo da extensão):
+// abre a autorização, e consulta /auth/status até a loja conectar, preenchendo o campo sozinho.
+function conectarNuvemshop(){
+  var code = 'web_' + Date.now() + '_' + Math.random().toString(36).slice(2,8);
+  var msg = document.getElementById('regConnMsg');
+  msg.style.display = 'block';
+  msg.textContent = 'Abrindo a Nuvemshop… autorize o LoggZap e volte para esta tela.';
+  var win = window.open('/auth/install?session_code=' + encodeURIComponent(code), '_blank');
+  var tries = 0;
+  var timer = setInterval(function(){
+    tries++;
+    fetch('/auth/status?code=' + encodeURIComponent(code)).then(function(r){ return r.json(); }).then(function(d){
+      if (d && d.status === 'done' && d.store_id){
+        clearInterval(timer);
+        document.getElementById('regStore').value = d.store_id;
+        msg.innerHTML = '✅ Loja conectada! Store ID <b>' + d.store_id + '</b> preenchido. Agora é só a chave, login e senha.';
+        try { if (win && !win.closed) win.close(); } catch(e){}
+      }
+    }).catch(function(){});
+    if (tries > 150){ clearInterval(timer); msg.textContent = 'Não consegui detectar sozinho. Você pode digitar o Store ID manualmente.'; }
+  }, 2000);
 }
 async function loadPanel(){
   const data = await apiGet('/painel/api/templates');
@@ -2817,7 +2841,7 @@ app.get('/auth/callback', async (req, res) => {
     h2{color:#00d084;}code{background:#1e1e25;padding:4px 10px;border-radius:6px;font-size:18px;color:#00d084;}</style></head>
     <body><h2>✅ LoggZap conectado!</h2><p>Loja autenticada com sucesso.</p>
     <p style="margin-top:1.5rem;">Seu <strong>Store ID</strong>:</p><code>${sid}</code>
-    ${isExt ? '<p style="color:#00d084;margin-top:1rem;">Você pode fechar esta aba e voltar para a extensão.</p>' : '<p style="color:#888;margin-top:1.5rem;">Cole esse ID nas configurações da extensão.</p>'}
+    ${isExt ? '<p style="color:#00d084;margin-top:1rem;">Pronto! Pode fechar esta aba e voltar para o LoggZap — o Store ID já foi preenchido automaticamente.</p>' : '<p style="color:#888;margin-top:1.5rem;">Cole esse ID nas configurações da extensão.</p>'}
     </body></html>`);
   } catch(e) {
     console.error('OAuth erro:', e.response?.data || e.message);
