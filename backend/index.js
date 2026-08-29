@@ -2278,7 +2278,7 @@ function checklistPremium(storeId) {
   try {
     const sp = statusPlanoLoja(String(storeId));
     if (sp.pago) items.push({ key: 'plano', label: 'Plano', ok: true, detalhe: 'Plano ' + (sp.plano === 'premium' ? 'Pro' : 'Essencial') + ' (pago)' });
-    else if (sp.emTrial) items.push({ key: 'plano', label: 'Teste grátis', ok: true, detalhe: 'Teste grátis (Pro) — ' + (sp.diasRestantes != null ? sp.diasRestantes + ' dia(s) restante(s)' : '7 dias') + '. Todas as funções liberadas. Escolha um plano antes de acabar.' });
+    else if (sp.emTrial) items.push({ key: 'plano', label: 'Teste grátis', ok: true, detalhe: 'Teste grátis (Pro) — ' + (sp.diasRestantes != null ? sp.diasRestantes + ' dia(s) restante(s)' : '7 dias') + '. Funções do Pro liberadas, até 50 rastreios no teste. Escolha um plano antes de acabar.' });
     else items.push({ key: 'plano', label: 'Plano', ok: false, detalhe: 'Teste encerrado — ative um plano para voltar a enviar.' });
   } catch (e) {
     items.push({ key: 'plano', label: 'Plano ativo', ok: false, detalhe: '' });
@@ -2752,8 +2752,10 @@ function statusPlanoLoja(storeId) {
   return { pago, emTrial, plano, diasRestantes, podeDisparar: pago || emTrial };
 }
 function getLimiteRastreio(storeId) {
-  const { plano } = statusPlanoLoja(storeId);
-  return RASTREIO_LIMITES[plano] != null ? RASTREIO_LIMITES[plano] : 50;
+  const sp = statusPlanoLoja(storeId);
+  // Teste de 7 dias: features de Pro, mas teto de rastreio menor (incentiva o upgrade).
+  if (sp.emTrial) return RASTREIO_LIMITES.trial;
+  return RASTREIO_LIMITES[sp.plano] != null ? RASTREIO_LIMITES[sp.plano] : 50;
 }
 
 async function verificarRastreios(storeId) {
