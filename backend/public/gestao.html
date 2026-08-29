@@ -144,8 +144,8 @@
     <h3>Lojas instaladas <span id="lojas-count" style="color:var(--text3);font-weight:400;text-transform:none;letter-spacing:0"></span></h3>
     <div style="overflow-x:auto">
       <table>
-        <thead><tr><th>Loja</th><th>Email</th><th>WhatsApp</th><th>Versão</th><th>Rastreios (mês)</th><th>Msgs (mês)</th><th>Última ação</th><th>Instalado</th></tr></thead>
-        <tbody id="lojas-body"><tr><td colspan="8" class="muted">Carregando lojas…</td></tr></tbody>
+        <thead><tr><th>Loja</th><th>Store ID</th><th>Email</th><th>WhatsApp</th><th>Versão</th><th>Rastreios (mês)</th><th>Msgs (mês)</th><th>Última ação</th><th>Instalado</th></tr></thead>
+        <tbody id="lojas-body"><tr><td colspan="9" class="muted">Carregando lojas…</td></tr></tbody>
       </table>
     </div>
   </div>
@@ -243,7 +243,7 @@ async function carregarLojas(){
     const d = await r.json();
     if(!r.ok || d.error) throw new Error(d.error||'erro');
     $('lojas-count').textContent = '('+(d.total||0)+')';
-    if(!d.lojas || !d.lojas.length){ body.innerHTML='<tr><td colspan="8" class="muted">Nenhuma loja ainda.</td></tr>'; return; }
+    if(!d.lojas || !d.lojas.length){ body.innerHTML='<tr><td colspan="9" class="muted">Nenhuma loja ainda.</td></tr>'; return; }
     const dcurta = (s)=> s ? s.slice(0,10).split('-').reverse().join('/') : '—';
     body.innerHTML = d.lojas.map(l=>{
       const nomeTxt = l.nome ? esc(l.nome) : '#'+esc(l.store_id);
@@ -252,6 +252,7 @@ async function carregarLojas(){
         : (l.nome ? nomeTxt : '<span class="muted">'+nomeTxt+'</span>');
       return '<tr>'
         + '<td>'+nomeCell+'</td>'
+        + '<td class="muted" style="font-family:monospace">'+esc(l.store_id)+'</td>'
         + '<td class="'+(l.email?'':'muted')+'">'+(l.email?esc(l.email):'—')+'</td>'
         + '<td class="'+(l.whatsapp?'':'muted')+'">'+(l.whatsapp?esc(l.whatsapp):'—')+'</td>'
         + '<td><span class="tag '+esc(l.plano)+'">'+esc(l.plano)+'</span></td>'
@@ -261,7 +262,7 @@ async function carregarLojas(){
         + '<td class="muted">'+dcurta(l.instalado_em)+'</td>'
         + '</tr>';
     }).join('');
-  }catch(e){ body.innerHTML='<tr><td colspan="8" class="muted">Erro ao carregar lojas: '+esc(e.message)+'</td></tr>'; }
+  }catch(e){ body.innerHTML='<tr><td colspan="9" class="muted">Erro ao carregar lojas: '+esc(e.message)+'</td></tr>'; }
 }
 
 // Boot: se já tem chave salva, entra direto.
