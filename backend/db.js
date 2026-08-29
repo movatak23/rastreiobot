@@ -157,6 +157,17 @@ db.exec(`
     PRIMARY KEY (store_id, chave)
   );
 
+  CREATE TABLE IF NOT EXISTS prospeccao_lojas (
+    domain      TEXT PRIMARY KEY,
+    store_name  TEXT,
+    niche       TEXT,
+    email       TEXT,
+    whatsapp    TEXT,
+    instagram   TEXT,
+    final_url   TEXT,
+    created_at  TEXT DEFAULT (datetime('now'))
+  );
+
   CREATE TABLE IF NOT EXISTS automacao_logs (
     id         TEXT PRIMARY KEY,
     store_id   TEXT,
@@ -1683,7 +1694,35 @@ function collectCustomerData(storeId, { phone, email } = {}) {
   return dados;
 }
 
+// ── Prospecção de lojas Nuvemshop ───────────────────────────────────────────
+function upsertProspeccaoLoja(r) {
+  db.prepare(`INSERT INTO prospeccao_lojas (domain, store_name, niche, email, whatsapp, instagram, final_url)
+    VALUES (?,?,?,?,?,?,?)
+    ON CONFLICT(domain) DO UPDATE SET
+      store_name = excluded.store_name,
+      niche      = excluded.niche,
+      email      = CASE WHEN excluded.email     <> '' THEN excluded.email     ELSE prospeccao_lojas.email     END,
+      whatsapp   = CASE WHEN excluded.whatsapp   <> '' THEN excluded.whatsapp   ELSE prospeccao_lojas.whatsapp   END,
+      instagram  = CASE WHEN excluded.instagram  <> '' THEN excluded.instagram  ELSE prospeccao_lojas.instagram  END,
+      final_url  = excluded.final_url
+  `).run(r.domain, r.store_name || '', r.niche || 'outros', r.email || '', r.whatsapp || '', r.instagram || '', r.final_url || '');
+}
+function contarProspeccao() { return db.prepare('SELECT COUNT(*) c FROM prospeccao_lojas').get().c; }
+function jaProspeccaoDomain(domain) { return !!db.prepare('SELECT 1 FROM prospeccao_lojas WHERE domain = ?').get(domain); }
+function contarProspeccaoPorNicho() {
+  return db.prepare("SELECT niche, COUNT(*) c FROM prospeccao_lojas GROUP BY niche ORDER BY c DESC").all();
+}
+function comContatoProspeccao() {
+  return db.prepare("SELECT COUNT(*) c FROM prospeccao_lojas WHERE email <> '' OR whatsapp <> '' OR instagram <> ''").get().c;
+}
+function listarProspeccao() {
+  return db.prepare("SELECT domain, store_name, niche, email, whatsapp, instagram, final_url FROM prospeccao_lojas ORDER BY niche, (CASE WHEN email='' AND whatsapp='' AND instagram='' THEN 1 ELSE 0 END), domain").all();
+}
+function limparProspeccao() { db.prepare('DELETE FROM prospeccao_lojas').run(); }
+
 module.exports = {
+  upsertProspeccaoLoja, contarProspeccao, jaProspeccaoDomain, contarProspeccaoPorNicho,
+  comContatoProspeccao, listarProspeccao, limparProspeccao,
   redactStore, redactCustomer, collectCustomerData,
   criarFinanceiroState, getFinanceiroState, deleteFinanceiroState,
   salvarMercadoPagoConexao, getMercadoPagoConexao, desconectarMercadoPago,

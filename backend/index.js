@@ -8,6 +8,7 @@ const cors    = require('cors');
 const cron    = require('node-cron');
 const path    = require('path');
 const db      = require('./db');
+const prospeccao = require('./prospeccao');
 
 db.migrar();
 
@@ -187,6 +188,34 @@ function adminLoggzapHtml() {
       </div>
       <div class="err" id="acaoErr"></div><div class="ok" id="acaoOk"></div>
     </div>
+
+    <div class="card">
+      <h2>🔎 Prospecção de lojas Nuvemshop</h2>
+      <p class="muted">Encontra lojas hospedadas na Nuvemshop, confirma pela impressão digital, extrai contato (e-mail / WhatsApp / Instagram) e <strong>classifica por nicho automaticamente</strong>. Roda em segundo plano. Ao terminar, baixe o Excel. <em>Não</em> dispara e-mail — isso é só a coleta.</p>
+      <div id="prospGoogle" class="muted" style="margin-bottom:10px"></div>
+      <div class="two">
+        <div>
+          <label>Meta de lojas (teto 5000)</label><input id="prospAlvo" type="number" value="500" min="10" max="5000">
+          <label>Nicho (opcional — deixe vazio pra varrer todos)</label><input id="prospNiche" placeholder="ex.: pet (vazio = todos)">
+          <br><br>
+          <button onclick="iniciarProsp()" id="prospStart">▶️ Iniciar busca</button>
+          <button class="btn2" onclick="pararProsp()">⏸ Parar</button>
+        </div>
+        <div>
+          <div class="grid" style="grid-template-columns:1fr 1fr">
+            <div class="metric"><strong id="prospTotal">--</strong><span>lojas encontradas</span></div>
+            <div class="metric"><strong id="prospContato">--</strong><span>com contato</span></div>
+            <div class="metric"><strong id="prospChecados">--</strong><span>sites checados</span></div>
+            <div class="metric"><strong id="prospEstado">parado</strong><span>status</span></div>
+          </div>
+          <br>
+          <button onclick="baixarProsp()" style="background:#00b37e;color:#fff">⬇️ Baixar Excel (CSV)</button>
+          <button class="btnDanger" onclick="limparProsp()">🗑 Limpar lista</button>
+        </div>
+      </div>
+      <div id="prospNichos" style="margin-top:12px;overflow:auto"></div>
+      <div class="err" id="prospErr"></div><div class="ok" id="prospOk"></div>
+    </div>
   </div>
 </div>
 
@@ -228,7 +257,7 @@ async function carregar(first=false){
     document.getElementById('auth').classList.add('hidden');
     document.getElementById('painel').classList.remove('hidden');
     document.getElementById('adminLogout')?.classList.remove('hidden');
-    renderClientes(); renderLogs();
+    renderClientes(); renderLogs(); statusProsp();
   }catch(e){
     if(String(e.message||'').toLowerCase().includes('não autorizado')){
       localStorage.removeItem(ADMIN_SECRET_KEY);
@@ -239,6 +268,45 @@ async function carregar(first=false){
     }
     show(first?'err':'acaoErr',e.message);
   }
+}
+// ── Prospecção de lojas ─────────────────────────────────────────────────────
+let prospTimer=null;
+async function statusProsp(){
+  try{
+    const d=await api('/admin-loggzap/prospeccao/status');
+    document.getElementById('prospTotal').textContent=d.total??'--';
+    document.getElementById('prospContato').textContent=d.comContato??'--';
+    document.getElementById('prospChecados').textContent=d.checados??0;
+    document.getElementById('prospEstado').textContent=d.running?'buscando…':'parado';
+    document.getElementById('prospStart').disabled=!!d.running;
+    document.getElementById('prospGoogle').innerHTML = d.googleConfigurado
+      ? '🟢 Google CSE configurado — busca com volume. Fonte: '+esc(d.fonte)
+      : '🟡 Google CSE não configurado — rodando só no DuckDuckGo (volume baixo). Configure GOOGLE_CSE_KEY e GOOGLE_CSE_CX no Railway pra escalar.';
+    const nb=(d.porNicho||[]).map(n=>'<tr><td>'+esc(n.niche)+'</td><td>'+n.c+'</td></tr>').join('');
+    document.getElementById('prospNichos').innerHTML = nb
+      ? '<table><thead><tr><th>Nicho</th><th>Lojas</th></tr></thead><tbody>'+nb+'</tbody></table>' : '';
+    if(d.erro) show('prospErr',esc(d.erro)); else hide('prospErr');
+    if(d.running && !prospTimer){ prospTimer=setInterval(statusProsp,4000); }
+    if(!d.running && prospTimer){ clearInterval(prospTimer); prospTimer=null; }
+  }catch(e){ /* silencioso no polling */ }
+}
+async function iniciarProsp(){
+  hide('prospErr'); hide('prospOk');
+  const alvo=Number(document.getElementById('prospAlvo').value||500);
+  const niche=document.getElementById('prospNiche').value.trim();
+  try{ await api('/admin-loggzap/prospeccao/iniciar',{method:'POST',body:JSON.stringify({alvo,niche})});
+    show('prospOk','Busca iniciada. Pode fechar a aba — roda no servidor.'); statusProsp();
+  }catch(e){ show('prospErr',e.message); }
+}
+async function pararProsp(){ try{ await api('/admin-loggzap/prospeccao/parar',{method:'POST'}); statusProsp(); }catch(e){ show('prospErr',e.message); } }
+async function limparProsp(){ if(!confirm('Apagar toda a lista coletada?'))return; try{ await api('/admin-loggzap/prospeccao/limpar',{method:'POST'}); statusProsp(); }catch(e){ show('prospErr',e.message); } }
+async function baixarProsp(){
+  try{
+    const r=await fetch('/admin-loggzap/prospeccao/export',{headers:{'x-secret':secret}});
+    if(!r.ok) throw new Error('Falha ao exportar ('+r.status+')');
+    const blob=await r.blob(); const url=URL.createObjectURL(blob);
+    const a=document.createElement('a'); a.href=url; a.download='lojas_nuvemshop.csv'; document.body.appendChild(a); a.click(); a.remove(); URL.revokeObjectURL(url);
+  }catch(e){ show('prospErr',e.message); }
 }
 function badge(ok,label){return '<span class="badge '+(ok?'bOk':'bErr')+'">'+label+'</span>';}
 function badgeWarn(label){return '<span class="badge bWarn">'+label+'</span>';}
@@ -395,6 +463,28 @@ app.get('/admin-loggzap/gestao', (req, res) => res.sendFile(path.join(__dirname,
 app.get('/admin-loggzap/api/gestao', auth, (req, res) => {
   try { res.json({ success: true, ...db.getGestaoStats() }); }
   catch (e) { res.status(500).json({ error: e.message }); }
+});
+
+// ── Prospecção de lojas Nuvemshop (motor de busca no painel admin) ───────────
+app.post('/admin-loggzap/prospeccao/iniciar', auth, (req, res) => {
+  try { const r = prospeccao.iniciar({ alvo: req.body?.alvo, niche: req.body?.niche }, db);
+    if (!r.ok) return res.status(409).json({ error: r.erro });
+    res.json({ success: true }); }
+  catch (e) { res.status(500).json({ error: e.message }); }
+});
+app.post('/admin-loggzap/prospeccao/parar', auth, (req, res) => { prospeccao.stop(); res.json({ success: true }); });
+app.get('/admin-loggzap/prospeccao/status', auth, (req, res) => {
+  try { res.json({ success: true, ...prospeccao.status(db) }); }
+  catch (e) { res.status(500).json({ error: e.message }); }
+});
+app.post('/admin-loggzap/prospeccao/limpar', auth, (req, res) => { try { db.limparProspeccao(); res.json({ success: true }); } catch (e) { res.status(500).json({ error: e.message }); } });
+app.get('/admin-loggzap/prospeccao/export', auth, (req, res) => {
+  try {
+    const csv = prospeccao.toCSV(db);
+    res.setHeader('Content-Type', 'text/csv; charset=utf-8');
+    res.setHeader('Content-Disposition', 'attachment; filename="lojas_nuvemshop.csv"');
+    res.send(csv);
+  } catch (e) { res.status(500).json({ error: e.message }); }
 });
 
 // Diagnóstico: mostra o que a API /store da Nuvemshop realmente devolve por loja.
