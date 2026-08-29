@@ -1356,7 +1356,6 @@ function painelHtml() {
       <button class="btn2 hidden" id="menuBtn" onclick="toggleDrawer()" style="font-size:20px;padding:6px 12px" aria-label="Menu">☰</button>
       <div class="logo">Logg<span>Zap</span></div>
     </div>
-    <button class="btn2 hidden" id="logoutBtn">Sair</button>
   </div>
 
   <div id="authArea" class="grid" style="grid-template-columns:1fr;max-width:520px;margin:0 auto;gap:20px">
@@ -1412,7 +1411,7 @@ function painelHtml() {
       <a href="#" class="drawerLink" onclick="showView('mensagens');return false" style="display:block;padding:12px 12px;border-radius:8px;color:#eef0f8;text-decoration:none;margin-bottom:4px">💬 Mensagens automáticas</a>
       <a href="#" class="drawerLink" onclick="showView('config');return false" style="display:block;padding:12px 12px;border-radius:8px;color:#eef0f8;text-decoration:none;margin-bottom:4px">🔌 Conexões & Config</a>
       <hr style="border-color:rgba(255,255,255,.08);margin:12px 0">
-      <a href="#" onclick="document.getElementById('logoutBtn').click();return false" style="display:block;padding:12px;border-radius:8px;color:#8b93a8;text-decoration:none">Sair</a>
+      <a href="#" onclick="sair();return false" style="display:block;padding:12px;border-radius:8px;color:#8b93a8;text-decoration:none">Sair</a>
     </div>
     <div id="viewDashboard" class="view">
     <div class="card" id="dashCard">
@@ -1560,10 +1559,25 @@ function painelHtml() {
     </div><!-- /viewConfig -->
 
     <div id="viewPedidos" class="view" style="display:none">
-      <div class="card"><h2>📦 Pedidos</h2><p class="muted">Em breve nesta versão do app. Por enquanto, os últimos pedidos aparecem no Dashboard.</p></div>
+      <div class="card">
+        <div style="display:flex;justify-content:space-between;align-items:center"><h2 style="margin:0">📦 Pedidos recentes</h2><button class="btn2" onclick="loadPedidos()">↻ Atualizar</button></div>
+        <div id="pedidosStatus" class="muted" style="margin:8px 0">Carregando...</div>
+        <div id="pedidosLista"></div>
+      </div>
     </div>
     <div id="viewMetas" class="view" style="display:none">
-      <div class="card"><h2>🎯 Metas</h2><p class="muted">Em breve nesta versão do app.</p></div>
+      <div class="card">
+        <h2>🎯 Meta de faturamento do mês</h2>
+        <p class="muted" style="font-size:13px">Defina sua meta mensal e acompanhe o progresso em tempo real.</p>
+        <label>Meta (R$)</label><input id="metaInput" type="number" min="0" placeholder="Ex: 20000" oninput="renderMetaProgresso()">
+        <button class="btn" onclick="salvarMeta()" style="margin-top:8px">Salvar meta</button>
+        <div class="ok" id="metaOk"></div><div class="err" id="metaErr"></div>
+        <div id="metaProgWrap" style="margin-top:16px;display:none">
+          <div style="display:flex;justify-content:space-between;align-items:center"><span class="muted">Faturamento do mês</span><strong id="metaAtual">R$ 0,00</strong></div>
+          <div style="height:12px;background:#0c0f16;border-radius:6px;overflow:hidden;margin:8px 0"><div id="metaBar" style="height:100%;width:0;background:#00d084;transition:width .5s"></div></div>
+          <div id="metaPct" class="muted" style="font-size:13px"></div>
+        </div>
+      </div>
     </div>
   </div>
 </div>
@@ -1666,7 +1680,6 @@ async function loadPanel(){
   const data = await apiGet('/painel/api/templates');
   document.getElementById('authArea').classList.add('hidden');
   document.getElementById('panelArea').classList.remove('hidden');
-  document.getElementById('logoutBtn').classList.remove('hidden');
   var mb=document.getElementById('menuBtn'); if(mb) mb.classList.remove('hidden');
   keys.forEach(k=>{ const el=document.getElementById('tpl_'+k); el.value=data.templates[k] || ''; el.addEventListener('input',markDirty); });
   markDirty();
@@ -1727,7 +1740,7 @@ async function changeCredentials(){
     show('credOk','✅ Login e senha atualizados.');
   }catch(e){show('credErr',e.message);}
 }
-document.getElementById('logoutBtn').onclick = async ()=>{ await api('/painel/api/logout',{}).catch(()=>{}); localStorage.removeItem('lz_painel_token'); location.reload(); };
+async function sair(){ await api('/painel/api/logout',{}).catch(()=>{}); try{ localStorage.removeItem('lz_painel_token'); }catch(e){} location.reload(); }
 // ── Conexão do WhatsApp do lojista (Evolution / QR) ──
 let waPollTimer = null;
 function setWaStatus(txt, cls){ const el=document.getElementById('waStatus'); if(!el) return; el.textContent=txt; el.className=(cls||'info'); }
@@ -1841,6 +1854,51 @@ function setDashPeriodo(p){
   document.getElementById('dashTicket').textContent = fmtBRL(src && src.ticketMedio);
   document.getElementById('dashFrete').textContent = fmtBRL(src && src.frete);
 }
+async function loadPedidos(){
+  var st=document.getElementById('pedidosStatus'), lista=document.getElementById('pedidosLista');
+  if(st){ st.style.display='block'; st.textContent='Carregando...'; } if(lista) lista.innerHTML='';
+  try{
+    var d=await apiGet('/painel/api/pedidos');
+    if(!d || d.success===false) throw new Error((d&&d.error)||'erro');
+    var ps=d.pedidos||[];
+    if(!ps.length){ st.textContent='Nenhum pedido recente.'; return; }
+    st.style.display='none';
+    lista.innerHTML = ps.map(function(p){
+      var badge = p.pago ? '<span style="color:#00d084">● pago</span>' : '<span style="color:#e8a030">● aguardando</span>';
+      var envio = p.enviado ? ' · enviado' : '';
+      var data = p.data ? new Date(p.data).toLocaleDateString('pt-BR') : '';
+      return '<div style="display:flex;justify-content:space-between;gap:8px;padding:12px 0;border-bottom:1px solid rgba(255,255,255,.06)">'
+        + '<div><b>#'+esc(p.numero)+'</b> · '+esc(p.cliente)+'<br><span class="muted" style="font-size:12px">'+data+' '+badge+envio+'</span></div>'
+        + '<div style="font-weight:700;white-space:nowrap">'+fmtBRL(p.total)+'</div></div>';
+    }).join('');
+  }catch(e){ if(st){ st.style.display='block'; st.textContent='Erro ao carregar: '+e.message; } }
+}
+async function loadMetas(){
+  hide('metaOk'); hide('metaErr');
+  try{
+    var d=await apiGet('/painel/api/metas');
+    document.getElementById('metaInput').value = (d && d.faturamento) ? d.faturamento : '';
+    if(!dashData){ try{ await loadDashboard(); }catch(e){} }
+    renderMetaProgresso();
+  }catch(e){ show('metaErr','Erro ao carregar meta: '+e.message); }
+}
+function renderMetaProgresso(){
+  var meta = Number(document.getElementById('metaInput').value)||0;
+  var atual = (dashData && dashData.mes && dashData.mes.total) ? dashData.mes.total : 0;
+  var wrap=document.getElementById('metaProgWrap');
+  if(meta<=0){ wrap.style.display='none'; return; }
+  wrap.style.display='block';
+  document.getElementById('metaAtual').textContent = fmtBRL(atual) + ' / ' + fmtBRL(meta);
+  var pct = Math.min(100, Math.round(atual/meta*100));
+  document.getElementById('metaBar').style.width = pct + '%';
+  document.getElementById('metaPct').textContent = pct + '% da meta' + (pct>=100 ? ' 🎉 batida!' : '');
+}
+async function salvarMeta(){
+  hide('metaOk'); hide('metaErr');
+  var fat = Number(document.getElementById('metaInput').value)||0;
+  try{ await api('/painel/api/metas', { faturamento: fat }); show('metaOk','✅ Meta salva!'); renderMetaProgresso(); }
+  catch(e){ show('metaErr', e.message); }
+}
 var waConectado = false;
 function toggleDrawer(open){
   var d=document.getElementById('drawer'), bg=document.getElementById('drawerBg');
@@ -1855,6 +1913,8 @@ function showView(name){
   toggleDrawer(false);
   try { window.scrollTo(0,0); } catch(e){}
   if(name==='dashboard') loadDashboard();
+  if(name==='pedidos') loadPedidos();
+  if(name==='metas') loadMetas();
 }
 apiGet('/painel/api/me').then(loadPanel).then(loadChecklist).then(loadWhatsAppStatus)
   .then(function(){ showView(waConectado ? 'dashboard' : 'setup'); })
@@ -4906,6 +4966,37 @@ app.get('/dashboard-nuvem/:storeId', auth, async (req, res) => {
 app.get('/painel/api/dashboard', painelAuth, async (req, res) => {
   try { res.json({ success: true, ...(await montarDashboardNuvem(String(req.painel.store_id))) }); }
   catch(e) { console.error('[Painel Dashboard]', e.message); res.status(500).json({ success: false, error: e.message }); }
+});
+// Lista de pedidos recentes pro painel (mobile).
+app.get('/painel/api/pedidos', painelAuth, async (req, res) => {
+  try {
+    const orders = await nuvemGet(String(req.painel.store_id), '/orders', { per_page: 30, page: 1, fields: 'id,number,contact_name,total,payment_status,shipping_status,created_at,customer' });
+    const lista = (orders || [])
+      .filter(o => o.status !== 'cancelled')
+      .sort((a, b) => new Date(b.created_at) - new Date(a.created_at))
+      .map(o => ({
+        numero: o.number,
+        cliente: (o.customer && o.customer.name) || o.contact_name || 'Cliente',
+        total: parseFloat(o.total || 0),
+        pago: o.payment_status === 'paid',
+        enviado: o.shipping_status === 'shipped' || o.shipping_status === 'fulfilled',
+        data: o.created_at
+      }));
+    res.json({ success: true, pedidos: lista });
+  } catch(e) { console.error('[Painel Pedidos]', e.message); res.status(500).json({ success: false, error: e.message }); }
+});
+// Meta de faturamento mensal.
+app.get('/painel/api/metas', painelAuth, (req, res) => {
+  try { const m = db.getMetas(String(req.painel.store_id)) || {}; res.json({ success: true, faturamento: Number(m.faturamento) || 0, pedidos: Number(m.pedidos) || 0 }); }
+  catch(e) { res.status(500).json({ success: false, error: e.message }); }
+});
+app.post('/painel/api/metas', painelAuth, (req, res) => {
+  try {
+    const fat = Math.max(0, Number(req.body && req.body.faturamento) || 0);
+    const atual = db.getMetas(String(req.painel.store_id)) || {};
+    db.salvarMetas(String(req.painel.store_id), fat, Number(atual.pedidos) || 0);
+    res.json({ success: true });
+  } catch(e) { res.status(500).json({ success: false, error: e.message }); }
 });
 
 app.get('/auth/status', (req, res) => {
