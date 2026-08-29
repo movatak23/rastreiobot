@@ -2734,6 +2734,38 @@ async function dispararCapiInstalacao(req, storeId) {
   }
 }
 
+// Lead server-side (CAPI) — espelha o pixel 'Lead' do cadastro, com dedup pelo mesmo event_id
+// que o navegador manda. Melhora o sinal da campanha de Lead (recupera iOS/adblock).
+async function dispararCapiLead(req, dados) {
+  if (!META_CAPI_TOKEN) return;
+  try {
+    const sha = (v) => crypto.createHash('sha256').update(String(v)).digest('hex');
+    const ip = String(req.headers['x-forwarded-for'] || '').split(',')[0].trim() || req.socket?.remoteAddress || '';
+    const ua = req.headers['user-agent'] || '';
+    const email = String(dados.email || '').trim().toLowerCase();
+    let fone = String(dados.whatsapp || '').replace(/\D/g, '');
+    if (fone && fone.length <= 11) fone = '55' + fone; // Brasil: garante DDI pro match
+    const user_data = { client_ip_address: ip, client_user_agent: ua };
+    if (email) user_data.em = sha(email);
+    if (fone) user_data.ph = sha(fone);
+    if (dados.fbp) user_data.fbp = dados.fbp; // fbp/fbc vão SEM hash
+    if (dados.fbc) user_data.fbc = dados.fbc;
+    const payload = { data: [{
+      event_name: 'Lead',
+      event_time: Math.floor(Date.now() / 1000),
+      action_source: 'website',
+      event_source_url: 'https://www.loggzap.com.br/',
+      event_id: dados.event_id || ('lead_' + Date.now()),
+      user_data,
+      custom_data: { content_name: 'Cadastro LoggZap', plano: dados.plano || 'trial' }
+    }]};
+    await axios.post(`https://graph.facebook.com/v19.0/${META_PIXEL_ID}/events?access_token=${encodeURIComponent(META_CAPI_TOKEN)}`, payload, { timeout: 8000 });
+    console.log('[CAPI] Lead enviado ao Meta (' + (email || 'sem email') + ')');
+  } catch (e) {
+    console.error('[CAPI Lead] falha:', e.response?.data?.error?.message || e.message);
+  }
+}
+
 // Diagnóstico do CAPI: confirma se o token está neste serviço e se o Meta aceita o evento.
 app.get('/admin-loggzap/api/testar-capi', auth, async (req, res) => {
   if (!META_CAPI_TOKEN) return res.json({ ok: false, capiTokenConfigurado: false, msg: 'META_CAPI_TOKEN NAO esta setado neste servico (rastreiobot).' });
@@ -5034,6 +5066,9 @@ app.get('/licenca/status/:storeId', auth, (req, res) => {
 app.post('/cadastro', async (req, res) => {
   const { nome, email, whatsapp, plano } = req.body;
   if (!nome || !email) return res.status(400).json({ error: 'Nome e email são obrigatórios.' });
+
+  // Lead server-side (CAPI) — espelha o pixel do navegador (dedup pelo event_id). Não bloqueia o fluxo.
+  dispararCapiLead(req, { email, whatsapp, plano, event_id: req.body.event_id, fbp: req.body.fbp, fbc: req.body.fbc });
 
   const CHROME_URL = 'https://chromewebstore.google.com/detail/loggzap-dashboard/dpfnpaepnholpjgbblljpinbkfoldlpp';
 

@@ -654,15 +654,20 @@ src="https://www.facebook.com/tr?id=2038947806731470&ev=PageView&noscript=1"
 
     btn.textContent = 'Enviando...'; btn.disabled = true;
 
+    // dedup pixel <-> CAPI: MESMO event_id nos dois lados; manda _fbp/_fbc pra casar melhor
+    var getCookie = function(n){ var m = document.cookie.match('(?:^|; )' + n + '=([^;]+)'); return m ? decodeURIComponent(m[1]) : ''; };
+    var eventId = (window.crypto && crypto.randomUUID) ? crypto.randomUUID() : ('lead_' + Date.now() + '_' + Math.random().toString(36).slice(2));
+    var fbp = getCookie('_fbp'), fbc = getCookie('_fbc');
+
     try {
       const r = await fetch('https://cliente.loggzap.com.br/cadastro', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ nome, email, whatsapp, plano: planoSelecionado })
+        body: JSON.stringify({ nome, email, whatsapp, plano: planoSelecionado, event_id: eventId, fbp: fbp, fbc: fbc })
       });
       const d = await r.json();
       if (d.success) {
-        if (window.fbq) { fbq('track', 'Lead', { content_name: 'Cadastro LoggZap', plano: planoSelecionado }); fbq('track', 'Contact', { content_name: 'Cadastro LoggZap', plano: planoSelecionado }); }
+        if (window.fbq) { fbq('track', 'Lead', { content_name: 'Cadastro LoggZap', plano: planoSelecionado }, { eventID: eventId }); fbq('track', 'Contact', { content_name: 'Cadastro LoggZap', plano: planoSelecionado }); }
         document.getElementById('modal-cadastro').style.display = 'none';
         if (planoSelecionado === 'trial' && !ehMobile()) {
           window.open('https://chromewebstore.google.com/detail/loggzap-dashboard/dpfnpaepnholpjgbblljpinbkfoldlpp', '_blank');
