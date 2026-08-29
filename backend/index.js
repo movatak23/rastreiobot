@@ -1629,9 +1629,12 @@ async function enviarCodigoReset(){
 async function redefinirSenha(){
   hide('recErr');hide('recOk');
   try{
-    await api('/painel/api/reset',{store_id:document.getElementById('recStore').value,codigo:document.getElementById('recCodigo').value,senha:document.getElementById('recNovaSenha').value});
-    show('recOk','✅ Senha redefinida! Faça login com a nova senha.');
+    var rd=await api('/painel/api/reset',{store_id:document.getElementById('recStore').value,codigo:document.getElementById('recCodigo').value,senha:document.getElementById('recNovaSenha').value});
+    var loginMsg = (rd && rd.login) ? (' Seu login agora é <b>'+esc(rd.login)+'</b>.') : '';
+    show('recOk','✅ Senha redefinida!'+loginMsg+' Faça login com a nova senha.');
     document.getElementById('recCodigoBox').style.display='none';
+    if(rd && rd.login){ var li=document.getElementById('loginUser'); if(li) li.value=rd.login; }
+    mostrarLogin();
   }catch(e){show('recErr',e.message);}
 }
 async function login(){
@@ -2060,7 +2063,7 @@ app.post('/painel/api/forgot', async (req, res) => {
   } catch(e) { res.status(500).json({ error: e.message }); }
 });
 
-app.post('/painel/api/reset', (req, res) => {
+app.post('/painel/api/reset', async (req, res) => {
   try {
     const { store_id, codigo, senha } = req.body || {};
     if (!store_id || !codigo || !senha) return res.status(400).json({ error: 'Preencha o código e a nova senha.' });
@@ -2071,9 +2074,15 @@ app.post('/painel/api/reset', (req, res) => {
     if (String(codigo).trim() !== String(reset.codigo)) return res.status(400).json({ error: 'Código incorreto.' });
     const user = db.getPainelUsuario(String(store_id));
     if (!user) return res.status(404).json({ error: 'Conta não encontrada.' });
-    db.atualizarPainelCredenciais(String(store_id), user.login, hashPassword(String(senha)));
+    // Self-service: padroniza o login como o e-mail da loja (o mesmo pra onde o código foi enviado),
+    // pra pessoa entrar com e-mail + senha nova, sem depender de lembrar o usuário antigo.
+    const ehEmail = (v) => /^[^@\s]+@[^@\s]+\.[^@\s]+$/.test(String(v || '').trim());
+    let novoLogin = user.login;
+    try { const st = await getStoreInfoSeguro(String(store_id)); const em = String((st && (st.email || st.contact_email)) || '').trim(); if (ehEmail(em)) novoLogin = em; } catch(_) {}
+    if (novoLogin === user.login && ehEmail(user.login)) novoLogin = String(user.login).trim();
+    db.atualizarPainelCredenciais(String(store_id), novoLogin, hashPassword(String(senha)));
     db.deleteResetPainel(String(store_id));
-    res.json({ success: true });
+    res.json({ success: true, login: novoLogin });
   } catch(e) { res.status(500).json({ error: e.message }); }
 });
 
