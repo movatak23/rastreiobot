@@ -1352,7 +1352,10 @@ function painelHtml() {
 <body>
 <div class="wrap">
   <div class="top">
-    <div class="logo">Logg<span>Zap</span> Premium</div>
+    <div style="display:flex;align-items:center;gap:10px">
+      <button class="btn2 hidden" id="menuBtn" onclick="toggleDrawer()" style="font-size:20px;padding:6px 12px" aria-label="Menu">☰</button>
+      <div class="logo">Logg<span>Zap</span></div>
+    </div>
     <button class="btn2 hidden" id="logoutBtn">Sair</button>
   </div>
 
@@ -1400,6 +1403,18 @@ function painelHtml() {
   </div>
 
   <div id="panelArea" class="hidden">
+    <div id="drawerBg" onclick="toggleDrawer(false)" style="display:none;position:fixed;inset:0;background:rgba(0,0,0,.55);z-index:190"></div>
+    <div id="drawer" style="display:none;position:fixed;top:0;left:0;bottom:0;width:260px;max-width:80vw;background:#0c0f16;border-right:1px solid rgba(255,255,255,.08);z-index:200;padding:20px 14px;overflow:auto">
+      <div class="logo" style="margin:6px 8px 18px">Logg<span>Zap</span></div>
+      <a href="#" class="drawerLink" onclick="showView('dashboard');return false" style="display:block;padding:12px 12px;border-radius:8px;color:#eef0f8;text-decoration:none;margin-bottom:4px">📊 Dashboard</a>
+      <a href="#" class="drawerLink" onclick="showView('pedidos');return false" style="display:block;padding:12px 12px;border-radius:8px;color:#eef0f8;text-decoration:none;margin-bottom:4px">📦 Pedidos</a>
+      <a href="#" class="drawerLink" onclick="showView('metas');return false" style="display:block;padding:12px 12px;border-radius:8px;color:#eef0f8;text-decoration:none;margin-bottom:4px">🎯 Metas</a>
+      <a href="#" class="drawerLink" onclick="showView('mensagens');return false" style="display:block;padding:12px 12px;border-radius:8px;color:#eef0f8;text-decoration:none;margin-bottom:4px">💬 Mensagens automáticas</a>
+      <a href="#" class="drawerLink" onclick="showView('config');return false" style="display:block;padding:12px 12px;border-radius:8px;color:#eef0f8;text-decoration:none;margin-bottom:4px">🔌 Conexões & Config</a>
+      <hr style="border-color:rgba(255,255,255,.08);margin:12px 0">
+      <a href="#" onclick="document.getElementById('logoutBtn').click();return false" style="display:block;padding:12px;border-radius:8px;color:#8b93a8;text-decoration:none">Sair</a>
+    </div>
+    <div id="viewDashboard" class="view">
     <div class="card" id="dashCard">
       <div style="display:flex;justify-content:space-between;align-items:center;flex-wrap:wrap;gap:8px">
         <h2 style="margin:0">📊 Painel da loja</h2>
@@ -1445,6 +1460,15 @@ function painelHtml() {
       <a id="extInstallBtn" href="https://chromewebstore.google.com/detail/loggzap-dashboard/dpfnpaepnholpjgbblljpinbkfoldlpp" target="_blank" rel="noopener" class="btn" style="text-decoration:none">Instalar extensão</a>
       <button class="btn2" onclick="document.getElementById('extBanner').style.display='none';try{localStorage.setItem('lz_ext_dismiss','1')}catch(e){}">Fechar</button>
     </div>
+    </div><!-- /viewDashboard -->
+
+    <div id="viewSetup" class="view" style="display:none">
+    <div class="card">
+      <h2>🚀 Configuração inicial</h2>
+      <p>Só faltam 2 passos pra sua loja começar a vender no automático:</p>
+      <div style="display:flex;align-items:center;gap:10px;margin:8px 0"><span id="wzStep1" style="font-size:20px">✅</span><div><b>1. Loja conectada</b><br><span class="muted" style="font-size:13px">Sua loja Nuvemshop já está ligada.</span></div></div>
+      <div style="display:flex;align-items:center;gap:10px;margin:8px 0"><span id="wzStep2" style="font-size:20px">⬜</span><div><b>2. Conectar o WhatsApp</b><br><span class="muted" style="font-size:13px">É por ele que as automações são enviadas. Conecte abaixo.</span></div></div>
+    </div>
 
     <div class="card" id="whatsappConnectBox">
       <h2>📱 Conecte seu WhatsApp</h2>
@@ -1473,7 +1497,10 @@ function painelHtml() {
       </div>
       <div class="err" id="waErr"></div>
     </div>
+    <div style="text-align:center;margin:4px 0 8px"><a href="#" onclick="showView('dashboard');return false" style="color:#8b93a8;font-size:13px;text-decoration:none">Pular por enquanto e ir para o painel →</a></div>
+    </div><!-- /viewSetup -->
 
+    <div id="viewMensagens" class="view" style="display:none">
     <div class="card">
       <h1>Mensagens automáticas</h1>
       <p>Edite as mensagens usadas nas automações Premium. Antes de salvar, clique em <strong>Verificar mensagens</strong>. O sistema só permitirá salvar se a verificação estiver 100% OK.</p>
@@ -1490,7 +1517,14 @@ function painelHtml() {
         <span class="muted">Recomendado: verifique tudo antes de salvar. O salvamento só libera se não houver erro.</span>
       </div>
     </div>
+    </div><!-- /viewMensagens -->
 
+    <div id="viewConfig" class="view" style="display:none">
+    <div class="card" style="border:1px solid rgba(0,208,132,.25)">
+      <h2>🔌 Conexões</h2>
+      <p class="muted" style="font-size:13px">Gerencie a conexão do WhatsApp e confira o checklist.</p>
+      <button class="btn2" onclick="showView('setup')">Gerenciar conexão do WhatsApp</button>
+    </div>
 
     <div class="card" id="premiumChecklistBox">
       <h2>Checklist Premium</h2>
@@ -1522,6 +1556,14 @@ function painelHtml() {
       <label>Nova senha</label><input id="newPass" type="password" placeholder="Nova senha">
       <div class="err" id="credErr"></div><div class="ok" id="credOk"></div>
       <button class="btn2" onclick="changeCredentials()">Atualizar acesso</button>
+    </div>
+    </div><!-- /viewConfig -->
+
+    <div id="viewPedidos" class="view" style="display:none">
+      <div class="card"><h2>📦 Pedidos</h2><p class="muted">Em breve nesta versão do app. Por enquanto, os últimos pedidos aparecem no Dashboard.</p></div>
+    </div>
+    <div id="viewMetas" class="view" style="display:none">
+      <div class="card"><h2>🎯 Metas</h2><p class="muted">Em breve nesta versão do app.</p></div>
     </div>
   </div>
 </div>
@@ -1625,6 +1667,7 @@ async function loadPanel(){
   document.getElementById('authArea').classList.add('hidden');
   document.getElementById('panelArea').classList.remove('hidden');
   document.getElementById('logoutBtn').classList.remove('hidden');
+  var mb=document.getElementById('menuBtn'); if(mb) mb.classList.remove('hidden');
   keys.forEach(k=>{ const el=document.getElementById('tpl_'+k); el.value=data.templates[k] || ''; el.addEventListener('input',markDirty); });
   markDirty();
   try {
@@ -1702,12 +1745,17 @@ async function loadWhatsAppStatus(){
       if(connectBtn) connectBtn.style.display='none';
       if(logoutBtn) logoutBtn.style.display='inline-block';
       if(waPollTimer){ clearInterval(waPollTimer); waPollTimer=null; }
+      waConectado = true;
+      var s2=document.getElementById('wzStep2'); if(s2) s2.textContent='✅';
+      var vs=document.getElementById('viewSetup'); if(vs && vs.style.display!=='none' && typeof showView==='function'){ showView('dashboard'); }
     } else {
       var ws2=document.getElementById('waStatus'); if(ws2) ws2.style.cssText='';
       setWaStatus('⚠️ WhatsApp ainda não conectado. Use o código (mesmo celular) ou o QR abaixo.','info');
       var nb2=document.getElementById('waNumBox'); if(nb2) nb2.style.display='block';
       if(connectBtn) connectBtn.style.display='inline-block';
       if(logoutBtn) logoutBtn.style.display='none';
+      waConectado = false;
+      var s2b=document.getElementById('wzStep2'); if(s2b) s2b.textContent='⬜';
     }
   }catch(e){ setWaStatus('Erro ao verificar conexão: '+e.message,'err'); }
 }
@@ -1793,7 +1841,24 @@ function setDashPeriodo(p){
   document.getElementById('dashTicket').textContent = fmtBRL(src && src.ticketMedio);
   document.getElementById('dashFrete').textContent = fmtBRL(src && src.frete);
 }
-apiGet('/painel/api/me').then(loadPanel).then(loadChecklist).then(loadWhatsAppStatus).then(loadDashboard).catch(()=>{});
+var waConectado = false;
+function toggleDrawer(open){
+  var d=document.getElementById('drawer'), bg=document.getElementById('drawerBg');
+  if(!d) return;
+  var mostrar = (open===undefined) ? (d.style.display!=='block') : !!open;
+  d.style.display = mostrar ? 'block' : 'none';
+  if(bg) bg.style.display = mostrar ? 'block' : 'none';
+}
+function showView(name){
+  var ids = { dashboard:'viewDashboard', setup:'viewSetup', mensagens:'viewMensagens', config:'viewConfig', pedidos:'viewPedidos', metas:'viewMetas' };
+  Object.keys(ids).forEach(function(k){ var el=document.getElementById(ids[k]); if(el) el.style.display = (k===name)?'block':'none'; });
+  toggleDrawer(false);
+  try { window.scrollTo(0,0); } catch(e){}
+  if(name==='dashboard') loadDashboard();
+}
+apiGet('/painel/api/me').then(loadPanel).then(loadChecklist).then(loadWhatsAppStatus)
+  .then(function(){ showView(waConectado ? 'dashboard' : 'setup'); })
+  .catch(()=>{});
 </script>
 
 <!-- PWA: banner de instalação (iPhone + Android) -->
