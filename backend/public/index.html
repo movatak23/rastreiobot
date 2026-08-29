@@ -618,7 +618,9 @@ src="https://www.facebook.com/tr?id=2038947806731470&ev=PageView&noscript=1"
   function instalar(e) {
     if (e) e.preventDefault();
     if (window.fbq) fbq('track', 'Contact');
-    if (ehMobile()) { window.open(ZAP_URL, '_blank', 'noopener'); return; }
+    // Desktop e MOBILE: abre o cadastro (captura o lead e dispara o evento Lead que a campanha
+    // otimiza). No celular a extensão não instala, mas o cadastro/Lead é o que importa pro anúncio;
+    // o WhatsApp segue disponível nos botões dedicados e no modal de sucesso.
     abrirCadastro('trial');
   }
 
@@ -662,7 +664,7 @@ src="https://www.facebook.com/tr?id=2038947806731470&ev=PageView&noscript=1"
       if (d.success) {
         if (window.fbq) { fbq('track', 'Lead', { content_name: 'Cadastro LoggZap', plano: planoSelecionado }); fbq('track', 'Contact', { content_name: 'Cadastro LoggZap', plano: planoSelecionado }); }
         document.getElementById('modal-cadastro').style.display = 'none';
-        if (planoSelecionado === 'trial') {
+        if (planoSelecionado === 'trial' && !ehMobile()) {
           window.open('https://chromewebstore.google.com/detail/loggzap-dashboard/dpfnpaepnholpjgbblljpinbkfoldlpp', '_blank');
         }
         document.getElementById('modal-sucesso').style.display = 'flex';
@@ -735,9 +737,9 @@ src="https://www.facebook.com/tr?id=2038947806731470&ev=PageView&noscript=1"
 // (modal de sucesso, e-mail) pra também cair no WhatsApp no celular.
 (function () {
   if (!ehMobile()) return;
-  document.querySelectorAll('.js-install').forEach(function (a) {
-    a.innerHTML = a.innerHTML.replace(/Instalar\s+(LoggZap\s+)?gr[áa]tis/i, 'Testar no WhatsApp');
-  });
+  // No celular o CTA "Instalar" agora abre o CADASTRO (dispara Lead) — não renomeia mais pra WhatsApp.
+  // Só blindamos o link da Chrome Web Store (ex.: no modal de sucesso), que não instala em celular:
+  // no mobile ele aponta pro WhatsApp, que é onde a gente ajuda a ativar.
   document.querySelectorAll('a[href*="chromewebstore.google.com"]').forEach(function (a) {
     a.setAttribute('href', ZAP_URL);
     a.setAttribute('target', '_blank');
