@@ -1400,18 +1400,39 @@ function painelHtml() {
   </div>
 
   <div id="panelArea" class="hidden">
+    <div id="extBanner" class="card" style="border:1px solid rgba(0,208,132,.45);background:rgba(0,208,132,.06);display:flex;align-items:center;gap:12px;flex-wrap:wrap">
+      <div style="flex:1;min-width:200px">
+        <strong>💻 Acompanhe sua loja no computador</strong><br>
+        <span class="muted" style="font-size:13px">Enviamos o link da extensão do Chrome no seu <b>e-mail cadastrado</b>. Instale no PC pra ver tudo em tempo real — no celular, use este painel mesmo.</span>
+      </div>
+      <a id="extInstallBtn" href="https://chromewebstore.google.com/detail/loggzap-dashboard/dpfnpaepnholpjgbblljpinbkfoldlpp" target="_blank" rel="noopener" class="btn" style="text-decoration:none">Instalar extensão</a>
+      <button class="btn2" onclick="document.getElementById('extBanner').style.display='none';try{localStorage.setItem('lz_ext_dismiss','1')}catch(e){}">Fechar</button>
+    </div>
+
     <div class="card" id="whatsappConnectBox">
       <h2>📱 Conecte seu WhatsApp</h2>
-      <p>As mensagens automáticas são enviadas pelo <strong>seu próprio número de WhatsApp</strong>. Conecte-o uma vez escaneando o QR Code — é rápido e só precisa fazer isso uma vez.</p>
+      <p>As mensagens automáticas saem do <strong>seu próprio número</strong>. Conecte uma vez — escolha o jeito mais fácil:</p>
       <div id="waStatus" class="info">Verificando conexão...</div>
+
+      <div id="waNumBox" style="margin:14px 0;padding:14px;border:1px solid rgba(0,208,132,.25);border-radius:10px">
+        <strong>📲 Estou no mesmo celular do WhatsApp (recomendado)</strong>
+        <p class="muted" style="font-size:13px;margin:6px 0">Digite seu número com DDD. Geramos um <b>código</b> pra você digitar no WhatsApp — sem QR e sem precisar de outro aparelho.</p>
+        <input id="waNumero" type="tel" placeholder="(11) 99999-9999" style="margin-bottom:8px">
+        <button class="btn" id="waCodeBtn" onclick="connectWhatsAppNumero()">Gerar código de conexão</button>
+        <div id="waCodeWrap" style="display:none;margin-top:12px;text-align:center">
+          <div class="muted" style="font-size:13px">No WhatsApp: <b>Configurações → Aparelhos conectados → Conectar aparelho → Conectar com número de telefone</b> e digite:</div>
+          <div id="waCode" style="font-size:30px;font-weight:800;letter-spacing:4px;color:#00d084;margin:12px 0"></div>
+        </div>
+      </div>
+
+      <div class="actions">
+        <button class="btn2" id="waConnectBtn" onclick="connectWhatsApp()">Prefiro escanear o QR (de outro aparelho)</button>
+        <button class="btn2" id="waRefreshBtn" onclick="loadWhatsAppStatus()">Atualizar status</button>
+        <button class="btn2" id="waLogoutBtn" onclick="disconnectWhatsApp()" style="display:none">Desconectar</button>
+      </div>
       <div id="waQrWrap" style="display:none;text-align:center;margin:14px 0">
         <img id="waQr" alt="QR Code do WhatsApp" style="max-width:260px;border-radius:8px;background:#fff;padding:8px">
         <p class="muted">No celular: WhatsApp → <strong>Aparelhos conectados</strong> → <strong>Conectar um aparelho</strong> → aponte a câmera para o código acima.</p>
-      </div>
-      <div class="actions">
-        <button class="btn" id="waConnectBtn" onclick="connectWhatsApp()">Conectar / mostrar QR</button>
-        <button class="btn2" id="waRefreshBtn" onclick="loadWhatsAppStatus()">Atualizar status</button>
-        <button class="btn2" id="waLogoutBtn" onclick="disconnectWhatsApp()" style="display:none">Desconectar</button>
       </div>
       <div class="err" id="waErr"></div>
     </div>
@@ -1569,6 +1590,10 @@ async function loadPanel(){
   document.getElementById('logoutBtn').classList.remove('hidden');
   keys.forEach(k=>{ const el=document.getElementById('tpl_'+k); el.value=data.templates[k] || ''; el.addEventListener('input',markDirty); });
   markDirty();
+  try {
+    if (localStorage.getItem('lz_ext_dismiss')==='1'){ var eb=document.getElementById('extBanner'); if(eb) eb.style.display='none'; }
+    if (/Android|iPhone|iPad|iPod|Mobile/i.test(navigator.userAgent)){ var ib=document.getElementById('extInstallBtn'); if(ib) ib.style.display='none'; }
+  } catch(e){}
 }
 async function validateTemplates(){
   hide('validateErr'); hide('validateOk');
@@ -1660,6 +1685,31 @@ async function connectWhatsApp(){
     }
   }catch(e){ show('waErr', e.message); }
 }
+async function connectWhatsAppNumero(){
+  hide('waErr');
+  var numero = document.getElementById('waNumero').value.trim();
+  if (numero.replace(/\\D/g,'').length < 10){ show('waErr','Informe seu número com DDD (ex.: (11) 99999-9999).'); return; }
+  var btn = document.getElementById('waCodeBtn'); btn.disabled=true; btn.textContent='Gerando...';
+  try{
+    var d = await api('/painel/api/whatsapp/conectar', { numero: numero });
+    if (d.conectado){ await loadWhatsAppStatus(); return; }
+    if (d.code){
+      document.getElementById('waCode').textContent = d.code;
+      document.getElementById('waCodeWrap').style.display='block';
+      document.getElementById('waQrWrap').style.display='none';
+      setWaStatus('Digite o código acima no WhatsApp DESTE celular para conectar.','info');
+      if(waPollTimer) clearInterval(waPollTimer);
+      waPollTimer = setInterval(loadWhatsAppStatus, 4000);
+    } else if (d.qr){
+      document.getElementById('waQr').src = d.qr;
+      document.getElementById('waQrWrap').style.display='block';
+      setWaStatus('Não veio o código; use o QR abaixo (de outro aparelho).','info');
+    } else {
+      show('waErr','Não consegui gerar o código agora. Tente novamente em instantes.');
+    }
+  }catch(e){ show('waErr', e.message); }
+  finally{ btn.disabled=false; btn.textContent='Gerar código de conexão'; }
+}
 async function disconnectWhatsApp(){
   if(!confirm('Desconectar o WhatsApp? As automações param de enviar até você reconectar.')) return;
   hide('waErr');
@@ -1715,6 +1765,26 @@ app.get('/painel/api/me', painelAuth, (req, res) => {
   res.json({ success: true, store_id: req.painel.store_id, login: req.painel.login, session_token: token });
 });
 
+// E-mail com o link da extensão do Chrome (pra acompanhar a loja no computador).
+async function enviarEmailExtensao(email) {
+  if (!email) return;
+  try {
+    const resend = new Resend(process.env.RESEND_API_KEY);
+    const CHROME_URL = 'https://chromewebstore.google.com/detail/loggzap-dashboard/dpfnpaepnholpjgbblljpinbkfoldlpp';
+    await resend.emails.send({
+      from: 'LoggZap <contato@loggzap.com.br>', to: email,
+      subject: '💻 Instale a extensão do LoggZap no seu computador',
+      html: '<div style="font-family:sans-serif;max-width:520px;margin:0 auto;background:#0d0d10;color:#ededf2;padding:32px;border-radius:12px">' +
+        '<h2 style="color:#00d084">LoggZap</h2>' +
+        '<p>Seu acesso está pronto! Para acompanhar sua loja também no computador, instale a extensão do LoggZap no Google Chrome:</p>' +
+        '<p style="text-align:center;margin:24px 0"><a href="' + CHROME_URL + '" style="background:#00d084;color:#000;padding:12px 28px;border-radius:8px;text-decoration:none;font-weight:700">Instalar a extensão no Chrome</a></p>' +
+        '<p style="color:#8b93a8;font-size:13px">Dica: abra este e-mail <b>no computador</b> e clique no botão (a extensão é do Chrome no PC). No celular, você já pode usar o painel direto pelo navegador.</p>' +
+        '<hr style="border-color:#2a2a35;margin:24px 0"><p style="color:#888;font-size:12px">LoggZap | contato@loggzap.com.br</p></div>'
+    });
+    console.log('[Extensao email] enviado para ' + email);
+  } catch (e) { console.error('[Extensao email] falha:', e.message); }
+}
+
 app.post('/painel/api/register', (req, res) => {
   try {
     const { store_id, chave, login, senha } = req.body || {};
@@ -1747,6 +1817,14 @@ app.post('/painel/api/register', (req, res) => {
 
     db.criarPainelUsuario(String(store_id), String(login).trim(), hashPassword(String(senha)));
     db.salvarPainelTemplates(String(store_id), { ...DEFAULT_AUTOMATION_TEMPLATES });
+
+    // Envia o link da extensão pro e-mail cadastrado da loja (Nuvemshop). Não bloqueia o cadastro.
+    try {
+      getStoreInfoSeguro(String(store_id)).then(function (st) {
+        const em = st && (st.email || st.contact_email);
+        if (em) enviarEmailExtensao(em);
+      }).catch(function () {});
+    } catch (_) {}
 
     const token = createPainelSession(store_id, String(login).trim());
     res.setHeader('Set-Cookie', painelSessionCookie(token));
@@ -1917,7 +1995,8 @@ app.post('/painel/api/whatsapp/conectar', painelAuth, async (req, res) => {
   if (!EVOLUTION_URL || !EVOLUTION_API_KEY)
     return res.status(400).json({ error: 'Conexão de WhatsApp indisponível no momento. Fale com o suporte.' });
   try {
-    const out = await evolutionConnect(storeId);
+    const numero = (req.body && req.body.numero) ? String(req.body.numero) : '';
+    const out = await evolutionConnect(storeId, numero);
     const st = await evolutionState(storeId);
     res.json({ success: true, qr: out.qr, code: out.code, estado: st.state, conectado: st.conectado });
   } catch (e) {
@@ -2141,12 +2220,16 @@ async function evolutionEnsureInstance(storeId) {
   return instance;
 }
 
-async function evolutionConnect(storeId) {
+async function evolutionConnect(storeId, numero) {
   const instance = await evolutionEnsureInstance(storeId);
-  const r = await axios.get(`${EVOLUTION_URL}/instance/connect/${instance}`,
+  // Com número → a Evolution devolve o CÓDIGO DE PAREAMENTO (conectar pelo telefone, sem QR).
+  // Sem número → devolve o QR (base64) pra escanear de outro aparelho.
+  const num = numero ? String(numero).replace(/\D/g, '') : '';
+  const qs = num ? ('?number=' + encodeURIComponent(num)) : '';
+  const r = await axios.get(`${EVOLUTION_URL}/instance/connect/${instance}${qs}`,
     { headers: { apikey: EVOLUTION_API_KEY }, timeout: 30000 });
   const d = r.data || {};
-  return { instance, qr: d.base64 || d.qrcode?.base64 || null, code: d.code || d.pairingCode || null };
+  return { instance, qr: d.base64 || d.qrcode?.base64 || null, code: d.pairingCode || d.code || null };
 }
 
 async function evolutionState(storeId) {
