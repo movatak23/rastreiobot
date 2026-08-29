@@ -2043,9 +2043,13 @@ app.post('/painel/api/forgot', async (req, res) => {
     if (!store_id) return res.status(400).json({ error: 'Informe o Store ID.' });
     const user = db.getPainelUsuario ? db.getPainelUsuario(String(store_id)) : null;
     if (!user) return res.json({ success: true, email_mascarado: null }); // não revela se existe
-    const email = String(user.login || '').trim();
-    if (!/^[^@\s]+@[^@\s]+\.[^@\s]+$/.test(email)) {
-      return res.status(400).json({ error: 'O login desta conta não é um email. Peça a redefinição ao suporte.' });
+    const ehEmail = (v) => /^[^@\s]+@[^@\s]+\.[^@\s]+$/.test(String(v || '').trim());
+    // Envia o código pro E-MAIL CADASTRADO DA LOJA (Nuvemshop); cai pro login só se ele for e-mail.
+    let email = '';
+    try { const st = await getStoreInfoSeguro(String(store_id)); email = String((st && (st.email || st.contact_email)) || '').trim(); } catch(_) {}
+    if (!ehEmail(email) && ehEmail(user.login)) email = String(user.login).trim();
+    if (!ehEmail(email)) {
+      return res.status(400).json({ error: 'Não há e-mail cadastrado nesta loja para enviar o código. Fale com o suporte.' });
     }
     const codigo = String(Math.floor(100000 + Math.random() * 900000));
     const expira = new Date(Date.now() + 30 * 60 * 1000).toISOString();
