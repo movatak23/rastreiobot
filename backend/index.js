@@ -2960,8 +2960,25 @@ function statusPlanoLoja(storeId) {
   const plano = (lic && lic.plano && (pago || emTrial)) ? String(lic.plano).toLowerCase() : (emTrial ? 'premium' : 'free');
   return { pago, emTrial, plano, diasRestantes, podeDisparar: pago || emTrial };
 }
+// Na virada trial → plano pago (Essencial/Pro), zera o contador de rastreios do mês
+// UMA única vez: os rastreios gastos no teste (teto 50) não descontam do novo plano.
+// Idempotente (flag trial_convertido) e cobre qualquer caminho de ativação (assinatura,
+// chave no register, extensão, admin) por estar no chokepoint do limite.
+function converterTrialSePreciso(storeId, sp) {
+  try {
+    storeId = String(storeId);
+    if (db.trialJaConvertido(storeId)) return;
+    if (!sp) sp = statusPlanoLoja(storeId);
+    if (!sp.pago) return;                                   // ainda não virou plano pago
+    if (!(db.getLicenca && db.getLicenca('TRIAL-' + storeId))) return; // nunca fez trial → nada a zerar
+    db.zerarUsoRastreioMes(storeId);
+    db.marcarTrialConvertido(storeId);
+    console.log('[Trial→Pago] rastreios do mes zerados para a loja ' + storeId);
+  } catch (e) { console.error('[converterTrial]', e.message); }
+}
 function getLimiteRastreio(storeId) {
   const sp = statusPlanoLoja(storeId);
+  converterTrialSePreciso(storeId, sp); // zera o contador 1x quando o cliente sai do trial p/ Essencial/Pro
   // Teste de 7 dias: features de Pro, mas teto de rastreio menor (incentiva o upgrade).
   if (sp.emTrial) return RASTREIO_LIMITES.trial;
   return RASTREIO_LIMITES[sp.plano] != null ? RASTREIO_LIMITES[sp.plano] : 50;

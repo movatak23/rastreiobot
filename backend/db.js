@@ -886,6 +886,13 @@ function migrar() {
       UNIQUE(store_id, ano_mes, codigo)
     )`);
   } catch(e) {}
+  // Marca lojas que já converteram de trial → plano pago (para zerar o contador 1x na virada).
+  try {
+    db.exec(`CREATE TABLE IF NOT EXISTS trial_convertido (
+      store_id      TEXT PRIMARY KEY,
+      convertido_em TEXT DEFAULT (datetime('now'))
+    )`);
+  } catch(e) {}
   try {
     db.exec(`CREATE TABLE IF NOT EXISTS assinaturas (
       store_id       TEXT PRIMARY KEY,
@@ -1520,6 +1527,18 @@ function totalRastreiosMes() {
   const r = db.prepare(`SELECT COUNT(*) c FROM rastreio_uso WHERE ano_mes=strftime('%Y-%m','now')`).get();
   return r?.c || 0;
 }
+// Zera o contador de rastreios do MÊS CORRENTE de uma loja (usado na virada trial → plano pago).
+function zerarUsoRastreioMes(storeId) {
+  if (!storeId) return;
+  db.prepare(`DELETE FROM rastreio_uso WHERE store_id=? AND ano_mes=strftime('%Y-%m','now')`).run(String(storeId));
+}
+// Controle "1x por loja" da conversão trial → pago (evita zerar o contador toda hora).
+function trialJaConvertido(storeId) {
+  return !!db.prepare('SELECT 1 FROM trial_convertido WHERE store_id=?').get(String(storeId));
+}
+function marcarTrialConvertido(storeId) {
+  db.prepare('INSERT OR IGNORE INTO trial_convertido (store_id) VALUES (?)').run(String(storeId));
+}
 
 function salvarNomeMovimentacao(storeId, origemId, nome) {
   const limpo = String(nome || '').trim();
@@ -1742,6 +1761,7 @@ module.exports = {
   salvarNomeMovimentacao, listarNomesMovimentacoes,
   salvarRastreioContexto, getRastreioContexto,
   registrarUsoRastreio, usoRastreioJaContado, contarUsoRastreio, totalRastreiosMes,
+  zerarUsoRastreioMes, trialJaConvertido, marcarTrialConvertido,
   upsertAssinatura, getAssinatura, ativarAssinaturaLicenca, cancelarAssinaturaLicenca, listarAssinaturas,
   salvarRelatorioMercadoPago, getRelatorioMercadoPago, listarRelatoriosMercadoPago, marcarRelatorioMercadoPagoImportado,
     jaPedidoRecebido,
