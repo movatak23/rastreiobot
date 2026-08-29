@@ -1400,6 +1400,43 @@ function painelHtml() {
   </div>
 
   <div id="panelArea" class="hidden">
+    <div class="card" id="dashCard">
+      <div style="display:flex;justify-content:space-between;align-items:center;flex-wrap:wrap;gap:8px">
+        <h2 style="margin:0">📊 Painel da loja</h2>
+        <div style="display:flex;align-items:center;gap:8px"><span id="dashAtual" class="muted" style="font-size:12px"></span><button class="btn2" onclick="loadDashboard()">↻ Atualizar</button></div>
+      </div>
+      <div style="display:flex;gap:8px;margin:12px 0">
+        <button class="btn2 dashPBtn" id="dashP_hoje" onclick="setDashPeriodo('hoje')">Hoje</button>
+        <button class="btn2 dashPBtn" id="dashP_semana" onclick="setDashPeriodo('semana')">Semana</button>
+        <button class="btn2 dashPBtn" id="dashP_mes" onclick="setDashPeriodo('mes')">Mês</button>
+      </div>
+      <div style="background:#11151e;border-radius:10px;padding:14px;margin-bottom:12px">
+        <div style="display:flex;justify-content:space-between;align-items:center;gap:10px">
+          <span class="muted">Saúde da loja</span>
+          <strong id="dashScore" style="font-size:26px;color:#00d084">--</strong>
+          <div style="flex:1;height:8px;background:#0c0f16;border-radius:6px;overflow:hidden"><div id="dashScoreBar" style="height:100%;width:0;background:#00d084;transition:width .4s"></div></div>
+        </div>
+      </div>
+      <div style="display:grid;grid-template-columns:1fr 1fr;gap:10px">
+        <div style="background:#11151e;border:1px solid rgba(255,255,255,.06);border-radius:10px;padding:14px"><div class="muted" style="font-size:11px;text-transform:uppercase;letter-spacing:1px" id="dashVendasLbl">Vendas</div><strong id="dashVendas" style="font-size:22px">0</strong></div>
+        <div style="background:#11151e;border:1px solid rgba(255,255,255,.06);border-radius:10px;padding:14px"><div class="muted" style="font-size:11px;text-transform:uppercase;letter-spacing:1px">Faturamento</div><strong id="dashFat" style="font-size:22px">R$ 0,00</strong></div>
+        <div style="background:#11151e;border:1px solid rgba(255,255,255,.06);border-radius:10px;padding:14px"><div class="muted" style="font-size:11px;text-transform:uppercase;letter-spacing:1px">Ticket médio</div><strong id="dashTicket" style="font-size:22px">R$ 0,00</strong></div>
+        <div style="background:#11151e;border:1px solid rgba(255,255,255,.06);border-radius:10px;padding:14px"><div class="muted" style="font-size:11px;text-transform:uppercase;letter-spacing:1px">Frete pago</div><strong id="dashFrete" style="font-size:22px">R$ 0,00</strong></div>
+      </div>
+      <div id="dashProntos" style="border:1px solid rgba(79,142,247,.4);border-radius:10px;padding:12px;margin:12px 0;color:#4f8ef7;font-weight:600">📦 0 pedido(s) prontos para envio</div>
+      <div class="muted" style="font-size:11px;text-transform:uppercase;letter-spacing:1px;margin-bottom:6px">Período</div>
+      <div style="display:grid;grid-template-columns:1fr 1fr;gap:10px">
+        <div style="background:#11151e;border:1px solid rgba(255,255,255,.06);border-radius:10px;padding:14px"><div class="muted" style="font-size:11px;text-transform:uppercase">Semana</div><strong id="dashSemana" style="font-size:20px">R$ 0,00</strong><div id="dashSemanaQtd" class="muted" style="font-size:12px"></div></div>
+        <div style="background:#11151e;border:1px solid rgba(255,255,255,.06);border-radius:10px;padding:14px"><div class="muted" style="font-size:11px;text-transform:uppercase">Mês</div><strong id="dashMes" style="font-size:20px">R$ 0,00</strong><div id="dashMesQtd" class="muted" style="font-size:12px"></div></div>
+      </div>
+      <div style="margin-top:12px">
+        <div class="muted" style="font-size:11px;text-transform:uppercase;letter-spacing:1px">Insights</div>
+        <div id="dashProd" style="margin-top:6px">🏆 Produto mais vendido hoje: <b>—</b></div>
+        <div id="dashPico" style="margin-top:4px">⏰ Hora de pico hoje: <b>—</b></div>
+      </div>
+      <div class="err" id="dashErr"></div>
+    </div>
+
     <div id="extBanner" class="card" style="border:1px solid rgba(0,208,132,.45);background:rgba(0,208,132,.06);display:flex;align-items:center;gap:12px;flex-wrap:wrap">
       <div style="flex:1;min-width:200px">
         <strong>💻 Acompanhe sua loja no computador</strong><br>
@@ -1722,7 +1759,41 @@ async function disconnectWhatsApp(){
   catch(e){ show('waErr', e.message); }
 }
 
-apiGet('/painel/api/me').then(loadPanel).then(loadChecklist).then(loadWhatsAppStatus).catch(()=>{});
+var dashData = null, dashPeriodo = 'hoje';
+function esc(s){ return String(s==null?'':s).replace(/[<>&]/g, function(c){ return {'<':'&lt;','>':'&gt;','&':'&amp;'}[c]; }); }
+function fmtBRL(v){ return 'R$ ' + (Number(v)||0).toLocaleString('pt-BR',{minimumFractionDigits:2,maximumFractionDigits:2}); }
+async function loadDashboard(){
+  try{
+    var d = await apiGet('/painel/api/dashboard');
+    if(!d || d.success===false) throw new Error((d && d.error) || 'erro');
+    dashData = d;
+    document.getElementById('dashScore').textContent = (d.score!=null ? d.score : '--');
+    document.getElementById('dashScoreBar').style.width = (d.score!=null ? d.score : 0) + '%';
+    document.getElementById('dashAtual').textContent = d.atualizadoEm ? ('Atualizado ' + d.atualizadoEm) : '';
+    document.getElementById('dashProntos').innerHTML = '📦 <b>' + ((d.hoje && d.hoje.aguardandoEnvio) || 0) + '</b> pedido(s) prontos para envio';
+    document.getElementById('dashSemana').textContent = fmtBRL(d.semana && d.semana.total);
+    document.getElementById('dashSemanaQtd').textContent = ((d.semana && d.semana.qtd)||0) + ' pedidos';
+    document.getElementById('dashMes').textContent = fmtBRL(d.mes && d.mes.total);
+    document.getElementById('dashMesQtd').textContent = ((d.mes && d.mes.qtd)||0) + ' pedidos';
+    var prod = d.hoje && d.hoje.prodMaisVendido;
+    document.getElementById('dashProd').innerHTML = '🏆 Produto mais vendido hoje: <b>' + (prod ? (esc(prod[0]) + ' (' + prod[1] + ')') : 'Ainda sem dados suficientes') + '</b>';
+    document.getElementById('dashPico').innerHTML = '⏰ Hora de pico hoje: <b>' + (d.hoje && d.hoje.horaPico ? d.hoje.horaPico : '—') + '</b>';
+    setDashPeriodo(dashPeriodo);
+    hide('dashErr');
+  }catch(e){ show('dashErr','Não consegui carregar o painel agora: '+e.message); }
+}
+function setDashPeriodo(p){
+  dashPeriodo = p;
+  ['hoje','semana','mes'].forEach(function(x){ var b=document.getElementById('dashP_'+x); if(b){ b.style.background=(x===p)?'#4f8ef7':''; b.style.color=(x===p)?'#fff':''; } });
+  if(!dashData) return;
+  var src = p==='hoje' ? dashData.hoje : (p==='semana' ? dashData.semana_det : dashData.mes_det);
+  document.getElementById('dashVendasLbl').textContent = p==='hoje' ? 'Vendas (hoje)' : (p==='semana' ? 'Vendas (semana)' : 'Vendas (mês)');
+  document.getElementById('dashVendas').textContent = (src && src.qtd!=null ? src.qtd : 0);
+  document.getElementById('dashFat').textContent = fmtBRL(src && src.total);
+  document.getElementById('dashTicket').textContent = fmtBRL(src && src.ticketMedio);
+  document.getElementById('dashFrete').textContent = fmtBRL(src && src.frete);
+}
+apiGet('/painel/api/me').then(loadPanel).then(loadChecklist).then(loadWhatsAppStatus).then(loadDashboard).catch(()=>{});
 </script>
 
 <!-- PWA: banner de instalação (iPhone + Android) -->
@@ -4686,9 +4757,7 @@ app.get('/dashboard/:storeId', auth, async (req, res) => {
   } catch(e) { res.status(500).json({ error: e.message }); }
 });
 
-app.get('/dashboard-nuvem/:storeId', auth, async (req, res) => {
-  const { storeId } = req.params;
-  try {
+async function montarDashboardNuvem(storeId) {
     const _agora = new Date();
     const _brt = new Date(_agora.getTime() - 3 * 60 * 60 * 1000);
     const _ano = _brt.getUTCFullYear(), _mes = _brt.getUTCMonth(), _dia = _brt.getUTCDate();
@@ -4754,8 +4823,7 @@ app.get('/dashboard-nuvem/:storeId', auth, async (req, res) => {
     if (totalPedidos > 0) { const txPendente = (aguardandoPagamento + aguardandoEnvio) / totalPedidos; score -= Math.round(txPendente * 40); }
     if (totalHoje === 0) score -= 20;
     score = Math.max(0, Math.min(100, score));
-    res.json({
-      success: true,
+    return {
       hoje: { qtd: pagosHoje.length, total: totalHoje, frete: freteHoje, ticketMedio: ticketMedioHoje, variacaoValor, variacaoQtd, aguardandoPagamento, aguardandoEnvio, prodMaisVendido, horaPico },
       semana: { qtd: pagosSemana.length, total: totalSemana },
       mes:    { qtd: pagosMes.length, total: totalMes, frete: freteMes },
@@ -4763,11 +4831,16 @@ app.get('/dashboard-nuvem/:storeId', auth, async (req, res) => {
       mes_det:    { qtd: pagosMes.length,    total: totalMes,    frete: freteMes,    ticketMedio: ticketMes    },
       ultimos, score,
       atualizadoEm: new Date().toLocaleTimeString('pt-BR', { hour:'2-digit', minute:'2-digit', timeZone:'America/Recife' })
-    });
-  } catch(e) {
-    console.error('[Dashboard Nuvem]', e.message);
-    res.status(500).json({ success: false, error: e.message });
-  }
+    };
+}
+app.get('/dashboard-nuvem/:storeId', auth, async (req, res) => {
+  try { res.json({ success: true, ...(await montarDashboardNuvem(req.params.storeId)) }); }
+  catch(e) { console.error('[Dashboard Nuvem]', e.message); res.status(500).json({ success: false, error: e.message }); }
+});
+// Mesmo dashboard, mas pro lojista logado no painel (sessão) — usado na PWA/mobile.
+app.get('/painel/api/dashboard', painelAuth, async (req, res) => {
+  try { res.json({ success: true, ...(await montarDashboardNuvem(String(req.painel.store_id))) }); }
+  catch(e) { console.error('[Painel Dashboard]', e.message); res.status(500).json({ success: false, error: e.message }); }
 });
 
 app.get('/auth/status', (req, res) => {
