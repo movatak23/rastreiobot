@@ -1657,13 +1657,18 @@ async function loadWhatsAppStatus(){
     const connectBtn=document.getElementById('waConnectBtn'), logoutBtn=document.getElementById('waLogoutBtn'), qrWrap=document.getElementById('waQrWrap');
     if(!d.disponivel){ setWaStatus('Conexão de WhatsApp indisponível no momento. Fale com o suporte.','info'); if(connectBtn) connectBtn.style.display='none'; return; }
     if(d.conectado){
-      setWaStatus('✅ WhatsApp conectado. Suas automações saem do seu número.','ok');
+      var ws=document.getElementById('waStatus');
+      if(ws){ ws.className='ok'; ws.innerHTML='✅ <b>WhatsApp conectado!</b> Suas automações já saem do seu número.'; ws.style.cssText='background:rgba(0,208,132,.12);border:1px solid rgba(0,208,132,.45);border-radius:10px;padding:14px;color:#00d084;font-size:15px;font-weight:600'; }
+      var nb=document.getElementById('waNumBox'); if(nb) nb.style.display='none';
+      var cw=document.getElementById('waCodeWrap'); if(cw) cw.style.display='none';
       if(qrWrap) qrWrap.style.display='none';
       if(connectBtn) connectBtn.style.display='none';
       if(logoutBtn) logoutBtn.style.display='inline-block';
       if(waPollTimer){ clearInterval(waPollTimer); waPollTimer=null; }
     } else {
-      setWaStatus('⚠️ WhatsApp ainda não conectado. Clique em "Conectar / mostrar QR" e escaneie o código.','info');
+      var ws2=document.getElementById('waStatus'); if(ws2) ws2.style.cssText='';
+      setWaStatus('⚠️ WhatsApp ainda não conectado. Use o código (mesmo celular) ou o QR abaixo.','info');
+      var nb2=document.getElementById('waNumBox'); if(nb2) nb2.style.display='block';
       if(connectBtn) connectBtn.style.display='inline-block';
       if(logoutBtn) logoutBtn.style.display='none';
     }
