@@ -921,6 +921,18 @@ function criarLicenca(chave, plano, storeId, meses) {
   `).run(chave, plano, storeId || null, expira.toISOString());
 }
 
+// Licença de TESTE (trial) de N dias, vinculada à loja. Chave determinística TRIAL-<store>.
+// ON CONFLICT DO NOTHING = 1 trial por loja (reconectar não renova/reabre → sem abuso).
+function criarTrial(storeId, plano, dias) {
+  const expira = new Date(Date.now() + Number(dias || 7) * 24 * 60 * 60 * 1000).toISOString();
+  db.prepare(`
+    INSERT INTO licencas (chave, plano, store_id, expira_em, status)
+    VALUES (?, ?, ?, ?, 'ativa')
+    ON CONFLICT(chave) DO NOTHING
+  `).run('TRIAL-' + String(storeId), plano || 'premium', String(storeId), expira);
+  return getLicencaPorStore(String(storeId));
+}
+
 function getLicenca(chave) {
   return db.prepare('SELECT * FROM licencas WHERE chave = ?').get(chave);
 }
@@ -1760,7 +1772,7 @@ module.exports = {
   registrarClienteAtivo, jaClienteAtivo,
   getAdminStats, getLojistaStats, registrarVisita, getGestaoStats,
   upsertAuthSession, getAuthSession, completeAuthSession, deleteAuthSession,
-  criarLicenca, getLicenca, getLicencaPorStore, vincularLicenca, validarLicenca,
+  criarLicenca, criarTrial, getLicenca, getLicencaPorStore, vincularLicenca, validarLicenca,
   getLicencasPorPayment, salvarPaymentId, getLicencaPorChave, getMetas, salvarMetas, desvincularDispositivo, setMultiDispositivo,
   migrar
 };

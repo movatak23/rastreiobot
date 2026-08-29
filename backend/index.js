@@ -1383,18 +1383,19 @@ function painelHtml() {
     </div>
     <div class="card" id="regCard">
       <h1>Começar agora</h1>
-      <p>Primeira vez? Conecte sua loja Nuvemshop — o Store ID é capturado sozinho. Depois é só criar seu login e senha.</p>
+      <p>Conecte sua loja Nuvemshop e crie login e senha — seu <b style="color:#00d084">teste de 7 dias (Pro completo)</b> começa na hora. Sem cartão, sem chave.</p>
       <button class="btn2" type="button" onclick="conectarNuvemshop('regStore','regConnMsg')" style="margin-bottom:8px">🔗 Conectar com Nuvemshop</button>
       <div id="regConnMsg" class="muted" style="font-size:13px;margin:2px 0 8px;display:none"></div>
       <div id="regStoreWrap" style="display:none"><label>Store ID</label><input id="regStore" placeholder="Ex: 4757590"></div>
-      <label>Chave de ativação</label><input id="regKey" placeholder="LZB-XXXX-XXXX-XXXX ou LZP-...">
+      <div id="regKeyWrap" style="display:none"><label>Chave de ativação</label><input id="regKey" placeholder="LZB-XXXX-XXXX-XXXX ou LZP-..."></div>
       <label>Login desejado</label><input id="regUser" placeholder="Ex: minha-loja">
       <label>Senha</label><input id="regPass" type="password" placeholder="Mínimo 6 caracteres">
       <div class="warning">Guarde esse acesso. Depois você poderá alterar login e senha dentro do painel.</div>
       <div class="err" id="regErr"></div>
       <button class="btn" onclick="register()">Criar acesso</button>
       <p style="margin-top:16px;text-align:center;border-top:1px solid rgba(255,255,255,.08);padding-top:14px"><a href="#" onclick="mostrarLogin();return false" style="color:#4f8ef7;font-size:14px;font-weight:700;text-decoration:none">Já sou cadastrado — ENTRAR →</a></p>
-      <p style="text-align:center;margin-top:6px"><a href="#" onclick="mostrarStoreManual();return false" style="color:#8b93a8;font-size:12px;text-decoration:none">Não consegui conectar? Informar Store ID manualmente</a></p>
+      <p style="text-align:center;margin-top:6px"><a href="#" onclick="mostrarChaveManual();return false" style="color:#8b93a8;font-size:12px;text-decoration:none">Já comprei um plano? Inserir chave de ativação</a></p>
+      <p style="text-align:center;margin-top:4px"><a href="#" onclick="mostrarStoreManual();return false" style="color:#8b93a8;font-size:12px;text-decoration:none">Não consegui conectar? Informar Store ID manualmente</a></p>
     </div>
   </div>
 
@@ -1560,6 +1561,7 @@ function conectarNuvemshop(targetId, msgId){
 function mostrarLogin(){ var l=document.getElementById('loginCard'), r=document.getElementById('regCard'); if(r)r.style.display='none'; if(l)l.style.display='block'; }
 function mostrarRegistro(){ var l=document.getElementById('loginCard'), r=document.getElementById('regCard'); if(l)l.style.display='none'; if(r)r.style.display='block'; }
 function mostrarStoreManual(){ var w=document.getElementById('regStoreWrap'); if(w){ w.style.display='block'; var i=document.getElementById('regStore'); if(i)i.focus(); } }
+function mostrarChaveManual(){ var w=document.getElementById('regKeyWrap'); if(w){ w.style.display='block'; var i=document.getElementById('regKey'); if(i)i.focus(); } }
 async function loadPanel(){
   const data = await apiGet('/painel/api/templates');
   document.getElementById('authArea').classList.add('hidden');
@@ -1716,14 +1718,23 @@ app.get('/painel/api/me', painelAuth, (req, res) => {
 app.post('/painel/api/register', (req, res) => {
   try {
     const { store_id, chave, login, senha } = req.body || {};
-    if (!store_id || !chave || !login || !senha) return res.status(400).json({ error: 'Preencha Store ID, chave Premium, login e senha.' });
+    if (!store_id || !login || !senha) return res.status(400).json({ error: 'Conecte sua loja com a Nuvemshop e preencha login e senha.' });
     if (String(senha).length < 6) return res.status(400).json({ error: 'A senha precisa ter pelo menos 6 caracteres.' });
 
-    // Aceita qualquer licença ATIVA (Essencial/basic ou Pro/premium). O painel/dashboard
-    // faz parte do plano Essencial; features exclusivas do Pro seguem gated em seus próprios pontos.
-    const validacao = db.validarLicenca(String(chave).trim(), String(store_id).trim());
-    if (!validacao?.valida) {
-      return res.status(403).json({ error: validacao?.motivo || 'Chave inválida ou não corresponde a esta loja.' });
+    if (chave && String(chave).trim()) {
+      // Fluxo com chave (quem comprou um plano): aceita qualquer licença ATIVA (Essencial ou Pro).
+      const validacao = db.validarLicenca(String(chave).trim(), String(store_id).trim());
+      if (!validacao?.valida) {
+        return res.status(403).json({ error: validacao?.motivo || 'Chave inválida ou não corresponde a esta loja.' });
+      }
+    } else {
+      // Sem chave = TESTE de 7 dias (Pro). Provisiona o trial na hora se a loja ainda não tem licença.
+      let lic = db.getLicencaPorStore(String(store_id));
+      if (!lic) lic = db.criarTrial(String(store_id), 'premium', 7);
+      if (!lic) return res.status(403).json({ error: 'Não consegui iniciar seu teste. Conecte sua loja com a Nuvemshop e tente de novo.' });
+      if (new Date(lic.expira_em) < new Date()) {
+        return res.status(403).json({ error: 'Seu teste de 7 dias expirou. Escolha um plano para continuar usando o LoggZap.' });
+      }
     }
 
     if (db.getPainelUsuario && db.getPainelUsuario(String(store_id))) {
