@@ -1311,6 +1311,16 @@ function painelHtml() {
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width,initial-scale=1.0">
 <title>Painel Premium LoggZap</title>
+<!-- PWA (instalável no iPhone e Android) -->
+<link rel="manifest" href="/manifest.webmanifest">
+<meta name="theme-color" content="#00d084">
+<meta name="mobile-web-app-capable" content="yes">
+<meta name="apple-mobile-web-app-capable" content="yes">
+<meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
+<meta name="apple-mobile-web-app-title" content="LoggZap">
+<link rel="apple-touch-icon" href="/icons/apple-touch-icon.png">
+<link rel="icon" href="/favicon.png">
+
 <style>
   @import url('https://fonts.googleapis.com/css2?family=Poppins:wght@600;700;800&display=swap');
   *{box-sizing:border-box}body{margin:0;background:#07090e;color:#eef0f8;font-family:Arial,sans-serif}
@@ -1623,6 +1633,39 @@ async function disconnectWhatsApp(){
 }
 
 apiGet('/painel/api/me').then(loadPanel).then(loadChecklist).then(loadWhatsAppStatus).catch(()=>{});
+</script>
+
+<!-- PWA: banner de instalação (iPhone + Android) -->
+<div id="pwaBanner" style="display:none;position:fixed;left:12px;right:12px;bottom:12px;z-index:9999;background:#0c0f16;border:1px solid rgba(0,208,132,.4);border-radius:12px;padding:12px 14px;box-shadow:0 10px 30px rgba(0,0,0,.5)">
+  <div style="display:flex;align-items:center;gap:10px">
+    <img src="/icons/icon-192.png" alt="" style="width:40px;height:40px;border-radius:9px">
+    <div style="flex:1;min-width:0">
+      <div style="font-weight:700;color:#eef0f8;font-size:14px">Instalar o app LoggZap</div>
+      <div id="pwaMsg" style="color:#8b93a8;font-size:12px;line-height:1.4">Tenha o painel na tela inicial do seu celular.</div>
+    </div>
+    <button id="pwaInstallBtn" style="background:#00d084;color:#000;border:none;border-radius:8px;padding:9px 14px;font-weight:700;cursor:pointer">Instalar</button>
+    <button id="pwaClose" style="background:transparent;border:none;color:#8b93a8;font-size:18px;cursor:pointer">&times;</button>
+  </div>
+</div>
+<script>
+(function(){
+  if('serviceWorker' in navigator){ navigator.serviceWorker.register('/sw.js').catch(function(){}); }
+  function dismissed(){ try{ return localStorage.getItem('pwaDismiss')==='1'; }catch(e){ return false; } }
+  function setDismiss(){ try{ localStorage.setItem('pwaDismiss','1'); }catch(e){} }
+  var standalone = window.matchMedia('(display-mode: standalone)').matches || window.navigator.standalone === true;
+  if(standalone) return;
+  var banner=document.getElementById('pwaBanner'), installBtn=document.getElementById('pwaInstallBtn');
+  var msg=document.getElementById('pwaMsg'), closeBtn=document.getElementById('pwaClose'), deferred=null;
+  if(closeBtn) closeBtn.onclick=function(){ banner.style.display='none'; setDismiss(); };
+  window.addEventListener('beforeinstallprompt', function(e){ e.preventDefault(); deferred=e; if(!dismissed()) banner.style.display='block'; });
+  if(installBtn) installBtn.onclick=function(){ if(deferred){ deferred.prompt(); if(deferred.userChoice){ deferred.userChoice.then(function(){ banner.style.display='none'; deferred=null; }); } } };
+  var ua=navigator.userAgent||'';
+  if(/iPhone|iPad|iPod/i.test(ua)){
+    installBtn.style.display='none';
+    msg.innerHTML='No iPhone: toque em <b>Compartilhar</b> e depois <b>Adicionar &agrave; Tela de In&iacute;cio</b>.';
+    if(!dismissed()) banner.style.display='block';
+  }
+})();
 </script>
 </body>
 </html>`;
