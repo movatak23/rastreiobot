@@ -662,8 +662,14 @@ function salvarLead(nome, email, whatsapp, plano, origem) {
 // Lista os leads mais recentes, marcando quem já conectou a loja (casa pelo e-mail
 // do cadastro com o e-mail da loja gravado em tokens, quando existir).
 function listarLeads(limite) {
+  // Some quem foi TRAVADO no atendimento: travar é dizer "isso não é lead, é contato
+  // pessoal/fornecedor". Fica escondido, não apagado — destravou, volta a aparecer.
   return db.prepare(`SELECT id, nome, email, whatsapp, plano, store_id, origem, criado_em
-                     FROM leads ORDER BY datetime(criado_em) DESC LIMIT ?`).all(Number(limite) || 100);
+                     FROM leads
+                     WHERE telefone IS NULL OR telefone = '' OR telefone NOT IN (
+                       SELECT telefone FROM atend_estado WHERE travado = 1
+                     )
+                     ORDER BY datetime(criado_em) DESC LIMIT ?`).all(Number(limite) || 100);
 }
 // Casa o lead com a loja quando ela conecta o OAuth. O e-mail do formulário nem sempre
 // é o mesmo cadastrado na Nuvemshop, então tenta os dois. Só marca lead ainda solto
@@ -797,16 +803,25 @@ function atendRegistrarContato(telefone, nome) {
               ON CONFLICT(telefone) DO UPDATE SET nome=COALESCE(excluded.nome, nome)`)
     .run(String(telefone), nome || null);
 }
+// Quantas conversas estão travadas (pro painel mostrar "Travadas (N)").
+function atendContarTravadas() {
+  const r = db.prepare('SELECT COUNT(*) c FROM atend_estado WHERE travado = 1').get();
+  return (r && r.c) || 0;
+}
+
 // Lista as conversas pro painel (mais recentes primeiro).
-function atendConversas(limite) {
+// Travada SOME da lista — é o ponto de travar. Só aparece com travadas=true,
+// senão não haveria como destravar.
+function atendConversas(limite, travadas) {
   return db.prepare(`
     SELECT e.telefone, e.pausado, e.motivo, e.nome, e.travado, e.ativada,
            (SELECT COUNT(*) FROM atend_mensagens m WHERE m.telefone=e.telefone) AS qtd,
            (SELECT texto FROM atend_mensagens m WHERE m.telefone=e.telefone ORDER BY id DESC LIMIT 1) AS ultima,
            (SELECT criado_em FROM atend_mensagens m WHERE m.telefone=e.telefone ORDER BY id DESC LIMIT 1) AS ultima_em
     FROM atend_estado e
+    WHERE COALESCE(e.travado,0) = ?
     ORDER BY datetime(COALESCE((SELECT criado_em FROM atend_mensagens m WHERE m.telefone=e.telefone ORDER BY id DESC LIMIT 1), e.atualizado_em)) DESC
-    LIMIT ?`).all(Number(limite) || 50);
+    LIMIT ?`).all(travadas ? 1 : 0, Number(limite) || 50);
 }
 // Lead vindo do WhatsApp: não tem e-mail, então dedupa por TELEFONE.
 function salvarLeadWhatsApp(telefone, nome) {
@@ -2113,7 +2128,7 @@ module.exports = {
   salvarLead, listarLeads, contarLeads, vincularLeadALoja, deletarLead, removerLoja,
   atendGetConfig, atendSetConfig, atendSalvarMensagem, atendHistorico, atendEstado,
   atendPausar, atendRetomar, atendRegistrarContato, atendConversas, salvarLeadWhatsApp,
-  atendTravar, atendEstaTravado, atendAtivar, atendEstaAtivada, atendEsquecidas, atendMarcarLembrete,
+  atendTravar, atendEstaTravado, atendAtivar, atendEstaAtivada, atendEsquecidas, atendMarcarLembrete, atendContarTravadas,
   addRastreioExtra, getRastreioExtra,
   upsertAuthSession, getAuthSession, completeAuthSession, deleteAuthSession,
   criarLicenca, criarTrial, getLicenca, getLicencaPorStore, vincularLicenca, validarLicenca,

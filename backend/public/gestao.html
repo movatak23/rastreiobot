@@ -183,7 +183,11 @@
       <span id="at-salvo" style="font-size:12px;color:var(--green)"></span>
     </div>
 
-    <h3 style="margin-top:28px">Conversas <span id="at-conv-count" style="color:var(--text3);font-weight:400;text-transform:none;letter-spacing:0"></span></h3>
+    <h3 style="margin-top:28px;display:flex;align-items:center;gap:10px;flex-wrap:wrap">
+      <span id="at-conv-titulo">Conversas</span>
+      <span id="at-conv-count" style="color:var(--text3);font-weight:400;text-transform:none;letter-spacing:0"></span>
+      <button class="btn-add" id="at-filtro" onclick="atAlternarTravadas()" style="text-transform:none;letter-spacing:0"></button>
+    </h3>
     <div style="overflow-x:auto">
       <table>
         <thead><tr><th>Contato</th><th>Quem responde</th><th>Última mensagem</th><th>Msgs</th><th></th></tr></thead>
@@ -292,10 +296,13 @@ async function apiAt(path, opts){
   return d;
 }
 
+let atVendoTravadas = false;
+function atAlternarTravadas(){ atVendoTravadas = !atVendoTravadas; carregarAtendimento(); }
+
 async function carregarAtendimento(){
   const s = localStorage.getItem(KEY); if(!s) return;
   try{
-    const d = await apiAt('');
+    const d = await apiAt(atVendoTravadas ? '?travadas=1' : '');
     atLigado = d.ligado;
     // Checklist honesto: mostra exatamente o que falta pra funcionar.
     const item=(ok,titulo,detalhe)=>'<div class="card"><div class="lbl">'+(ok?'✅':'⚠️')+' '+esc(titulo)+'</div>'
@@ -321,9 +328,19 @@ async function carregarAtendimento(){
     if(!$('at-conhecimento').dataset.editando) $('at-conhecimento').value = d.conhecimento||'';
 
     const C = d.conversas||[];
+    const nTrav = d.travadas_total||0;
+    $('at-conv-titulo').textContent = atVendoTravadas ? '🔒 Conversas travadas' : 'Conversas';
     $('at-conv-count').textContent = '('+C.length+')';
+    const filtro=$('at-filtro');
+    if(atVendoTravadas){ filtro.textContent='← Voltar às conversas'; filtro.style.display=''; }
+    else if(nTrav){ filtro.textContent='🔒 Ver travadas ('+nTrav+')'; filtro.style.display=''; }
+    else { filtro.style.display='none'; }
     const body=$('at-conversas');
-    if(!C.length){ body.innerHTML='<tr><td colspan="5" class="muted">Nenhuma conversa ainda.</td></tr>'; return; }
+    if(!C.length){
+      body.innerHTML='<tr><td colspan="5" class="muted">'
+        + (atVendoTravadas ? 'Nenhuma conversa travada.' : 'Nenhuma conversa ainda.')
+        + '</td></tr>'; return;
+    }
     const quando=(x)=>{ if(!x) return '—'; const dt=new Date(String(x).replace(' ','T')+'Z');
       return isNaN(dt)?x:dt.toLocaleString('pt-BR',{timeZone:'America/Recife',day:'2-digit',month:'2-digit',hour:'2-digit',minute:'2-digit'}); };
     body.innerHTML = C.map(c=>{

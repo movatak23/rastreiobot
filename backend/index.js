@@ -513,7 +513,10 @@ app.get('/admin-loggzap/api/atendimento', auth, (req, res) => {
       modelo: ia.model,
       instancia: ATEND_INSTANCE,
       evolution_configurada: !!(EVOLUTION_URL && EVOLUTION_API_KEY),
-      conversas: db.atendConversas(50)
+      // Travadas somem da lista; só aparecem com ?travadas=1 (senão não dava pra destravar).
+      conversas: db.atendConversas(50, req.query.travadas === '1'),
+      travadas_total: db.atendContarTravadas(),
+      vendo_travadas: req.query.travadas === '1'
     });
   } catch (e) { res.status(500).json({ error: e.message }); }
 });
