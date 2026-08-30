@@ -290,6 +290,9 @@ src="https://www.facebook.com/tr?id=2038947806731470&ev=PageView&noscript=1"
     /* Títulos de seção em no máximo 2 linhas: "Você gerencia sua loja" quebrava e
        deixava "loja" sozinha numa linha, virando 3. */
     .sh{font-size:clamp(24px,6.6vw,34px);letter-spacing:-1px}
+    /* "Automação não é diferencial." é o título mais longo (medido: 350px num espaço
+       de 319px). Só ele encolhe um pouco mais, pra não achatar os outros à toa. */
+    .sh-longo{font-size:min(34px,5.8vw)}
   }
 
   /* No celular o carrossel vai de ponta a ponta (arte 16:9 com texto ganha ~18% de área) */
@@ -442,7 +445,7 @@ src="https://www.facebook.com/tr?id=2038947806731470&ev=PageView&noscript=1"
 <section class="dados">
   <div class="wrap">
     <div class="stag">Dados do mercado</div>
-    <div class="sh">Automação WhatsApp não é diferencial.<br><span class="g">É sobrevivência.</span></div>
+    <div class="sh sh-longo">Automação não é diferencial.<br><span class="g">É sobrevivência.</span></div>
     <p class="sub">Números que provam o impacto direto no faturamento de quem usa automação conversacional:</p>
     <div class="dgrid">
       <div class="dcard rev"><div class="dnum">+35%</div><div class="ddesc">de conversão com recuperação de carrinho via WhatsApp vs. e-mail</div><div class="dfonte">Chat Commerce Report 2025 — OmniChat²</div></div>
