@@ -80,6 +80,7 @@ src="https://www.facebook.com/tr?id=2038947806731470&ev=PageView&noscript=1"
   h1 .g{color:var(--green)}
   h1 .d{color:var(--text2)}
   .hero p{font-size:20px;color:var(--text2);max-width:580px;margin:0 auto 52px;line-height:1.65;animation:fu .5s .2s ease both}
+  .hgratis{color:var(--text)}
   .hbtns{display:flex;align-items:center;justify-content:center;gap:14px;flex-wrap:wrap;animation:fu .5s .3s ease both}
   .btnp{display:inline-flex;align-items:center;gap:8px;background:var(--green);color:#000;padding:16px 32px;border-radius:10px;font-weight:700;font-size:16px;text-decoration:none;transition:transform .2s,box-shadow .2s;box-shadow:0 0 48px rgba(0,208,132,.3)}
   .btnp:hover{transform:translateY(-2px);box-shadow:0 0 72px rgba(0,208,132,.45)}
@@ -280,6 +281,15 @@ src="https://www.facebook.com/tr?id=2038947806731470&ev=PageView&noscript=1"
     h1{font-size:clamp(34px,9vw,44px);letter-spacing:-1.5px;margin-bottom:18px}
     .hero p{font-size:16px;margin-bottom:26px;line-height:1.55}
     .hvis{margin-top:40px}
+    /* "7 dias grátis, sem cartão." desce inteira pra uma linha só: o "7" ficava
+       órfão no fim da linha anterior, separado do resto da frase. O tamanho segue a
+       largura da tela (min com vw) porque em 16px fixo ela ocupava 319px de 319 —
+       num Android de 360px ou num iPhone SE de 320px estouraria a tela. */
+    .hgratis{display:block;white-space:nowrap;margin-top:6px;font-size:min(16px,4.2vw)}
+
+    /* Títulos de seção em no máximo 2 linhas: "Você gerencia sua loja" quebrava e
+       deixava "loja" sozinha numa linha, virando 3. */
+    .sh{font-size:clamp(24px,6.6vw,34px);letter-spacing:-1px}
   }
 
   /* No celular o carrossel vai de ponta a ponta (arte 16:9 com texto ganha ~18% de área) */
@@ -321,7 +331,7 @@ src="https://www.facebook.com/tr?id=2038947806731470&ev=PageView&noscript=1"
   <div class="wrap">
     <div class="badge"><span class="pulse"></span> Exclusivo para Nuvemshop · No celular e no computador</div>
     <h1>Sua loja monitorada<br><span class="g">em tempo real.</span><br><span class="d">Sem abrir o painel.</span></h1>
-    <p>Acompanhe vendas, pedidos e rastreios pelo celular ou direto no Chrome — e deixe o WhatsApp avisar seus clientes sozinho. <strong style="color:var(--text)">7 dias grátis, sem cartão.</strong></p>
+    <p>Acompanhe vendas, pedidos e rastreios pelo celular ou direto no Chrome — e deixe o WhatsApp avisar seus clientes sozinho. <strong class="hgratis">7 dias grátis, sem cartão.</strong></p>
     <div class="hbtns">
       <a href="https://chromewebstore.google.com/detail/loggzap-dashboard/dpfnpaepnholpjgbblljpinbkfoldlpp?hl=pt-br" target="_blank" rel="noopener" class="btnp js-install" onclick="instalar(event)">⚡ Começar grátis</a>
     </div>
