@@ -16,6 +16,40 @@ const URL     = 'https://api.anthropic.com/v1/messages';
 // vendas: inventar preço, prazo ou função que o produto não tem.
 const TRANSFERIR = '[TRANSFERIR]';
 
+// O prompt PEDE formato de WhatsApp, mas modelo nenhum obedece 100%. Aqui o código
+// GARANTE: sem markdown, sem lista, curto e no máximo 1 emoji. Testado: a IA insistia
+// em responder com **negrito** e 5 parágrafos, o que entrega na hora que é robô.
+const RE_EMOJI = /[\u{1F300}-\u{1FAFF}\u{2600}-\u{27BF}\u{FE0F}\u{2190}-\u{21FF}\u{2B00}-\u{2BFF}]/gu;
+
+function humanizar(txt) {
+  let s = String(txt || '').trim();
+  // Markdown fora: o WhatsApp mostraria os asteriscos crus.
+  s = s.replace(/\*\*(.+?)\*\*/g, '$1')
+       .replace(/(^|\s)\*(\S[^*]*?)\*(?=\s|$|[.,!?])/g, '$1$2')
+       .replace(/(^|\s)_(\S[^_]*?)_(?=\s|$|[.,!?])/g, '$1$2')
+       .replace(/^#{1,6}\s*/gm, '')
+       .replace(/^\s*[-•*]\s+/gm, '')   // vira frase, não item de lista
+       .replace(/^\s*\d+[.)]\s+/gm, '');
+  // Linhas em branco viram espaço simples — resposta de WhatsApp não tem parágrafo.
+  s = s.split('\n').map(l => l.trim()).filter(Boolean).join(' ');
+  s = s.replace(/\s{2,}/g, ' ').trim();
+
+  // No máximo 3 frases. Corta em fim de frase, nunca no meio da palavra.
+  const frases = s.match(/[^.!?]+[.!?]+|\S[^.!?]*$/g) || [s];
+  if (frases.length > 3) s = frases.slice(0, 3).join('').trim();
+
+  // No máximo 1 emoji.
+  let vistos = 0;
+  s = s.replace(RE_EMOJI, (m) => (++vistos <= 1 ? m : '')).replace(/\s{2,}/g, ' ').trim();
+
+  // Rede de segurança de tamanho.
+  if (s.length > 420) {
+    const corte = s.lastIndexOf(' ', 400);
+    s = s.slice(0, corte > 200 ? corte : 400).trim().replace(/[,;:]$/, '') + '.';
+  }
+  return s;
+}
+
 function configurada() {
   return !!API_KEY;
 }
@@ -59,6 +93,13 @@ function montarSystem(conteudoSite, notas) {
     'responda exatamente com ' + TRANSFERIR + ' e mais nada.',
     'Responda ' + TRANSFERIR + ' também se a pessoa pedir para falar com um humano,',
     'reclamar, cobrar algo, falar de assunto sensível ou parecer irritada.',
+    '',
+    'Responda ' + TRANSFERIR + ' SEMPRE, sem exceção, se o assunto for: nota fiscal,',
+    'imposto, contabilidade, questão jurídica, contrato, dado de outro cliente,',
+    'problema de pagamento já feito, pedido de desconto, parceria ou revenda.',
+    'Nesses casos NÃO opine, NÃO explique e NÃO diga que o LoggZap não faz aquilo —',
+    'apenas devolva ' + TRANSFERIR + '. Dar palpite fora do produto é o pior erro que',
+    'você pode cometer aqui.',
     'Errar um preço custa mais caro do que demorar pra responder.',
     '',
     'O material vem do próprio site do LoggZap. É texto de página, então pode ter',
@@ -110,11 +151,13 @@ async function responder(conteudoSite, notas, historico, pergunta) {
     const txt = (d.content || []).filter((b) => b.type === 'text').map((b) => b.text).join('\n').trim();
     if (!txt) return { transferir: true, motivo: 'IA devolveu resposta vazia' };
     if (txt.includes(TRANSFERIR)) return { transferir: true, motivo: 'A IA não tinha essa resposta na base' };
-    return { texto: txt };
+    const limpo = humanizar(txt);
+    if (!limpo) return { transferir: true, motivo: 'Resposta vazia depois da limpeza' };
+    return { texto: limpo };
   } catch (e) {
     console.error('[ia] erro de rede:', e.message);
     return { transferir: true, motivo: 'Erro de rede ao chamar a IA' };
   }
 }
 
-module.exports = { configurada, responder, model: MODEL, TRANSFERIR };
+module.exports = { configurada, responder, model: MODEL, TRANSFERIR, humanizar };
