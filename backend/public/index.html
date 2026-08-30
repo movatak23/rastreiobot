@@ -271,6 +271,17 @@ src="https://www.facebook.com/tr?id=2038947806731470&ev=PageView&noscript=1"
     .carrt{transition:none}
     .carrbar i{display:none}
   }
+  /* HERÓI NO CELULAR — o CTA caía em y=746 numa tela útil de ~650px (a barra do navegador
+     come ~120px do total): o visitante de anúncio chegava e NÃO via o botão sem rolar.
+     Compacta os espaços pra trazer o "Começar grátis" pra dentro da primeira tela. */
+  @media(max-width:600px){
+    .hero{padding:96px 0 56px}
+    .badge{margin-bottom:20px;font-size:11px;padding:5px 14px}
+    h1{font-size:clamp(34px,9vw,44px);letter-spacing:-1.5px;margin-bottom:18px}
+    .hero p{font-size:16px;margin-bottom:26px;line-height:1.55}
+    .hvis{margin-top:40px}
+  }
+
   /* No celular o carrossel vai de ponta a ponta (arte 16:9 com texto ganha ~18% de área) */
   @media(max-width:600px){
     .carrw{margin-left:-28px;margin-right:-28px;width:calc(100% + 56px);border-radius:0;border-left:0;border-right:0}
