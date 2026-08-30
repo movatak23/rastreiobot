@@ -2649,7 +2649,7 @@ async function atendAvisarHumano(telefone, nome, motivo, ultima) {
 
 // Palavra que "acorda" a Ronaldo numa conversa. Sem ela, silêncio absoluto.
 const ATEND_GATILHO = (process.env.ATEND_GATILHO || 'loggzap').toLowerCase();
-function contemGatilho(texto) {
+function mencionaLoggZap(texto) {
   return String(texto || '')
     .toLowerCase()
     .normalize('NFD').replace(/[̀-ͯ]/g, '') // ignora acento
@@ -2706,7 +2706,7 @@ function atenderComIA(telefone, texto, nome) {
   // GATILHO: enquanto a palavra-chave não aparecer, ela fica muda (mas já registrou
   // o contato como lead). O cliente pode dizer a palavra, ou o Ronaldo ativar depois.
   if (!db.atendEstaAtivada(tel)) {
-    if (!contemGatilho(texto)) return;
+    if (!mencionaLoggZap(texto)) return;
     db.atendAtivar(tel, true);
     console.log('[Atendimento] ativada por palavra-chave: ' + tel);
   }
@@ -6517,7 +6517,7 @@ app.post('/webhook/evolution', async (req, res) => {
           const tel = String(telefone).replace(/\D/g, '');
           if (tel && tel !== ATEND_AVISO) {
             db.atendSalvarMensagem(tel, 'humano', texto);
-            if (contemGatilho(texto)) {
+            if (mencionaLoggZap(texto)) {
               // O Ronaldo escreveu a palavra-chave → está passando a conversa PRA ela.
               db.atendAtivar(tel, true);
               db.atendRetomar(tel);
