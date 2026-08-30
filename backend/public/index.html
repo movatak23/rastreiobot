@@ -580,8 +580,9 @@ src="https://www.facebook.com/tr?id=2038947806731470&ev=PageView&noscript=1"
     </div>
     <div class="flinks">
       <a href="mailto:contato@loggzap.com.br">Suporte</a>
-      <a href="#">Termos de Uso</a>
-      <a href="#">Privacidade</a>
+      <!-- "Termos de Uso" saiu daqui: a página não existe (/termos = 404) e link morto no
+           rodapé de um produto pago tira confiança. Recolocar quando a página existir. -->
+      <a href="https://cliente.loggzap.com.br/privacidade" target="_blank" rel="noopener">Política de Privacidade</a>
     </div>
     <div class="fcopy">
       © 2026 LoggZap · contato@loggzap.com.br<br>
@@ -864,7 +865,9 @@ src="https://www.facebook.com/tr?id=2038947806731470&ev=PageView&noscript=1"
       </div>
       <div id="cad-erro" style="display:none;background:rgba(255,71,87,0.1);border:1px solid rgba(255,71,87,0.3);border-radius:8px;padding:10px 14px;font-size:13px;color:#ff4757"></div>
       <button id="cad-btn" onclick="enviarCadastro()" style="background:#00d084;color:#000;border:none;border-radius:10px;padding:14px;font-size:16px;font-weight:700;cursor:pointer;transition:opacity .2s;font-family:inherit;margin-top:4px">Criar conta e instalar →</button>
-      <p style="font-size:12px;color:#424a61;text-align:center">Ao continuar você concorda com nossos <a href="#" style="color:#00d084">Termos de Uso</a></p>
+      <!-- Antes dizia "concorda com nossos Termos de Uso" apontando pro nada: consentimento
+           sobre documento que não existe e não pode ser lido. Aponta pra política real. -->
+      <p style="font-size:12px;color:#424a61;text-align:center">Ao continuar você concorda com nossa <a href="https://cliente.loggzap.com.br/privacidade" target="_blank" rel="noopener" style="color:#00d084">Política de Privacidade</a></p>
     </div>
   </div>
 </div>
