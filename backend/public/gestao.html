@@ -66,6 +66,10 @@
   .tag.Trial{background:rgba(79,142,247,.15);color:var(--blue)}
   .tag.Free{background:var(--bg3);color:var(--text3)}
   td.muted{color:var(--text3)}
+  .btn-del,.btn-add{border:1px solid var(--border);background:var(--bg3);color:var(--text2);border-radius:7px;padding:5px 10px;font-size:11px;font-weight:600;cursor:pointer;font-family:inherit;white-space:nowrap}
+  .btn-del:hover:not(:disabled){border-color:var(--red);color:var(--red)}
+  .btn-add:hover:not(:disabled){border-color:var(--green);color:var(--green)}
+  .btn-del:disabled,.btn-add:disabled{opacity:.5;cursor:default}
 </style>
 </head>
 <body>
@@ -145,8 +149,8 @@
     <div style="color:var(--text3);font-size:12px;margin:-6px 0 12px">Quem preencheu o formulário do site. Ainda não é loja instalada — vira instalação quando conecta a Nuvemshop.</div>
     <div style="overflow-x:auto">
       <table>
-        <thead><tr><th>Nome</th><th>Email</th><th>WhatsApp</th><th>Plano</th><th>Cadastrou</th></tr></thead>
-        <tbody id="leads-body"><tr><td colspan="5" class="muted">Carregando cadastros…</td></tr></tbody>
+        <thead><tr><th>Nome</th><th>Email</th><th>WhatsApp</th><th>Plano</th><th>Instalou?</th><th>Cadastrou</th><th></th></tr></thead>
+        <tbody id="leads-body"><tr><td colspan="7" class="muted">Carregando cadastros…</td></tr></tbody>
       </table>
     </div>
   </div>
@@ -156,8 +160,8 @@
     <h3>Lojas instaladas <span id="lojas-count" style="color:var(--text3);font-weight:400;text-transform:none;letter-spacing:0"></span></h3>
     <div style="overflow-x:auto">
       <table>
-        <thead><tr><th>Loja</th><th>Store ID</th><th>Email</th><th>WhatsApp</th><th>Versão</th><th>Rastreios (mês)</th><th>Msgs (mês)</th><th>Última ação</th><th>Instalado</th></tr></thead>
-        <tbody id="lojas-body"><tr><td colspan="9" class="muted">Carregando lojas…</td></tr></tbody>
+        <thead><tr><th>Loja</th><th>Store ID</th><th>Email</th><th>WhatsApp</th><th>Versão</th><th>Rastreios (mês)</th><th>Msgs (mês)</th><th>Última ação</th><th>Instalado</th><th></th></tr></thead>
+        <tbody id="lojas-body"><tr><td colspan="10" class="muted">Carregando lojas…</td></tr></tbody>
       </table>
     </div>
   </div>
@@ -234,8 +238,9 @@ async function carregarLeads(){
     const d = await r.json();
     if(!r.ok || d.error) throw new Error(d.error||'erro');
     const L = d.leads || [];
-    $('leads-count').textContent = '('+L.length+')';
-    if(!L.length){ body.innerHTML='<tr><td colspan="5" class="muted">Nenhum cadastro ainda.</td></tr>'; return; }
+    const instalados = L.filter(l=>l.store_id).length;
+    $('leads-count').textContent = '('+L.length+(L.length?' · '+instalados+' instalaram':'')+')';
+    if(!L.length){ body.innerHTML='<tr><td colspan="7" class="muted">Nenhum cadastro ainda.</td></tr>'; return; }
     const quando = (s)=>{ if(!s) return '—'; const dt=new Date(s.replace(' ','T')+'Z');
       return isNaN(dt) ? s : dt.toLocaleString('pt-BR',{timeZone:'America/Recife',day:'2-digit',month:'2-digit',hour:'2-digit',minute:'2-digit'}); };
     body.innerHTML = L.map(l=>'<tr>'
@@ -243,9 +248,45 @@ async function carregarLeads(){
       + '<td>'+(l.email?'<a href="mailto:'+esc(l.email)+'" style="color:var(--green);text-decoration:none">'+esc(l.email)+'</a>':'<span class="muted">—</span>')+'</td>'
       + '<td>'+(l.whatsapp?'<a href="https://wa.me/55'+esc(String(l.whatsapp).replace(/\D/g,''))+'" target="_blank" rel="noopener" style="color:#25D366;text-decoration:none">'+esc(l.whatsapp)+'</a>':'<span class="muted">—</span>')+'</td>'
       + '<td><span class="tag">'+esc(l.plano||'—')+'</span></td>'
+      + '<td>'+(l.store_id
+          ? '<span style="color:var(--green);font-weight:600">✓ '+esc(l.store_id)+'</span>'
+          : '<span class="muted">ainda não</span>')+'</td>'
       + '<td class="muted">'+quando(l.criado_em)+'</td>'
+      + '<td><button class="btn-del" onclick="deletarLead('+Number(l.id)+',this)" title="Apagar este cadastro">Deletar</button></td>'
       + '</tr>').join('');
-  }catch(e){ body.innerHTML='<tr><td colspan="5" class="muted">Erro ao carregar cadastros: '+esc(e.message)+'</td></tr>'; }
+  }catch(e){ body.innerHTML='<tr><td colspan="7" class="muted">Erro ao carregar cadastros: '+esc(e.message)+'</td></tr>'; }
+}
+
+async function deletarLead(id, btn){
+  if(!confirm('Apagar este cadastro?\n\nRemove só o registro do lead — a loja e a licença não são afetadas.')) return;
+  const s = localStorage.getItem(KEY); if(!s) return;
+  btn.disabled = true; btn.textContent = '...';
+  try{
+    const r = await fetch('/admin-loggzap/api/leads/'+id, { method:'DELETE', headers:{ 'x-secret': s } });
+    const d = await r.json();
+    if(!r.ok || d.error) throw new Error(d.error||'erro');
+    carregarLeads();
+  }catch(e){ alert('Erro ao apagar: '+e.message); btn.disabled=false; btn.textContent='Deletar'; }
+}
+
+async function addRastreios(storeId, btn){
+  const txt = prompt('Rastreios avulsos para a loja '+storeId+'\n\nQuantos adicionar neste mês?\n(use número negativo para estornar)', '100');
+  if(txt===null) return;
+  const qtd = parseInt(txt,10);
+  if(!qtd){ alert('Informe um número diferente de zero.'); return; }
+  const s = localStorage.getItem(KEY); if(!s) return;
+  const antes = btn.textContent; btn.disabled = true; btn.textContent = '...';
+  try{
+    const r = await fetch('/admin-loggzap/api/rastreios-avulsos', {
+      method:'POST', headers:{ 'x-secret': s, 'Content-Type':'application/json' },
+      body: JSON.stringify({ store_id: storeId, qtd })
+    });
+    const d = await r.json();
+    if(!r.ok || d.error) throw new Error(d.error||'erro');
+    alert('Pronto! Avulsos deste mês: '+d.extra+'\nNovo limite da loja: '+d.limite+' rastreios.');
+    carregarLojas();
+  }catch(e){ alert('Erro: '+e.message); }
+  btn.disabled=false; btn.textContent=antes;
 }
 
 function renderChart(visSerie, instSerie){
@@ -278,7 +319,7 @@ async function carregarLojas(){
     const d = await r.json();
     if(!r.ok || d.error) throw new Error(d.error||'erro');
     $('lojas-count').textContent = '('+(d.total||0)+')';
-    if(!d.lojas || !d.lojas.length){ body.innerHTML='<tr><td colspan="9" class="muted">Nenhuma loja ainda.</td></tr>'; return; }
+    if(!d.lojas || !d.lojas.length){ body.innerHTML='<tr><td colspan="10" class="muted">Nenhuma loja ainda.</td></tr>'; return; }
     const dcurta = (s)=> s ? s.slice(0,10).split('-').reverse().join('/') : '—';
     body.innerHTML = d.lojas.map(l=>{
       const nomeTxt = l.nome ? esc(l.nome) : '#'+esc(l.store_id);
@@ -291,13 +332,16 @@ async function carregarLojas(){
         + '<td class="'+(l.email?'':'muted')+'">'+(l.email?esc(l.email):'—')+'</td>'
         + '<td class="'+(l.whatsapp?'':'muted')+'">'+(l.whatsapp?esc(l.whatsapp):'—')+'</td>'
         + '<td><span class="tag '+esc(l.plano)+'">'+esc(l.plano)+'</span></td>'
-        + '<td class="'+(l.rastreios_mes?'':'muted')+'">'+(l.rastreios_mes||0)+(l.limite?(' / '+l.limite):'')+'</td>'
+        + '<td class="'+(l.rastreios_mes?'':'muted')+'">'+(l.rastreios_mes||0)+(l.limite?(' / '+l.limite):'')
+            + (l.rastreios_extra ? ' <span style="color:var(--green);font-size:11px" title="Rastreios avulsos concedidos neste mês">(+'+l.rastreios_extra+' avulso)</span>' : '')
+            + '</td>'
         + '<td class="'+(l.msgs_mes?'':'muted')+'">'+(l.msgs_mes||0)+'</td>'
         + '<td class="muted">'+dcurta(l.ultima_atividade)+'</td>'
         + '<td class="muted">'+dcurta(l.instalado_em)+'</td>'
+        + '<td><button class="btn-add" onclick="addRastreios(\''+esc(l.store_id)+'\',this)" title="Adicionar rastreios avulsos neste mês">+ Rastreios</button></td>'
         + '</tr>';
     }).join('');
-  }catch(e){ body.innerHTML='<tr><td colspan="9" class="muted">Erro ao carregar lojas: '+esc(e.message)+'</td></tr>'; }
+  }catch(e){ body.innerHTML='<tr><td colspan="10" class="muted">Erro ao carregar lojas: '+esc(e.message)+'</td></tr>'; }
 }
 
 // Boot: se já tem chave salva, entra direto.

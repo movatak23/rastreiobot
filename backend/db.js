@@ -645,6 +645,25 @@ function listarLeads(limite) {
   return db.prepare(`SELECT id, nome, email, whatsapp, plano, store_id, criado_em
                      FROM leads ORDER BY datetime(criado_em) DESC LIMIT ?`).all(Number(limite) || 100);
 }
+// Casa o lead com a loja quando ela conecta o OAuth. O e-mail do formulário nem sempre
+// é o mesmo cadastrado na Nuvemshop, então tenta os dois. Só marca lead ainda solto
+// (store_id NULL) e pega o mais recente — assim o mesmo e-mail pode instalar 2 lojas.
+function vincularLeadALoja(storeId, ...emails) {
+  const lista = emails.map(e => String(e || '').trim().toLowerCase()).filter(Boolean);
+  if (!storeId || !lista.length) return 0;
+  // Se essa loja já foi casada antes, não faz de novo (reinstalação não rouba outro lead).
+  const jaTem = db.prepare('SELECT 1 FROM leads WHERE store_id = ?').get(String(storeId));
+  if (jaTem) return 0;
+  const marcadores = lista.map(() => '?').join(',');
+  const alvo = db.prepare(
+    `SELECT id FROM leads WHERE store_id IS NULL AND lower(email) IN (${marcadores})
+     ORDER BY datetime(criado_em) DESC LIMIT 1`).get(...lista);
+  if (!alvo) return 0;
+  return db.prepare('UPDATE leads SET store_id = ? WHERE id = ?').run(String(storeId), alvo.id).changes;
+}
+function deletarLead(id) {
+  return db.prepare('DELETE FROM leads WHERE id = ?').run(Number(id)).changes;
+}
 function contarLeads() {
   const n = (sql) => { try { return db.prepare(sql).get().n || 0; } catch (e) { return 0; } };
   return {
@@ -653,6 +672,26 @@ function contarLeads() {
     d7:    n("SELECT COUNT(*) n FROM leads WHERE criado_em >= datetime('now','-7 days')"),
     d30:   n("SELECT COUNT(*) n FROM leads WHERE criado_em >= datetime('now','-30 days')")
   };
+}
+
+// Rastreios avulsos do MÊS CORRENTE (crédito extra que o admin concede).
+// Aceita qtd negativa pra corrigir um lançamento errado; nunca deixa o saldo abaixo de 0.
+function addRastreioExtra(storeId, qtd) {
+  const n = Math.trunc(Number(qtd) || 0);
+  if (!storeId || !n) return getRastreioExtra(storeId);
+  // Linha nova não pode nascer negativa; linha existente soma o valor real (n pode ser < 0).
+  db.prepare(`INSERT INTO rastreio_extra (store_id, ano_mes, qtd)
+              VALUES (?, strftime('%Y-%m','now'), ?)
+              ON CONFLICT(store_id, ano_mes) DO UPDATE SET
+                qtd = MAX(0, qtd + ?), atualizado_em = datetime('now')`)
+    .run(String(storeId), Math.max(0, n), n);
+  return getRastreioExtra(storeId);
+}
+function getRastreioExtra(storeId) {
+  if (!storeId) return 0;
+  const r = db.prepare(`SELECT qtd FROM rastreio_extra WHERE store_id=? AND ano_mes=strftime('%Y-%m','now')`)
+    .get(String(storeId));
+  return (r && r.qtd) || 0;
 }
 
 // Registra 1 visita da landing no dia de hoje (contador simples de pageviews).
@@ -834,6 +873,17 @@ function migrar() {
       criado_em TEXT DEFAULT (datetime('now'))
     )`);
     db.exec('CREATE INDEX IF NOT EXISTS idx_leads_email ON leads(email)');
+  } catch(e) {}
+  // Rastreios AVULSOS: crédito extra por loja, válido só no mês em que foi dado.
+  // Soma ao teto do plano em getLimiteRastreio. Expira sozinho na virada do mês.
+  try {
+    db.exec(`CREATE TABLE IF NOT EXISTS rastreio_extra (
+      store_id  TEXT,
+      ano_mes   TEXT,
+      qtd       INTEGER DEFAULT 0,
+      atualizado_em TEXT DEFAULT (datetime('now')),
+      PRIMARY KEY (store_id, ano_mes)
+    )`);
   } catch(e) {}
   try { db.exec("ALTER TABLE licencas ADD COLUMN device_id TEXT"); } catch(e) {}
   // Licença multi-dispositivo (0 = trava em 1 aparelho, 1 = libera vários)
@@ -1828,7 +1878,8 @@ module.exports = {
   jaNotificadoPorTelefone, listarNotificadosRecentes,
   registrarClienteAtivo, jaClienteAtivo,
   getAdminStats, getLojistaStats, registrarVisita, getGestaoStats,
-  salvarLead, listarLeads, contarLeads,
+  salvarLead, listarLeads, contarLeads, vincularLeadALoja, deletarLead,
+  addRastreioExtra, getRastreioExtra,
   upsertAuthSession, getAuthSession, completeAuthSession, deleteAuthSession,
   criarLicenca, criarTrial, getLicenca, getLicencaPorStore, vincularLicenca, validarLicenca,
   getLicencasPorPayment, salvarPaymentId, getLicencaPorChave, getMetas, salvarMetas, desvincularDispositivo, setMultiDispositivo,

@@ -488,6 +488,29 @@ app.get('/admin-loggzap/api/leads', auth, (req, res) => {
   catch (e) { res.status(500).json({ error: e.message }); }
 });
 
+// Apaga um cadastro da landing (teste, duplicado, spam). Não mexe na loja nem na licença.
+app.delete('/admin-loggzap/api/leads/:id', auth, (req, res) => {
+  try {
+    const n = db.deletarLead(req.params.id);
+    if (!n) return res.status(404).json({ error: 'Cadastro não encontrado.' });
+    res.json({ success: true });
+  } catch (e) { res.status(500).json({ error: e.message }); }
+});
+
+// Rastreios avulsos: crédito extra pra uma loja, válido só no mês corrente.
+app.post('/admin-loggzap/api/rastreios-avulsos', auth, (req, res) => {
+  try {
+    const storeId = String(req.body?.store_id || '').trim();
+    const qtd = Math.trunc(Number(req.body?.qtd));
+    if (!storeId) return res.status(400).json({ error: 'store_id é obrigatório.' });
+    if (!qtd || !Number.isFinite(qtd)) return res.status(400).json({ error: 'Informe uma quantidade diferente de zero.' });
+    if (Math.abs(qtd) > 10000) return res.status(400).json({ error: 'Quantidade fora do limite (máx. 10.000 por vez).' });
+    const extra = db.addRastreioExtra(storeId, qtd);
+    console.log('[Rastreios avulsos] loja ' + storeId + ': ' + (qtd > 0 ? '+' : '') + qtd + ' (extra do mês agora: ' + extra + ')');
+    res.json({ success: true, extra, limite: getLimiteRastreio(storeId) });
+  } catch (e) { res.status(500).json({ error: e.message }); }
+});
+
 // ── Prospecção de lojas Nuvemshop (motor de busca no painel admin) ───────────
 app.post('/admin-loggzap/prospeccao/iniciar', auth, (req, res) => {
   try { const r = prospeccao.iniciar({ alvo: req.body?.alvo, niche: req.body?.niche }, db);
@@ -552,14 +575,15 @@ app.get('/admin-loggzap/api/lojas', auth, async (req, res) => {
       let plano = 'Free';
       try { plano = rotuloPlanoLoja(statusPlanoLoja(sid)); } catch (e) {}
       // Uso (ativação): quanto a loja realmente usou o LoggZap.
-      let rastreiosMes = 0, limite = 0, msgsMes = 0;
+      let rastreiosMes = 0, limite = 0, msgsMes = 0, extra = 0;
       try { rastreiosMes = db.contarUsoRastreio ? db.contarUsoRastreio(sid) : 0; } catch (e) {}
       try { limite = getLimiteRastreio(sid); } catch (e) {}
+      try { extra = db.getRastreioExtra ? db.getRastreioExtra(sid) : 0; } catch (e) {}
       try { msgsMes = (db.getLojistaStats ? db.getLojistaStats(sid).mensagensMes : 0) || 0; } catch (e) {}
       return {
         store_id: sid, nome, email, whatsapp, url, plano,
         instalado_em: tok?.created_at || null,
-        rastreios_mes: rastreiosMes, limite,
+        rastreios_mes: rastreiosMes, limite, rastreios_extra: extra,
         msgs_mes: msgsMes,
         ultima_atividade: tok?.ultimo_evento_em || null
       };
@@ -761,7 +785,9 @@ app.get('/admin-loggzap/api/resumo', auth, async (req, res) => {
       const pago = !!c.plano && ['basic','premium','enterprise'].includes(String(c.plano).toLowerCase());
       const vencido = pago && c.expira_em && new Date(c.expira_em) < agora;
       const status_conta = !pago ? 'free' : (vencido ? 'vencido' : 'ativo');
-      return { ...c, rastreios_usados: usados, rastreios_limite: limite,
+      let extra = 0;
+      try { extra = db.getRastreioExtra ? db.getRastreioExtra(sid) : 0; } catch(_) {}
+      return { ...c, rastreios_usados: usados, rastreios_limite: limite, rastreios_extra: extra,
         rastreios_pct: limite ? Math.min(100, Math.round(usados / limite * 100)) : 0,
         status_conta, assinatura_status: assinatura?.status || null };
     });
@@ -3002,9 +3028,13 @@ function converterTrialSePreciso(storeId, sp) {
 function getLimiteRastreio(storeId) {
   const sp = statusPlanoLoja(storeId);
   converterTrialSePreciso(storeId, sp); // zera o contador 1x quando o cliente sai do trial p/ Essencial/Pro
+  // Rastreios avulsos concedidos pelo admin somam ao teto do plano (valem só neste mês).
+  let extra = 0;
+  try { extra = db.getRastreioExtra(storeId) || 0; } catch (e) {}
   // Teste de 7 dias: features de Pro, mas teto de rastreio menor (incentiva o upgrade).
-  if (sp.emTrial) return RASTREIO_LIMITES.trial;
-  return RASTREIO_LIMITES[sp.plano] != null ? RASTREIO_LIMITES[sp.plano] : 50;
+  if (sp.emTrial) return RASTREIO_LIMITES.trial + extra;
+  const base = RASTREIO_LIMITES[sp.plano] != null ? RASTREIO_LIMITES[sp.plano] : 50;
+  return base + extra;
 }
 
 async function verificarRastreios(storeId) {
@@ -3184,6 +3214,16 @@ app.get('/admin-loggzap/api/testar-capi', auth, async (req, res) => {
   }
 });
 
+// Liga o cadastro da landing (tabela leads) à loja que acabou de conectar o OAuth.
+// Casa pelo e-mail da Nuvemshop; o lojista às vezes usa outro e-mail no formulário,
+// por isso tenta tanto `email` quanto `contact_email` da loja.
+async function casarLeadComLoja(storeId) {
+  const st = await getStoreInfoSeguro(String(storeId));
+  const n = db.vincularLeadALoja(String(storeId), st && st.email, st && st.contact_email);
+  if (n) console.log('[Lead→Loja] cadastro vinculado à loja ' + storeId);
+  return n;
+}
+
 app.get('/auth/callback', async (req, res) => {
   const { code, state: storeId } = req.query;
   if (!code) return res.status(400).send('Código OAuth ausente.');
@@ -3199,6 +3239,9 @@ app.get('/auth/callback', async (req, res) => {
     if (sid) registrarWebhooksNuvem(sid).catch(e => console.error('[Webhooks] install erro:', e.message));
     // Rastreia a instalação no Meta (CAPI server-side) — conversão real do anúncio.
     if (sid) dispararCapiInstalacao(req, sid).catch(() => {});
+    // Casa o cadastro da landing com a loja recém-conectada (fecha o funil
+    // cadastro → instalação). Best-effort: não pode atrapalhar a autenticação.
+    if (sid) casarLeadComLoja(sid).catch(e => console.error('[Lead→Loja] erro:', e.message));
     if (sessionCode) {
       const realSid = String(data.user_id || sid);
       if (realSid) db.saveToken(realSid, data.access_token);
