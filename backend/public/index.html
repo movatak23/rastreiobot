@@ -207,7 +207,9 @@ src="https://www.facebook.com/tr?id=2038947806731470&ev=PageView&noscript=1"
   .fcopy{font-size:12px;color:var(--text3);text-align:right}
 
 
-  /* Depoimentos */
+  /* Depoimentos — seção REMOVIDA temporariamente (depoimentos não verificados).
+     CSS mantido de propósito: quando houver depoimento real de cliente, é só
+     recolocar o markup .tgrid/.tcard que estava entre PREMIUM e CARROSSEL 2. */
   .tgrid{display:grid;grid-template-columns:repeat(auto-fit,minmax(300px,1fr));gap:20px;margin-top:56px}
   .tcard{background:var(--bg3);border:1px solid var(--border);border-radius:14px;padding:28px;display:flex;flex-direction:column;gap:20px;transition:transform .2s,border-color .2s}
   .tcard:hover{transform:translateY(-4px);border-color:rgba(0,208,132,.2)}
@@ -280,12 +282,11 @@ src="https://www.facebook.com/tr?id=2038947806731470&ev=PageView&noscript=1"
 <!-- HERO -->
 <section class="hero">
   <div class="wrap">
-    <div class="badge"><span class="pulse"></span> Exclusivo para Nuvemshop · Chrome Extension</div>
+    <div class="badge"><span class="pulse"></span> Exclusivo para Nuvemshop · No celular e no computador</div>
     <h1>Sua loja monitorada<br><span class="g">em tempo real.</span><br><span class="d">Sem abrir o painel.</span></h1>
-    <p>Dashboard inteligente que monitora suas vendas, rastreios e pedidos na barra lateral do Chrome. Com automação WhatsApp completa no Premium.</p>
+    <p>Acompanhe vendas, pedidos e rastreios pelo celular ou direto no Chrome — e deixe o WhatsApp avisar seus clientes sozinho. <strong style="color:var(--text)">7 dias grátis, sem cartão.</strong></p>
     <div class="hbtns">
-      <a href="https://chromewebstore.google.com/detail/loggzap-dashboard/dpfnpaepnholpjgbblljpinbkfoldlpp?hl=pt-br" target="_blank" rel="noopener" class="btnp js-install" onclick="instalar(event)">⚡ Instalar grátis</a>
-      <a href="https://wa.me/5581976041948?text=Ol%C3%A1!%20Quero%20testar%20o%20LoggZap%20na%20minha%20loja%20Nuvemshop" target="_blank" rel="noopener" class="btnwa" onclick="if(window.fbq)fbq('track','Contact');">💬 Falar no WhatsApp</a>
+      <a href="https://chromewebstore.google.com/detail/loggzap-dashboard/dpfnpaepnholpjgbblljpinbkfoldlpp?hl=pt-br" target="_blank" rel="noopener" class="btnp js-install" onclick="instalar(event)">⚡ Começar grátis</a>
     </div>
     <div class="hvis">
       <div class="hvisw"><iframe src="https://www.youtube-nocookie.com/embed/SQTzAtwJeos?autoplay=1&amp;mute=1&amp;rel=0&amp;modestbranding=1&amp;playsinline=1" title="LoggZap — demonstração" style="width:100%;height:100%;border:0;display:block" allow="autoplay; encrypted-media; picture-in-picture; web-share; fullscreen" allowfullscreen loading="lazy"></iframe></div>
@@ -436,84 +437,6 @@ src="https://www.facebook.com/tr?id=2038947806731470&ev=PageView&noscript=1"
   </div>
 </section>
 
-<!-- DEPOIMENTOS -->
-<section class="sec" style="background:var(--bg2);padding:100px 0">
-  <div class="wrap">
-    <div class="stag">Depoimentos</div>
-    <div class="sh">O que dizem os lojistas<br><span class="g">que já usam o LoggZap</span></div>
-    <div class="tgrid">
-
-      <div class="tcard rev">
-        <div class="tquote">"Antes eu abria o painel da Nuvemshop umas 20 vezes por dia. Agora vejo tudo no Chrome sem sair da aba que estou. O dashboard de hoje vs. ontem me ajudou a perceber que minhas vendas caíam toda segunda — ajustei minha comunicação e resolvi."</div>
-        <div class="tauthor">
-          <img src="dep-marcela.png" class="tavatar" style="object-fit:cover">
-          <div>
-            <div class="tname">Eduardo Ramos</div>
-            <div class="trole">Loja de moda feminina · São Paulo/SP</div>
-          </div>
-        </div>
-      </div>
-
-      <div class="tcard rev">
-        <div class="tquote">"O plano Premium pagou ele mesmo no primeiro mês. Só com a recuperação de boletos pendentes eu recuperei mais de R$800 que eu ia perder. A pesquisa de satisfação automática foi um bônus — já recebi 12 avaliações sem pedir nada."</div>
-        <div class="tauthor">
-          <img src="dep-rafael.png" class="tavatar" style="object-fit:cover">
-          <div>
-            <div class="tname">Fernanda Souza</div>
-            <div class="trole">Loja de suplementos · Belo Horizonte/MG</div>
-          </div>
-        </div>
-      </div>
-
-      <div class="tcard rev">
-        <div class="tquote">"Minha maior dor era cliente perguntando onde estava o pedido. Hoje o sistema avisa automaticamente a cada etapa — postagem, saída para entrega, entregue. Reduzi em 70% as perguntas de rastreio no WhatsApp."</div>
-        <div class="tauthor">
-          <img src="dep-camila.png" class="tavatar" style="object-fit:cover">
-          <div>
-            <div class="tname">Thiago Moreira</div>
-            <div class="trole">Loja de cosméticos · Recife/PE</div>
-          </div>
-        </div>
-      </div>
-
-      <div class="tcard rev">
-        <div class="tquote">"Simples assim: eu posto o produto, faço a venda, e o LoggZap cuida do resto. O cliente recebe o rastreio, a atualização de entrega e ainda a pesquisa de satisfação — tudo sem eu tocar em nada. Parece mágica."</div>
-        <div class="tauthor">
-          <img src="dep-thiago.png" class="tavatar" style="object-fit:cover">
-          <div>
-            <div class="tname">Juliana Pereira</div>
-            <div class="trole">Loja de eletrônicos · Curitiba/PR</div>
-          </div>
-        </div>
-      </div>
-
-      <div class="tcard rev">
-        <div class="tquote">"Testei no trial e em 3 dias já vi o valor. O score de saúde da loja me mostrou que eu tinha 8 pedidos aguardando pagamento que eu nem sabia. Ativei o Basic na hora e logo depois fui pro Premium."</div>
-        <div class="tauthor">
-          <img src="dep-juliana.png" class="tavatar" style="object-fit:cover">
-          <div>
-            <div class="tname">Lucas Fernandes</div>
-            <div class="trole">Loja de artigos para bebê · Fortaleza/CE</div>
-          </div>
-        </div>
-      </div>
-
-      <div class="tcard rev">
-        <div class="tquote">"Uso o LoggZap há 2 meses e o que mais gosto é o painel de metas. Coloquei meta de R$5k por semana e agora fico monitorando em tempo real. Quando bate a meta o Chrome me notifica — é uma motivação absurda."</div>
-        <div class="tauthor">
-          <img src="dep-lucas.png" class="tavatar" style="object-fit:cover">
-          <div>
-            <div class="tname">Camila Albuquerque</div>
-            <div class="trole">Loja de produtos naturais · Porto Alegre/RS</div>
-          </div>
-        </div>
-      </div>
-
-    </div>
-    <p style="text-align:center;font-size:12px;color:var(--text3);margin-top:40px">* Depoimentos de usuários reais do LoggZap Dashboard</p>
-  </div>
-</section>
-
 <!-- CARROSSEL 2 -->
 <section class="sec" style="padding:100px 0 60px">
   <div class="wrap">
@@ -562,14 +485,14 @@ src="https://www.facebook.com/tr?id=2038947806731470&ev=PageView&noscript=1"
           <li><span class="ok">✓</span> <span><strong>50 rastreios automáticos</strong> no período de teste</span></li>
           <li><span class="ok">✓</span> Recuperação de carrinho</li>
         </ul>
-        <p style="font-size:12px;color:var(--text3);line-height:1.55;margin:2px 0 14px">Nos <strong>7 dias</strong> você testa tudo, com até <strong>50 rastreios</strong>. Depois, o plano <strong>Grátis</strong> mantém só o <strong>Dashboard e a visualização de pedidos</strong> — os envios automáticos (WhatsApp, rastreio e carrinho) ficam nos planos pagos.</p>
+        <p style="font-size:12px;color:var(--text3);line-height:1.55;margin:2px 0 14px">Sem cartão de crédito. Ao fim dos 7 dias nada é cobrado: o <strong>Dashboard e os pedidos continuam gratuitos</strong> e só os envios automáticos (WhatsApp, rastreio e carrinho) pausam até você escolher um plano.</p>
         <a href="#" class="btnpl o" onclick="irCheckout(event,'trial')">Começar grátis</a>
       </div>
 
       <div class="plano rev">
         <div class="pnome">Essencial</div>
         <div><span class="pval">R$97</span><span class="pper">/mês</span></div>
-        <div class="pdesc">Dashboard completo para lojistas que querem visibilidade total</div>
+        <div class="pdesc">Para quem quer <strong>enxergar</strong> a loja. Sem os envios automáticos — esses ficam no Pro.</div>
         <ul class="pitems">
           <li><span class="ok">✓</span> Dashboard completo</li>
           <li><span class="ok">✓</span> Visualização de pedidos e rastreios</li>
@@ -579,6 +502,7 @@ src="https://www.facebook.com/tr?id=2038947806731470&ev=PageView&noscript=1"
           <li><span class="no">✗</span> Notificações WhatsApp automáticas</li>
           <li><span class="no">✗</span> Recuperação de carrinho e leads</li>
         </ul>
+        <p style="font-size:12px;color:var(--text3);line-height:1.55;margin:2px 0 14px">Quer a automação que você viu acima? São <strong style="color:var(--blue)">R$50 a mais</strong> no Pro.</p>
         <a href="#" class="btnpl g" onclick="irCheckout(event,'basic')">Assinar Essencial — R$97/mês</a>
       </div>
 
@@ -633,10 +557,9 @@ src="https://www.facebook.com/tr?id=2038947806731470&ev=PageView&noscript=1"
     <h2>Comece a ver sua loja<br><span class="g">em tempo real</span> agora</h2>
     <p>7 dias grátis. Sem cartão. Ativa em menos de 2 minutos.</p>
     <div class="hbtns" style="margin-bottom:8px">
-      <a href="https://chromewebstore.google.com/detail/loggzap-dashboard/dpfnpaepnholpjgbblljpinbkfoldlpp?hl=pt-br" target="_blank" rel="noopener" class="btnp js-install" style="font-size:18px;padding:18px 40px" onclick="instalar(event)">⚡ Instalar LoggZap grátis</a>
-      <a href="https://wa.me/5581976041948?text=Ol%C3%A1!%20Quero%20testar%20o%20LoggZap%20na%20minha%20loja%20Nuvemshop" target="_blank" rel="noopener" class="btnwa" style="font-size:18px;padding:18px 32px" onclick="if(window.fbq)fbq('track','Contact');">💬 Falar no WhatsApp</a>
+      <a href="https://chromewebstore.google.com/detail/loggzap-dashboard/dpfnpaepnholpjgbblljpinbkfoldlpp?hl=pt-br" target="_blank" rel="noopener" class="btnp js-install" style="font-size:18px;padding:18px 40px" onclick="instalar(event)">⚡ Começar meus 7 dias grátis</a>
     </div>
-    <div class="cnote">Disponível para Google Chrome · Compatível com Nuvemshop · Cancele quando quiser</div>
+    <div class="cnote">Funciona no celular e no Chrome · Compatível com Nuvemshop · Cancele quando quiser</div>
   </div>
 </section>
 
@@ -763,6 +686,8 @@ src="https://www.facebook.com/tr?id=2038947806731470&ev=PageView&noscript=1"
   let planoSelecionado = 'trial';
 
   const ZAP_URL = 'https://wa.me/5581976041948?text=Ol%C3%A1!%20Quero%20testar%20o%20LoggZap%20na%20minha%20loja%20Nuvemshop';
+  // Painel web (PWA) — caminho de ativação de quem está no CELULAR, onde a extensão não existe.
+  const PAINEL_URL = 'https://cliente.loggzap.com.br/painel';
   function ehMobile() {
     var ua = navigator.userAgent || navigator.vendor || '';
     if (/Android|iPhone|iPad|iPod|IEMobile|BlackBerry|Opera Mini|Mobile/i.test(ua)) return true;
@@ -773,7 +698,9 @@ src="https://www.facebook.com/tr?id=2038947806731470&ev=PageView&noscript=1"
   // no CELULAR a extensão não existe, então vai direto pro WhatsApp.
   function instalar(e) {
     if (e) e.preventDefault();
-    if (window.fbq) fbq('track', 'Contact');
+    // NÃO dispara Contact aqui: abrir o formulário não é conversão. O evento que a campanha
+    // otimiza é o Lead, disparado só no cadastro concluído (enviarCadastro).
+    // Contact fica reservado a quem realmente vai pro WhatsApp.
     // Desktop e MOBILE: abre o cadastro (captura o lead e dispara o evento Lead que a campanha
     // otimiza). No celular a extensão não instala, mas o cadastro/Lead é o que importa pro anúncio;
     // o WhatsApp segue disponível nos botões dedicados e no modal de sucesso.
@@ -794,6 +721,33 @@ src="https://www.facebook.com/tr?id=2038947806731470&ev=PageView&noscript=1"
 
   function fecharTudo() {
     document.getElementById('modal-sucesso').style.display = 'none';
+  }
+
+  // Ajusta o modal de sucesso ao aparelho. No CELULAR a extensão do Chrome não existe:
+  // o caminho certo é o painel web (PWA), que instala no Android e no iPhone.
+  function prepararSucesso() {
+    var texto = document.getElementById('suc-texto');
+    var cta = document.getElementById('suc-cta');
+    var dica = document.getElementById('suc-dica');
+    var zap = document.getElementById('suc-zap');
+    if (!texto || !cta) return;
+    if (ehMobile()) {
+      var ehIphone = /iPhone|iPad|iPod/i.test(navigator.userAgent || '');
+      texto.innerHTML = 'Enviamos as instruções para o seu e-mail. Seu teste de <b>7 dias já está ativo</b> — abra seu painel agora pelo celular:';
+      cta.textContent = '📱 Abrir meu painel';
+      cta.setAttribute('href', PAINEL_URL);
+      dica.innerHTML = ehIphone
+        ? 'Para deixar como app no iPhone: no <b>Safari</b>, toque em Compartilhar → <b>Adicionar à Tela de Início</b>.'
+        : 'Para deixar como app: toque no menu do navegador → <b>Instalar app</b>.';
+      dica.style.display = 'block';
+      zap.setAttribute('href', ZAP_URL);
+      zap.style.display = 'inline-block';
+    } else {
+      texto.innerHTML = 'Enviamos as instruções para o seu e-mail. Agora instale a extensão para ver sua loja direto no Chrome:';
+      cta.textContent = '🔗 Instalar no Chrome agora';
+      dica.style.display = 'none';
+      zap.style.display = 'none';
+    }
   }
 
   async function enviarCadastro() {
@@ -823,11 +777,13 @@ src="https://www.facebook.com/tr?id=2038947806731470&ev=PageView&noscript=1"
       });
       const d = await r.json();
       if (d.success) {
-        if (window.fbq) { fbq('track', 'Lead', { content_name: 'Cadastro LoggZap', plano: planoSelecionado }, { eventID: eventId }); fbq('track', 'Contact', { content_name: 'Cadastro LoggZap', plano: planoSelecionado }); }
+        // Só Lead. O Contact duplicado aqui sujava o evento e atrapalhava a otimização da campanha.
+        if (window.fbq) { fbq('track', 'Lead', { content_name: 'Cadastro LoggZap', plano: planoSelecionado }, { eventID: eventId }); }
         document.getElementById('modal-cadastro').style.display = 'none';
         if (planoSelecionado === 'trial' && !ehMobile()) {
           window.open('https://chromewebstore.google.com/detail/loggzap-dashboard/dpfnpaepnholpjgbblljpinbkfoldlpp', '_blank');
         }
+        prepararSucesso();
         document.getElementById('modal-sucesso').style.display = 'flex';
       } else {
         erro.textContent = d.error || 'Erro ao enviar. Tente novamente.';
@@ -884,9 +840,12 @@ src="https://www.facebook.com/tr?id=2038947806731470&ev=PageView&noscript=1"
 <div id="modal-sucesso" style="display:none;position:fixed;inset:0;z-index:200;align-items:center;justify-content:center;background:rgba(0,0,0,0.75);backdrop-filter:blur(8px)">
   <div style="background:#0c0f16;border:1px solid rgba(0,208,132,0.2);border-radius:16px;padding:48px 36px;max-width:420px;width:calc(100% - 48px);text-align:center">
     <div style="font-size:56px;margin-bottom:20px">✅</div>
-    <h2 style="font-family:'Poppins',sans-serif;font-size:22px;font-weight:800;margin-bottom:12px">Email enviado!</h2>
-    <p style="font-size:15px;color:#8b93a8;line-height:1.7;margin-bottom:28px">Verifique sua caixa de entrada — você recebeu as instruções de acesso. Agora instale a extensão direto pela Chrome Web Store:</p>
-    <a href="https://chromewebstore.google.com/detail/loggzap-dashboard/dpfnpaepnholpjgbblljpinbkfoldlpp" target="_blank" style="display:inline-block;background:#00d084;color:#000;border-radius:10px;padding:14px 32px;font-size:15px;font-weight:700;text-decoration:none;margin-bottom:12px">🔗 Instalar no Chrome agora</a>
+    <h2 style="font-family:'Poppins',sans-serif;font-size:22px;font-weight:800;margin-bottom:12px">Conta criada!</h2>
+    <p id="suc-texto" style="font-size:15px;color:#8b93a8;line-height:1.7;margin-bottom:28px">Enviamos as instruções de acesso para o seu e-mail.</p>
+    <a id="suc-cta" href="https://chromewebstore.google.com/detail/loggzap-dashboard/dpfnpaepnholpjgbblljpinbkfoldlpp" target="_blank" style="display:inline-block;background:#00d084;color:#000;border-radius:10px;padding:14px 32px;font-size:15px;font-weight:700;text-decoration:none;margin-bottom:12px">🔗 Instalar no Chrome agora</a>
+    <p id="suc-dica" style="display:none;font-size:12px;color:#5a6274;line-height:1.6;margin:4px 0 8px"></p>
+    <br>
+    <a id="suc-zap" href="#" target="_blank" rel="noopener" style="display:none;font-size:13px;color:#25D366;font-weight:600;text-decoration:none">Prefere ajuda? Fale com a gente no WhatsApp</a>
     <br>
     <button onclick="fecharTudo()" style="background:transparent;border:1px solid rgba(255,255,255,0.1);color:#8b93a8;border-radius:10px;padding:10px 24px;font-size:13px;cursor:pointer;font-family:inherit;margin-top:8px">Fechar</button>
   </div>
@@ -907,7 +866,9 @@ src="https://www.facebook.com/tr?id=2038947806731470&ev=PageView&noscript=1"
   // No celular o CTA "Instalar" agora abre o CADASTRO (dispara Lead) — não renomeia mais pra WhatsApp.
   // Só blindamos o link da Chrome Web Store (ex.: no modal de sucesso), que não instala em celular:
   // no mobile ele aponta pro WhatsApp, que é onde a gente ajuda a ativar.
-  document.querySelectorAll('a[href*="chromewebstore.google.com"]').forEach(function (a) {
+  // #suc-cta fica de fora: no celular ele é reescrito por prepararSucesso() pro PAINEL (PWA),
+  // que é o caminho de ativação self-service — não pro WhatsApp.
+  document.querySelectorAll('a[href*="chromewebstore.google.com"]:not(#suc-cta)').forEach(function (a) {
     a.setAttribute('href', ZAP_URL);
     a.setAttribute('target', '_blank');
     a.setAttribute('rel', 'noopener');
