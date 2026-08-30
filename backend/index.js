@@ -3187,6 +3187,18 @@ async function dispararCapiInstalacao(req, storeId) {
 
 // Lead server-side (CAPI) — espelha o pixel 'Lead' do cadastro, com dedup pelo mesmo event_id
 // que o navegador manda. Melhora o sinal da campanha de Lead (recupera iOS/adblock).
+// Lê _fbp/_fbc dos cookies. O pixel grava no domínio raiz (.loggzap.com.br), então o
+// checkout em cliente.loggzap.com.br também os recebe — e com eles o Meta casa o evento
+// com o clique no anúncio, em vez de depender só do hash do e-mail.
+function cookiesMeta(req) {
+  const raw = String(req.headers?.cookie || '');
+  const pega = (nome) => {
+    const m = raw.match(new RegExp('(?:^|;\\s*)' + nome + '=([^;]+)'));
+    return m ? decodeURIComponent(m[1]) : '';
+  };
+  return { fbp: pega('_fbp'), fbc: pega('_fbc') };
+}
+
 async function dispararCapiLead(req, dados) {
   if (!META_CAPI_TOKEN) return;
   try {
@@ -3205,10 +3217,10 @@ async function dispararCapiLead(req, dados) {
       event_name: 'Lead',
       event_time: Math.floor(Date.now() / 1000),
       action_source: 'website',
-      event_source_url: 'https://www.loggzap.com.br/',
+      event_source_url: dados.source_url || 'https://www.loggzap.com.br/',
       event_id: dados.event_id || ('lead_' + Date.now()),
       user_data,
-      custom_data: { content_name: 'Cadastro LoggZap', plano: dados.plano || 'trial' }
+      custom_data: { content_name: dados.content_name || 'Cadastro LoggZap', plano: dados.plano || 'trial' }
     }]};
     await axios.post(`https://graph.facebook.com/v19.0/${META_PIXEL_ID}/events?access_token=${encodeURIComponent(META_CAPI_TOKEN)}`, payload, { timeout: 8000 });
     console.log('[CAPI] Lead enviado ao Meta (' + (email || 'sem email') + ')');
@@ -5301,13 +5313,31 @@ document.getElementById('email').addEventListener('keydown', e => { if (e.key ==
 </html>`);
 });
 
+// Registra o lead do checkout e conta como Lead pro Meta — mas SÓ na primeira vez que
+// essa pessoa aparece. Quem já preencheu o formulário da landing (onde o Lead do pixel
+// já disparou) não conta de novo: dois Leads pra mesma pessoa inflariam a conversão e
+// ensinariam o algoritmo errado. `novo` vem do dedupe por e-mail do salvarLead.
+function registrarLeadCheckout(req, email, plano) {
+  const r = db.salvarLead('', email, '', plano, 'checkout');
+  if (!r || !r.novo) return r;
+  const ck = cookiesMeta(req);
+  dispararCapiLead(req, {
+    email, plano,
+    event_id: 'checkout_' + r.id + '_' + Date.now(),
+    fbp: ck.fbp, fbc: ck.fbc,
+    source_url: 'https://cliente.loggzap.com.br/assinar?plano=' + encodeURIComponent(plano || ''),
+    content_name: 'Checkout LoggZap'
+  });
+  return r;
+}
+
 app.post('/checkout/criar', async (req, res) => {
   const { plano, email } = req.body;
   if (!plano || !email) return res.status(400).json({ error: 'plano e email obrigatorios' });
   // Guarda o lead ANTES de mandar pro Mercado Pago: quem digita o e-mail aqui é o
   // visitante de MAIOR intenção, e a maioria abandona o pagamento. Sem isso, esse
   // contato se perdia por completo.
-  try { db.salvarLead('', email, '', plano, 'checkout'); } catch (e) { console.error('[Checkout] lead:', e.message); }
+  try { registrarLeadCheckout(req, email, plano); } catch (e) { console.error('[Checkout] lead:', e.message); }
   if (!MP_ACCESS_TOKEN) return res.status(500).json({ error: 'MP_ACCESS_TOKEN nao configurado' });
   const precos = { basic: 97, premium: 147 };
   const nomes  = { basic: 'LoggZap Essencial', premium: 'LoggZap Pro' };
@@ -5331,7 +5361,7 @@ app.post('/assinatura/criar', async (req, res) => {
   const { plano, email, store_id } = req.body || {};
   if (!plano || !email || !store_id) return res.status(400).json({ error: 'plano, email e store_id obrigatorios' });
   // Mesmo motivo do /checkout/criar: não perder quem abandona o pagamento.
-  try { db.salvarLead('', email, '', plano, 'checkout'); } catch (e) { console.error('[Assinatura] lead:', e.message); }
+  try { registrarLeadCheckout(req, email, plano); } catch (e) { console.error('[Assinatura] lead:', e.message); }
   if (!MP_ACCESS_TOKEN) return res.status(500).json({ error: 'MP_ACCESS_TOKEN nao configurado' });
   const precos = { basic: 97, premium: 147 };
   const nomes  = { basic: 'LoggZap Essencial', premium: 'LoggZap Pro' };
