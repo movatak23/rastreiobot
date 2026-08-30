@@ -539,7 +539,7 @@ app.post('/admin-loggzap/api/atendimento', auth, (req, res) => {
   } catch (e) { res.status(500).json({ error: e.message }); }
 });
 
-// Trava/destrava um número: travado = a Ronaldo nunca responde, em silêncio.
+// Trava/destrava um número: travado = o Ronaldo nunca responde, em silêncio.
 app.post('/admin-loggzap/api/atendimento/travar', auth, (req, res) => {
   try {
     const tel = String(req.body?.telefone || '').replace(/\D/g, '');
@@ -2647,7 +2647,7 @@ async function atendAvisarHumano(telefone, nome, motivo, ultima) {
   catch (e) { console.error('[Atendimento] falha ao avisar humano:', e.message); }
 }
 
-// Palavra que "acorda" a Ronaldo numa conversa. Sem ela, silêncio absoluto.
+// Palavra que "acorda" o Ronaldo numa conversa. Sem ela, silêncio absoluto.
 const ATEND_GATILHO = (process.env.ATEND_GATILHO || 'loggzap').toLowerCase();
 function mencionaLoggZap(texto) {
   return String(texto || '')

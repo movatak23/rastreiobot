@@ -328,7 +328,7 @@ async function carregarAtendimento(){
       return isNaN(dt)?x:dt.toLocaleString('pt-BR',{timeZone:'America/Recife',day:'2-digit',month:'2-digit',hour:'2-digit',minute:'2-digit'}); };
     body.innerHTML = C.map(c=>{
       const quem = c.travado
-        ? '<span style="color:var(--red);font-weight:600">🔒 Travada</span><br><small style="color:var(--text3)">a Ronaldo nunca responde</small>'
+        ? '<span style="color:var(--red);font-weight:600">🔒 Travada</span><br><small style="color:var(--text3)">o Ronaldo nunca responde</small>'
         : (c.pausado
           ? '<span style="color:var(--amber);font-weight:600">👤 Você</span><br><small style="color:var(--text3)">'+esc(c.motivo||'')+'</small>'
           : '<span style="color:var(--green);font-weight:600">🤖 Ronaldo</span>');
@@ -373,7 +373,7 @@ async function atRetomar(tel, btn){
 }
 
 async function atTravar(tel, travar, btn){
-  if(travar && !confirm('Travar +'+tel+'?\n\nA Ronaldo nunca mais responde esse número — em silêncio, sem avisar ninguém.\nUse para contato pessoal, fornecedor ou cliente que você atende na mão.')) return;
+  if(travar && !confirm('Travar +'+tel+'?\n\nO Ronaldo nunca mais responde esse número — em silêncio, sem avisar ninguém.\nUse para contato pessoal, fornecedor ou cliente que você atende na mão.')) return;
   btn.disabled=true;
   try{ await apiAt('/travar', {method:'POST', body: JSON.stringify({telefone:tel, travar})}); await carregarAtendimento(); }
   catch(e){ alert('Erro: '+e.message); btn.disabled=false; }
