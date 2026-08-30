@@ -139,6 +139,18 @@
     <div class="leg"><span><i style="background:var(--blue)"></i>Visitas</span><span><i style="background:var(--green)"></i>Instalações</span></div>
   </div>
 
+  <!-- Leads da landing (cadastrou o formulário, tendo conectado a loja ou não) -->
+  <div class="sect">
+    <h3>Cadastros da landing <span id="leads-count" style="color:var(--text3);font-weight:400;text-transform:none;letter-spacing:0"></span></h3>
+    <div style="color:var(--text3);font-size:12px;margin:-6px 0 12px">Quem preencheu o formulário do site. Ainda não é loja instalada — vira instalação quando conecta a Nuvemshop.</div>
+    <div style="overflow-x:auto">
+      <table>
+        <thead><tr><th>Nome</th><th>Email</th><th>WhatsApp</th><th>Plano</th><th>Cadastrou</th></tr></thead>
+        <tbody id="leads-body"><tr><td colspan="5" class="muted">Carregando cadastros…</td></tr></tbody>
+      </table>
+    </div>
+  </div>
+
   <!-- Lojas instaladas (detalhado) -->
   <div class="sect">
     <h3>Lojas instaladas <span id="lojas-count" style="color:var(--text3);font-weight:400;text-transform:none;letter-spacing:0"></span></h3>
@@ -210,7 +222,30 @@ function render(d){
   $('p-pro').textContent = fmt(p.pro);
   renderChart(v.serie||[], i.serie||[]);
   $('status').textContent = 'Atualizado ' + new Date().toLocaleTimeString('pt-BR');
+  carregarLeads();
   carregarLojas();
+}
+
+async function carregarLeads(){
+  const s = localStorage.getItem(KEY); if(!s) return;
+  const body = $('leads-body');
+  try{
+    const r = await fetch('/admin-loggzap/api/leads', { headers: { 'x-secret': s } });
+    const d = await r.json();
+    if(!r.ok || d.error) throw new Error(d.error||'erro');
+    const L = d.leads || [];
+    $('leads-count').textContent = '('+L.length+')';
+    if(!L.length){ body.innerHTML='<tr><td colspan="5" class="muted">Nenhum cadastro ainda.</td></tr>'; return; }
+    const quando = (s)=>{ if(!s) return '—'; const dt=new Date(s.replace(' ','T')+'Z');
+      return isNaN(dt) ? s : dt.toLocaleString('pt-BR',{timeZone:'America/Recife',day:'2-digit',month:'2-digit',hour:'2-digit',minute:'2-digit'}); };
+    body.innerHTML = L.map(l=>'<tr>'
+      + '<td>'+(l.nome?esc(l.nome):'<span class="muted">—</span>')+'</td>'
+      + '<td>'+(l.email?'<a href="mailto:'+esc(l.email)+'" style="color:var(--green);text-decoration:none">'+esc(l.email)+'</a>':'<span class="muted">—</span>')+'</td>'
+      + '<td>'+(l.whatsapp?'<a href="https://wa.me/55'+esc(String(l.whatsapp).replace(/\D/g,''))+'" target="_blank" rel="noopener" style="color:#25D366;text-decoration:none">'+esc(l.whatsapp)+'</a>':'<span class="muted">—</span>')+'</td>'
+      + '<td><span class="tag">'+esc(l.plano||'—')+'</span></td>'
+      + '<td class="muted">'+quando(l.criado_em)+'</td>'
+      + '</tr>').join('');
+  }catch(e){ body.innerHTML='<tr><td colspan="5" class="muted">Erro ao carregar cadastros: '+esc(e.message)+'</td></tr>'; }
 }
 
 function renderChart(visSerie, instSerie){

@@ -633,6 +633,28 @@ function getAdminStats() {
   };
 }
 
+// Leads do formulário da landing (/cadastro).
+function salvarLead(nome, email, whatsapp, plano) {
+  const info = db.prepare('INSERT INTO leads (nome, email, whatsapp, plano) VALUES (?,?,?,?)')
+    .run(String(nome || '').trim(), String(email || '').trim().toLowerCase(), String(whatsapp || '').trim(), String(plano || '').trim());
+  return info.lastInsertRowid;
+}
+// Lista os leads mais recentes, marcando quem já conectou a loja (casa pelo e-mail
+// do cadastro com o e-mail da loja gravado em tokens, quando existir).
+function listarLeads(limite) {
+  return db.prepare(`SELECT id, nome, email, whatsapp, plano, store_id, criado_em
+                     FROM leads ORDER BY datetime(criado_em) DESC LIMIT ?`).all(Number(limite) || 100);
+}
+function contarLeads() {
+  const n = (sql) => { try { return db.prepare(sql).get().n || 0; } catch (e) { return 0; } };
+  return {
+    total: n('SELECT COUNT(*) n FROM leads'),
+    hoje:  n("SELECT COUNT(*) n FROM leads WHERE criado_em >= date('now')"),
+    d7:    n("SELECT COUNT(*) n FROM leads WHERE criado_em >= datetime('now','-7 days')"),
+    d30:   n("SELECT COUNT(*) n FROM leads WHERE criado_em >= datetime('now','-30 days')")
+  };
+}
+
 // Registra 1 visita da landing no dia de hoje (contador simples de pageviews).
 function registrarVisita() {
   try {
@@ -798,6 +820,21 @@ function migrar() {
   try { db.exec("ALTER TABLE tokens ADD COLUMN ultimo_evento_em TEXT"); } catch(e) {}
   // Contador de visitas da landing (para o painel de gestão / funil).
   try { db.exec("CREATE TABLE IF NOT EXISTS visitas (dia TEXT PRIMARY KEY, total INTEGER DEFAULT 0)"); } catch(e) {}
+  // Leads do formulário da landing. Antes o /cadastro só mandava e-mail e NÃO gravava
+  // nada — quem se cadastrava não aparecia em painel nenhum (o funil só enxerga loja
+  // que completou o OAuth, na tabela tokens).
+  try {
+    db.exec(`CREATE TABLE IF NOT EXISTS leads (
+      id        INTEGER PRIMARY KEY AUTOINCREMENT,
+      nome      TEXT,
+      email     TEXT,
+      whatsapp  TEXT,
+      plano     TEXT,
+      store_id  TEXT,
+      criado_em TEXT DEFAULT (datetime('now'))
+    )`);
+    db.exec('CREATE INDEX IF NOT EXISTS idx_leads_email ON leads(email)');
+  } catch(e) {}
   try { db.exec("ALTER TABLE licencas ADD COLUMN device_id TEXT"); } catch(e) {}
   // Licença multi-dispositivo (0 = trava em 1 aparelho, 1 = libera vários)
   try { db.exec("ALTER TABLE licencas ADD COLUMN multi_dispositivo INTEGER DEFAULT 0"); } catch(e) {}
@@ -1791,6 +1828,7 @@ module.exports = {
   jaNotificadoPorTelefone, listarNotificadosRecentes,
   registrarClienteAtivo, jaClienteAtivo,
   getAdminStats, getLojistaStats, registrarVisita, getGestaoStats,
+  salvarLead, listarLeads, contarLeads,
   upsertAuthSession, getAuthSession, completeAuthSession, deleteAuthSession,
   criarLicenca, criarTrial, getLicenca, getLicencaPorStore, vincularLicenca, validarLicenca,
   getLicencasPorPayment, salvarPaymentId, getLicencaPorChave, getMetas, salvarMetas, desvincularDispositivo, setMultiDispositivo,

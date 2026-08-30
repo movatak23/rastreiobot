@@ -478,7 +478,13 @@ app.get('/admin-loggzap', (req, res) => {
 // ── Painel de GESTÃO / funil (visitas → instalações → pagantes) ──
 app.get('/admin-loggzap/gestao', (req, res) => res.sendFile(path.join(__dirname, 'public', 'gestao.html')));
 app.get('/admin-loggzap/api/gestao', auth, (req, res) => {
-  try { res.json({ success: true, ...db.getGestaoStats() }); }
+  try { res.json({ success: true, ...db.getGestaoStats(), leads: db.contarLeads() }); }
+  catch (e) { res.status(500).json({ error: e.message }); }
+});
+
+// Leads do formulário da landing (quem se cadastrou, tendo conectado a loja ou não).
+app.get('/admin-loggzap/api/leads', auth, (req, res) => {
+  try { res.json({ success: true, leads: db.listarLeads(req.query.limite || 100) }); }
   catch (e) { res.status(500).json({ error: e.message }); }
 });
 
@@ -5486,6 +5492,11 @@ app.get('/licenca/status/:storeId', auth, (req, res) => {
 app.post('/cadastro', async (req, res) => {
   const { nome, email, whatsapp, plano } = req.body;
   if (!nome || !email) return res.status(400).json({ error: 'Nome e email são obrigatórios.' });
+
+  // Grava o lead ANTES de tentar o e-mail: se o Resend falhar, o cadastro não se perde.
+  // (Antes daqui o /cadastro não gravava nada e o lead só existia nos e-mails.)
+  try { db.salvarLead(nome, email, whatsapp, plano); }
+  catch (e) { console.error('[Cadastro] Falha ao gravar lead:', e.message); }
 
   // Lead server-side (CAPI) — espelha o pixel do navegador (dedup pelo event_id). Não bloqueia o fluxo.
   dispararCapiLead(req, { email, whatsapp, plano, event_id: req.body.event_id, fbp: req.body.fbp, fbc: req.body.fbc });
