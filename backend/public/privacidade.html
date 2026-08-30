@@ -4,133 +4,44 @@
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
 <title>Política de Privacidade — LoggZap</title>
+<link rel="icon" type="image/png" href="/favicon.png">
 <link href="https://fonts.googleapis.com/css2?family=Poppins:wght@700;800&family=DM+Sans:wght@400;500;600&display=swap" rel="stylesheet">
 <style>
   :root {
-    --bg: #07090e;
-    --bg2: #0c0f16;
-    --bg3: #11151e;
+    --bg: #07090e; --bg2: #0c0f16; --bg3: #11151e;
     --border: rgba(255,255,255,0.07);
-    --text: #eef0f8;
-    --text2: #8b93a8;
-    --text3: #424a61;
-    --green: #00d084;
-    --accent: #4f8ef7;
+    --text: #eef0f8; --text2: #8b93a8; --text3: #424a61;
+    --green: #00d084; --accent: #4f8ef7; --amber: #f5a623;
   }
   *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
-  body {
-    background: var(--bg);
-    color: var(--text);
-    font-family: 'DM Sans', sans-serif;
-    font-size: 16px;
-    line-height: 1.75;
-    padding-bottom: 80px;
-  }
-  .header {
-    background: var(--bg2);
-    border-bottom: 1px solid var(--border);
-    padding: 20px 0;
-    text-align: center;
-  }
-  .logo {
-    font-family: 'Poppins', sans-serif;
-    font-weight: 800;
-    font-size: 24px;
-    text-decoration: none;
-    color: var(--text);
-  }
+  body { background: var(--bg); color: var(--text); font-family: 'DM Sans', sans-serif; font-size: 16px; line-height: 1.75; padding-bottom: 80px; }
+  .header { background: var(--bg2); border-bottom: 1px solid var(--border); padding: 20px 0; text-align: center; }
+  .logo { font-family: 'Poppins', sans-serif; font-weight: 800; font-size: 24px; text-decoration: none; color: var(--text); }
   .logo span { color: var(--green); }
-  .wrap {
-    max-width: 760px;
-    margin: 0 auto;
-    padding: 0 24px;
-  }
-  .hero {
-    padding: 56px 0 40px;
-    border-bottom: 1px solid var(--border);
-    margin-bottom: 48px;
-  }
-  .hero h1 {
-    font-family: 'Poppins', sans-serif;
-    font-size: 36px;
-    font-weight: 800;
-    margin-bottom: 12px;
-  }
-  .hero p {
-    color: var(--text2);
-    font-size: 15px;
-  }
-  .updated {
-    display: inline-block;
-    background: rgba(0,208,132,0.08);
-    border: 1px solid rgba(0,208,132,0.2);
-    color: var(--green);
-    font-size: 12px;
-    font-weight: 600;
-    padding: 4px 12px;
-    border-radius: 20px;
-    margin-bottom: 20px;
-    letter-spacing: 0.05em;
-    text-transform: uppercase;
-  }
-  .section {
-    margin-bottom: 48px;
-  }
-  h2 {
-    font-family: 'Poppins', sans-serif;
-    font-size: 20px;
-    font-weight: 700;
-    margin-bottom: 16px;
-    color: var(--text);
-    padding-bottom: 12px;
-    border-bottom: 1px solid var(--border);
-  }
-  p {
-    color: var(--text2);
-    margin-bottom: 14px;
-    font-size: 15px;
-  }
-  ul {
-    list-style: none;
-    display: flex;
-    flex-direction: column;
-    gap: 8px;
-    margin-bottom: 14px;
-  }
-  ul li {
-    color: var(--text2);
-    font-size: 15px;
-    padding-left: 20px;
-    position: relative;
-  }
-  ul li::before {
-    content: '→';
-    color: var(--green);
-    position: absolute;
-    left: 0;
-    font-size: 13px;
-  }
-  .highlight {
-    background: var(--bg3);
-    border: 1px solid var(--border);
-    border-left: 3px solid var(--green);
-    border-radius: 8px;
-    padding: 16px 20px;
-    margin-bottom: 14px;
-  }
-  .highlight p {
-    margin: 0;
-    color: var(--text);
-    font-size: 14px;
-  }
+  .wrap { max-width: 760px; margin: 0 auto; padding: 0 24px; }
+  .hero { padding: 56px 0 40px; border-bottom: 1px solid var(--border); margin-bottom: 48px; }
+  .hero h1 { font-family: 'Poppins', sans-serif; font-size: 36px; font-weight: 800; margin-bottom: 12px; }
+  .hero p { color: var(--text2); font-size: 15px; }
+  .updated { display: inline-block; background: rgba(0,208,132,0.08); border: 1px solid rgba(0,208,132,0.2); color: var(--green); font-size: 12px; font-weight: 600; padding: 4px 12px; border-radius: 20px; margin-bottom: 20px; letter-spacing: 0.05em; text-transform: uppercase; }
+  .section { margin-bottom: 48px; }
+  h2 { font-family: 'Poppins', sans-serif; font-size: 20px; font-weight: 700; margin-bottom: 16px; color: var(--text); padding-bottom: 12px; border-bottom: 1px solid var(--border); }
+  h3 { font-family: 'Poppins', sans-serif; font-size: 15px; font-weight: 700; margin: 22px 0 10px; color: var(--text); }
+  p { color: var(--text2); margin-bottom: 14px; font-size: 15px; }
+  ul { list-style: none; display: flex; flex-direction: column; gap: 8px; margin-bottom: 14px; }
+  ul li { color: var(--text2); font-size: 15px; padding-left: 20px; position: relative; }
+  ul li::before { content: '→'; color: var(--green); position: absolute; left: 0; font-size: 13px; }
+  strong { color: var(--text); font-weight: 600; }
+  .highlight { background: var(--bg3); border: 1px solid var(--border); border-left: 3px solid var(--green); border-radius: 8px; padding: 16px 20px; margin-bottom: 14px; }
+  .highlight p { margin: 0; color: var(--text); font-size: 14px; }
+  .aviso { border-left-color: var(--amber); }
   a { color: var(--accent); text-decoration: none; }
   a:hover { text-decoration: underline; }
-  .footer {
-    text-align: center;
-    margin-top: 64px;
-    padding-top: 32px;
-    border-top: 1px solid var(--border);
-  }
+  table { width: 100%; border-collapse: collapse; font-size: 14px; margin-bottom: 14px; display: block; overflow-x: auto; }
+  th, td { text-align: left; padding: 10px 12px; border-bottom: 1px solid var(--border); vertical-align: top; }
+  th { color: var(--text3); font-size: 11px; text-transform: uppercase; letter-spacing: 0.05em; white-space: nowrap; }
+  td { color: var(--text2); }
+  td:first-child { color: var(--text); font-weight: 600; white-space: nowrap; }
+  .footer { text-align: center; margin-top: 64px; padding-top: 32px; border-top: 1px solid var(--border); }
   .footer p { font-size: 13px; color: var(--text3); }
 </style>
 </head>
@@ -143,102 +54,165 @@
 <div class="wrap">
 
   <div class="hero">
-    <div class="updated">Atualizado em maio de 2026</div>
+    <div class="updated">Atualizado em 30 de agosto de 2026</div>
     <h1>Política de Privacidade</h1>
-    <p>Esta política descreve como o LoggZap Dashboard coleta, usa e protege as informações dos usuários da extensão Chrome e do site loggzap.com.br.</p>
+    <p>Esta política explica quais dados o LoggZap coleta, por que coleta, com quem compartilha e como você pode exercer seus direitos. Ela cobre o site loggzap.com.br, o painel em cliente.loggzap.com.br (incluindo a versão instalável no celular) e a extensão do Chrome.</p>
   </div>
 
   <div class="section">
     <h2>1. Quem somos</h2>
-    <p>O LoggZap Dashboard é uma extensão Chrome desenvolvida e operada por Ronaldo Valério, com sede em Recife, Pernambuco, Brasil. Para contato: <a href="mailto:contato@loggzap.com.br">contato@loggzap.com.br</a></p>
+    <p>O <strong>LoggZap</strong> é um produto criado e operado por <strong>Ronaldo Valério — MovAtak Automações</strong>, com sede em Recife, Pernambuco, Brasil.</p>
+    <p>Para qualquer assunto relacionado a dados pessoais, inclusive pedidos de acesso ou exclusão, fale com: <a href="mailto:contato@loggzap.com.br">contato@loggzap.com.br</a>.</p>
   </div>
 
   <div class="section">
-    <h2>2. Dados coletados</h2>
-    <p>O LoggZap Dashboard coleta apenas os dados estritamente necessários para o funcionamento da extensão:</p>
+    <h2>2. Dois papéis diferentes — leia antes de seguir</h2>
+    <p>O LoggZap lida com dois grupos de pessoas, e nosso papel é diferente em cada um:</p>
+    <div class="highlight">
+      <p><strong>Você, lojista.</strong> Sobre os seus dados, nós somos o <strong>controlador</strong>: decidimos o que coletar e por quê, e respondemos diretamente a você.</p>
+    </div>
+    <div class="highlight">
+      <p><strong>Os clientes da sua loja.</strong> Sobre os dados deles, <strong>você é o controlador e nós somos apenas o operador</strong>: tratamos esses dados seguindo a sua instrução, para executar o que você configurou (avisar sobre o pedido, enviar o rastreio, perguntar como foi a experiência). Nós não usamos esses dados para finalidade própria e não os oferecemos a ninguém.</p>
+    </div>
+    <p>Isso significa que a base legal e o dever de informar os clientes finais sobre esse envio de mensagens são <strong>seus</strong>. Falamos mais disso no item 7.</p>
+  </div>
+
+  <div class="section">
+    <h2>3. Dados que coletamos de você, lojista</h2>
+
+    <h3>Quando você se cadastra no site</h3>
     <ul>
-      <li>Credenciais de acesso à loja Nuvemshop (token OAuth gerado pelo próprio usuário)</li>
-      <li>Store ID da loja Nuvemshop do usuário</li>
-      <li>Chave secreta de autenticação entre extensão e backend</li>
-      <li>Metas financeiras definidas pelo usuário (valores diário, semanal e mensal)</li>
-      <li>Data de início do período trial</li>
-      <li>Plano de licença ativo</li>
+      <li><strong>Nome, e-mail e WhatsApp</strong>, informados por você no formulário</li>
+      <li>O plano que despertou seu interesse e a data do cadastro</li>
+    </ul>
+    <p>Se você digita seu e-mail na tela de pagamento e não conclui a compra, <strong>guardamos esse e-mail</strong> para conseguir retomar o contato e te ajudar a finalizar.</p>
+
+    <h3>Quando você conecta sua loja Nuvemshop</h3>
+    <ul>
+      <li><strong>Token de acesso (OAuth)</strong> gerado pela própria Nuvemshop quando você autoriza</li>
+      <li><strong>Store ID</strong>, nome, e-mail e telefone públicos da loja</li>
+    </ul>
+
+    <h3>Quando você usa o painel</h3>
+    <ul>
+      <li><strong>Login e senha</strong> — a senha é guardada apenas como código embaralhado (hash), nunca em texto legível</li>
+      <li>Metas financeiras, modelos de mensagem e preferências que você configurar</li>
+      <li>Dados de uso do serviço: quantos rastreios e mensagens no mês, plano ativo, data de instalação</li>
+    </ul>
+
+    <h3>Se você conectar o Mercado Pago (opcional)</h3>
+    <ul>
+      <li>Movimentações financeiras da <strong>sua</strong> conta (data, descrição, valor e tipo), para montar seu relatório</li>
     </ul>
     <div class="highlight">
-      <p>Todos esses dados são armazenados localmente no navegador do usuário via <code>chrome.storage.local</code>. Nenhum dado pessoal é transmitido para servidores de terceiros.</p>
+      <p>Nós <strong>não</strong> pedimos nem armazenamos número de cartão, CPF, CNPJ ou senha bancária. Todo pagamento acontece dentro do Mercado Pago, fora do LoggZap.</p>
     </div>
   </div>
 
   <div class="section">
-    <h2>3. Dados NÃO coletados</h2>
-    <p>O LoggZap Dashboard não coleta, armazena nem transmite:</p>
+    <h2>4. Dados dos clientes da sua loja</h2>
+    <p>Para executar as automações que você ativa, tratamos os seguintes dados dos seus compradores:</p>
     <ul>
-      <li>Nome, CPF, endereço ou qualquer dado pessoal do usuário</li>
-      <li>Dados financeiros ou de pagamento</li>
-      <li>Histórico de navegação</li>
-      <li>Conteúdo de outras abas ou sites visitados</li>
-      <li>Dados de clientes da loja do usuário</li>
-      <li>Senhas ou informações de autenticação de terceiros</li>
+      <li>Nome e telefone de contato do pedido</li>
+      <li>Número do pedido, código de rastreio, transportadora e status da entrega</li>
+      <li>Resposta da pesquisa de satisfação, quando o cliente responde</li>
+      <li>Registro de quem pediu para <strong>não</strong> receber mais mensagens (opt-out)</li>
+    </ul>
+    <p>Esses dados vêm da sua loja Nuvemshop e são usados <strong>somente</strong> para enviar as mensagens que você configurou. Não montamos base própria, não cruzamos dados entre lojas diferentes e não usamos esses contatos para divulgar o LoggZap.</p>
+    <div class="highlight">
+      <p>Qualquer cliente pode sair a qualquer momento respondendo <strong>“sair”</strong> ou <strong>“parar”</strong> na conversa do WhatsApp. O bloqueio é imediato e vale para as mensagens automáticas daquela loja.</p>
+    </div>
+  </div>
+
+  <div class="section">
+    <h2>5. Cookies e medição de anúncios</h2>
+    <p>No site loggzap.com.br usamos o <strong>Pixel da Meta</strong> (Facebook/Instagram) para entender quais anúncios trazem visitantes e cadastros. Ele grava cookies no seu navegador (<code>_fbp</code> e <code>_fbc</code>).</p>
+    <p>Quando você conclui um cadastro, enviamos à Meta um evento de conversão que inclui seu <strong>e-mail e telefone embaralhados</strong> (hash irreversível) — a Meta usa isso apenas para saber se aquela conversão veio de um anúncio. Não enviamos seu e-mail ou telefone em texto legível.</p>
+    <p>Você pode bloquear esses cookies nas configurações do seu navegador; o site continua funcionando normalmente.</p>
+  </div>
+
+  <div class="section">
+    <h2>6. Com quem compartilhamos</h2>
+    <p>Não vendemos e não alugamos dados. Compartilhamos apenas com quem é necessário para o serviço funcionar:</p>
+    <table>
+      <thead><tr><th>Quem</th><th>Para quê</th><th>O que recebe</th></tr></thead>
+      <tbody>
+        <tr><td>Nuvemshop</td><td>Ler os pedidos da sua loja</td><td>Seu token de acesso</td></tr>
+        <tr><td>Railway</td><td>Hospedar o sistema e o banco de dados</td><td>Toda a operação (infraestrutura)</td></tr>
+        <tr><td>Meta</td><td>Medir resultado de anúncios</td><td>Evento de conversão com e-mail/telefone em hash</td></tr>
+        <tr><td>Resend</td><td>Enviar e-mails do sistema</td><td>Seu nome e e-mail</td></tr>
+        <tr><td>Mercado Pago</td><td>Processar pagamento e assinatura</td><td>Seu e-mail e os dados que você digitar lá</td></tr>
+        <tr><td>Z-API / Evolution</td><td>Enviar as mensagens de WhatsApp</td><td>Telefone e texto da mensagem</td></tr>
+        <tr><td>Seu Rastreio e transportadoras</td><td>Consultar o status da entrega</td><td>Código de rastreio</td></tr>
+      </tbody>
+    </table>
+    <p>Também podemos compartilhar dados se formos legalmente obrigados por ordem judicial ou autoridade competente.</p>
+  </div>
+
+  <div class="section">
+    <h2>7. Sua responsabilidade como lojista</h2>
+    <p>Quando você ativa as automações, é você quem decide enviar mensagem aos seus clientes. Por isso:</p>
+    <ul>
+      <li>Garanta que existe base legal para esse contato — normalmente a <strong>execução do contrato de compra</strong> (avisar sobre o pedido que a pessoa fez) ou o <strong>legítimo interesse</strong></li>
+      <li>Informe seus clientes, na sua própria política, que eles receberão mensagens sobre o pedido</li>
+      <li>Não use o LoggZap para enviar mensagem não solicitada a quem não comprou de você</li>
+      <li>Respeite quem pediu para sair</li>
     </ul>
   </div>
 
   <div class="section">
-    <h2>4. Como os dados são usados</h2>
-    <p>Os dados armazenados localmente são utilizados exclusivamente para:</p>
+    <h2>8. Por quanto tempo guardamos</h2>
     <ul>
-      <li>Autenticar a extensão com o backend do LoggZap</li>
-      <li>Buscar os dados da loja Nuvemshop do usuário via API oficial</li>
-      <li>Exibir métricas, pedidos e metas no painel lateral da extensão</li>
-      <li>Validar e gerenciar o plano de licença ativo</li>
+      <li><strong>Dados de cadastro e conta:</strong> enquanto sua conta existir</li>
+      <li><strong>Dados de pedidos e rastreio:</strong> enquanto forem necessários para acompanhar a entrega e o histórico da sua loja</li>
+      <li><strong>Registros financeiros e fiscais:</strong> pelo prazo que a lei exigir, mesmo após o encerramento</li>
+      <li><strong>Lista de opt-out:</strong> mantida indefinidamente — é ela que garante que quem pediu para sair não volte a receber</li>
     </ul>
+    <p>Ao encerrar sua conta, apagamos ou anonimizamos o que não formos obrigados a guardar.</p>
   </div>
 
   <div class="section">
-    <h2>5. Compartilhamento de dados</h2>
-    <p>O LoggZap não vende, aluga nem compartilha dados dos usuários com terceiros. As únicas comunicações externas realizadas pela extensão são:</p>
+    <h2>9. Seus direitos (LGPD)</h2>
+    <p>A Lei Geral de Proteção de Dados (Lei 13.709/2018) garante a você o direito de:</p>
     <ul>
-      <li><strong>API Nuvemshop</strong> (api.nuvemshop.com.br) — para buscar pedidos e dados da loja do próprio usuário, usando o token OAuth fornecido pelo usuário</li>
-      <li><strong>Backend LoggZap</strong> (railway.app) — para validação de licença e autenticação, usando apenas o Store ID e a chave secreta</li>
-      <li><strong>WhatsApp Web</strong> (web.whatsapp.com) — apenas para abrir conversas pré-preenchidas quando o usuário solicita envio de notificação de pedido</li>
+      <li>Confirmar se tratamos seus dados e ter acesso a eles</li>
+      <li>Corrigir dados incompletos ou desatualizados</li>
+      <li>Pedir anonimização, bloqueio ou eliminação de dados desnecessários</li>
+      <li>Pedir a portabilidade dos seus dados</li>
+      <li>Revogar o consentimento e solicitar a exclusão da conta</li>
+      <li>Ser informado sobre com quem compartilhamos seus dados</li>
     </ul>
+    <p>Para exercer qualquer um deles, escreva para <a href="mailto:contato@loggzap.com.br">contato@loggzap.com.br</a>. Respondemos em até <strong>15 dias</strong>.</p>
+    <p>Se você é cliente de uma loja que usa o LoggZap e quer que seus dados sejam apagados, fale primeiro com a loja onde comprou — ela é a controladora. Se preferir, pode nos escrever que encaminhamos.</p>
   </div>
 
   <div class="section">
-    <h2>6. Armazenamento e segurança</h2>
-    <p>Todos os dados são armazenados localmente via <code>chrome.storage.local</code>, que é isolado por extensão e não acessível por outros sites ou extensões. A comunicação com o backend é realizada via HTTPS com autenticação por chave secreta.</p>
-    <p>O usuário pode excluir todos os dados armazenados pela extensão a qualquer momento desinstalando a extensão ou limpando os dados de armazenamento nas configurações do Chrome.</p>
-  </div>
-
-  <div class="section">
-    <h2>7. Dados de pagamento</h2>
-    <p>Os pagamentos de assinaturas são processados pelo Mercado Pago. O LoggZap não armazena nem tem acesso a dados de cartão de crédito ou informações bancárias. Consulte a <a href="https://www.mercadopago.com.br/privacidade" target="_blank">política de privacidade do Mercado Pago</a> para mais detalhes.</p>
-  </div>
-
-  <div class="section">
-    <h2>8. Direitos do usuário</h2>
-    <p>O usuário tem direito a:</p>
+    <h2>10. Segurança</h2>
     <ul>
-      <li>Acessar os dados armazenados pela extensão (via DevTools do Chrome)</li>
-      <li>Excluir todos os dados desinstalando a extensão</li>
-      <li>Solicitar esclarecimentos sobre o uso dos dados pelo email <a href="mailto:contato@loggzap.com.br">contato@loggzap.com.br</a></li>
+      <li>Todo tráfego trafega criptografado (HTTPS)</li>
+      <li>Senhas são guardadas apenas como hash, nunca em texto legível</li>
+      <li>O acesso ao painel exige login e sessão autenticada</li>
+      <li>Tokens de loja são usados só para chamar a API da Nuvemshop da própria loja</li>
     </ul>
+    <p>Nenhum sistema é infalível. Se ocorrer um incidente que possa gerar risco relevante a você, comunicaremos você e a ANPD, conforme o art. 48 da LGPD.</p>
   </div>
 
   <div class="section">
-    <h2>9. Alterações nesta política</h2>
-    <p>Esta política pode ser atualizada periodicamente. A data de última atualização será sempre exibida no topo desta página. O uso continuado da extensão após alterações implica aceitação da política atualizada.</p>
+    <h2>11. Menores de idade</h2>
+    <p>O LoggZap é uma ferramenta para lojistas e não se destina a menores de 18 anos. Não coletamos intencionalmente dados de crianças ou adolescentes.</p>
   </div>
 
   <div class="section">
-    <h2>10. Contato</h2>
-    <p>Dúvidas sobre esta política de privacidade? Entre em contato:</p>
-    <p><a href="mailto:contato@loggzap.com.br">contato@loggzap.com.br</a></p>
+    <h2>12. Alterações desta política</h2>
+    <p>Podemos atualizar esta política conforme o produto evoluir. A data no topo indica a última alteração. Mudanças relevantes serão avisadas por e-mail ou dentro do painel.</p>
   </div>
 
   <div class="footer">
-    <p>© 2026 LoggZap Dashboard · <a href="/">loggzap.com.br</a></p>
+    <p>LoggZap · um produto da MovAtak Automações · <a href="mailto:contato@loggzap.com.br">contato@loggzap.com.br</a></p>
+    <p style="margin-top:8px"><a href="/termos">Termos de Uso</a> · <a href="/">Voltar ao site</a></p>
   </div>
 
 </div>
+
 </body>
 </html>
