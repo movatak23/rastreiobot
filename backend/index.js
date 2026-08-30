@@ -2620,12 +2620,16 @@ async function atendAtualizarConteudoSite() {
   return r;
 }
 
-async function atendEnviar(telefone, mensagem) {
+// delayMs: a Evolution mostra "digitando..." por esse tempo antes de entregar a
+// mensagem. É o que faz a resposta parecer digitada e não cuspida por um robô.
+async function atendEnviar(telefone, mensagem, delayMs) {
   if (!EVOLUTION_URL || !EVOLUTION_API_KEY) throw new Error('Evolution não configurado.');
+  const corpo = { number: telefone, text: mensagem };
+  if (delayMs) { corpo.delay = Math.round(delayMs); corpo.presence = 'composing'; }
   const res = await axios.post(
     `${EVOLUTION_URL}/message/sendText/${ATEND_INSTANCE}`,
-    { number: telefone, text: mensagem },
-    { headers: { apikey: EVOLUTION_API_KEY, 'Content-Type': 'application/json' }, timeout: 30000 }
+    corpo,
+    { headers: { apikey: EVOLUTION_API_KEY, 'Content-Type': 'application/json' }, timeout: 45000 }
   );
   return res.data;
 }
@@ -2643,52 +2647,117 @@ async function atendAvisarHumano(telefone, nome, motivo, ultima) {
   catch (e) { console.error('[Atendimento] falha ao avisar humano:', e.message); }
 }
 
-// Cérebro do atendimento. Chamado pelo webhook da instância comercial.
-async function atenderComIA(telefone, texto, nome) {
+// Palavra que "acorda" a Ronaldo numa conversa. Sem ela, silêncio absoluto.
+const ATEND_GATILHO = (process.env.ATEND_GATILHO || 'loggzap').toLowerCase();
+function contemGatilho(texto) {
+  return String(texto || '')
+    .toLowerCase()
+    .normalize('NFD').replace(/[̀-ͯ]/g, '') // ignora acento
+    .replace(/[^a-z0-9]/g, '')                        // ignora espaço/pontuação: "logg zap", "logg-zap"
+    .includes(ATEND_GATILHO.replace(/[^a-z0-9]/g, ''));
+}
+
+const pausa = (ms) => new Promise(r => setTimeout(r, ms));
+
+// Envia com ritmo humano: pensa um pouco, "digitando..." proporcional ao tamanho, e
+// quebra resposta longa em duas partes. Resposta instantânea e num bloco só é o que
+// mais entrega que do outro lado tem um robô.
+async function atendEnviarHumano(telefone, textoResposta) {
+  const partes = dividirResposta(textoResposta);
+  for (let i = 0; i < partes.length; i++) {
+    const p = partes[i];
+    // "Digitando...": ~45ms por caractere, entre 1,8s e 9s. Gente não digita instantâneo.
+    const digitando = Math.min(9000, Math.max(1800, p.length * 45));
+    if (i > 0) await pausa(700 + Math.random() * 900); // respiro entre as duas mensagens
+    await atendEnviar(telefone, p, digitando);
+  }
+}
+
+// Quebra em no máximo 2 mensagens, num fim de frase — não no meio da palavra.
+function dividirResposta(txt) {
+  const t = String(txt || '').trim();
+  if (t.length <= 160) return [t];
+  const frases = t.match(/[^.!?\n]+[.!?]?(\s|$)/g) || [t];
+  if (frases.length < 2) return [t];
+  const meio = Math.ceil(frases.length / 2);
+  const a = frases.slice(0, meio).join('').trim();
+  const b = frases.slice(meio).join('').trim();
+  return b ? [a, b] : [a];
+}
+
+// Buffer por contato: no WhatsApp as pessoas mandam a ideia em pedaços ("oi" /
+// "vi o loggzap" / "quanto custa?"). Responder cada pedaço é o comportamento mais
+// robótico possível. Aqui a gente espera a pessoa terminar e responde uma vez só,
+// considerando tudo junto.
+const atendBuffer = new Map(); // tel -> { partes:[], timer, nome }
+const ATEND_ESPERA_MS = Number(process.env.ATEND_ESPERA_MS || 8000);
+
+function atenderComIA(telefone, texto, nome) {
   const tel = String(telefone).replace(/\D/g, '');
   if (!tel || !texto) return;
-
-  // Trava geral: o Ronaldo pode desligar o bot na hora pelo painel.
   if (db.atendGetConfig('ligado', '0') !== '1') return;
-
-  // CONVERSA TRAVADA: a IA não responde e não avisa — silêncio total. Vem ANTES de
-  // qualquer coisa (nem grava mensagem) pra conversa pessoal/fornecedor ficar intocada.
+  // TRAVADA: silêncio total, nem registra. Vem antes de tudo.
   if (db.atendEstaTravado(tel)) return;
 
   db.atendRegistrarContato(tel, nome);
-  // Fecha o último vazamento do funil: quem chama no zap agora vira lead registrado.
   try { db.salvarLeadWhatsApp(tel, nome); } catch (e) { console.error('[Atendimento] lead:', e.message); }
   db.atendSalvarMensagem(tel, 'user', texto);
 
-  // Conversa pausada = humano assumiu. A IA não volta a falar por cima dele.
-  const estado = db.atendEstado(tel);
-  if (estado.pausado) return;
+  // GATILHO: enquanto a palavra-chave não aparecer, ela fica muda (mas já registrou
+  // o contato como lead). O cliente pode dizer a palavra, ou o Ronaldo ativar depois.
+  if (!db.atendEstaAtivada(tel)) {
+    if (!contemGatilho(texto)) return;
+    db.atendAtivar(tel, true);
+    console.log('[Atendimento] ativada por palavra-chave: ' + tel);
+  }
 
-  // Fonte principal = o próprio site (coletado e guardado). As notas do painel
-  // complementam e, em caso de conflito, mandam mais.
+  if (db.atendEstado(tel).pausado) return; // humano assumiu
+
+  const b = atendBuffer.get(tel) || { partes: [], timer: null, nome };
+  b.partes.push(texto);
+  if (nome) b.nome = nome;
+  if (b.timer) clearTimeout(b.timer);
+  b.timer = setTimeout(() => {
+    atendBuffer.delete(tel);
+    responderAgora(tel, b.partes.join('\n'), b.nome)
+      .catch(e => console.error('[Atendimento] erro ao responder:', e.message));
+  }, ATEND_ESPERA_MS);
+  atendBuffer.set(tel, b);
+}
+
+async function responderAgora(tel, pergunta, nome) {
+  // Reconfere as travas: em 8s de espera o Ronaldo pode ter assumido ou travado.
+  if (db.atendGetConfig('ligado', '0') !== '1') return;
+  if (db.atendEstaTravado(tel)) return;
+  if (db.atendEstado(tel).pausado) return;
+
   const conteudoSite = db.atendGetConfig('conteudo_site', '');
   const notas = db.atendGetConfig('conhecimento', '');
-  const historico = db.atendHistorico(tel, 12).slice(0, -1); // tira a pergunta atual
-  const r = await ia.responder(conteudoSite, notas, historico, texto);
+  // O histórico já inclui as mensagens deste buffer; tira as do bloco atual pra não
+  // duplicar a pergunta que vai como mensagem final.
+  const nPartes = String(pergunta).split('\n').length;
+  const historico = db.atendHistorico(tel, 14).slice(0, -nPartes);
+
+  const r = await ia.responder(conteudoSite, notas, historico, pergunta);
 
   if (r.transferir) {
     db.atendPausar(tel, r.motivo, nome);
     const aviso = db.atendGetConfig('msg_transferencia',
-      'Vou chamar alguém do time pra te responder certinho, tá? Já já te falam por aqui. 👍');
-    try { await atendEnviar(tel, aviso); db.atendSalvarMensagem(tel, 'assistant', aviso); }
+      'Deixa eu confirmar isso certinho pra não te passar informação errada. Já te respondo por aqui. 👍');
+    try { await atendEnviarHumano(tel, aviso); db.atendSalvarMensagem(tel, 'assistant', aviso); }
     catch (e) { console.error('[Atendimento] envio da transferência:', e.message); }
-    await atendAvisarHumano(tel, nome, r.motivo, texto);
+    await atendAvisarHumano(tel, nome, r.motivo, pergunta);
     console.log('[Atendimento] transferido p/ humano: ' + tel + ' (' + r.motivo + ')');
     return;
   }
 
   try {
-    await atendEnviar(tel, r.texto);
+    await atendEnviarHumano(tel, r.texto);
     db.atendSalvarMensagem(tel, 'assistant', r.texto);
   } catch (e) {
     console.error('[Atendimento] falha ao enviar resposta:', e.message);
     db.atendPausar(tel, 'Falha ao enviar pelo WhatsApp', nome);
-    await atendAvisarHumano(tel, nome, 'Falha ao enviar a resposta pelo WhatsApp', texto);
+    await atendAvisarHumano(tel, nome, 'Falha ao enviar a resposta pelo WhatsApp', pergunta);
   }
 }
 
@@ -6444,14 +6513,17 @@ app.post('/webhook/evolution', async (req, res) => {
     // sendo a conversa do lojista com os compradores dele.
     if (instancia === ATEND_INSTANCE) {
       if (key.fromMe) {
-        // O Ronaldo respondeu na mão → a IA se cala nessa conversa. É a forma mais
-        // natural de assumir: basta responder, sem comando nenhum.
         if (texto) {
           const tel = String(telefone).replace(/\D/g, '');
           if (tel && tel !== ATEND_AVISO) {
             db.atendSalvarMensagem(tel, 'humano', texto);
-            const e = db.atendEstado(tel);
-            if (!e.pausado) {
+            if (contemGatilho(texto)) {
+              // O Ronaldo escreveu a palavra-chave → está passando a conversa PRA ela.
+              db.atendAtivar(tel, true);
+              db.atendRetomar(tel);
+              console.log('[Atendimento] Ronaldo ativou a IA na conversa: ' + tel);
+            } else if (!db.atendEstado(tel).pausado) {
+              // Respondeu na mão sem a palavra → assumiu. A IA se cala nessa conversa.
               db.atendPausar(tel, 'Você assumiu a conversa');
               console.log('[Atendimento] humano assumiu: ' + tel);
             }

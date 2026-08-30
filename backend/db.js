@@ -754,6 +754,18 @@ function atendTravar(telefone, travar) {
     .run(tel, travar ? 1 : 0);
   return 1;
 }
+function atendAtivar(telefone, ativa) {
+  const tel = String(telefone || '').replace(/\D/g, '');
+  if (!tel) return 0;
+  db.prepare(`INSERT INTO atend_estado (telefone, ativada) VALUES (?,?)
+              ON CONFLICT(telefone) DO UPDATE SET ativada=excluded.ativada, atualizado_em=datetime('now')`)
+    .run(tel, ativa ? 1 : 0);
+  return 1;
+}
+function atendEstaAtivada(telefone) {
+  const r = db.prepare('SELECT ativada FROM atend_estado WHERE telefone=?').get(String(telefone).replace(/\D/g, ''));
+  return !!(r && r.ativada);
+}
 function atendEstaTravado(telefone) {
   const r = db.prepare('SELECT travado FROM atend_estado WHERE telefone=?').get(String(telefone).replace(/\D/g, ''));
   return !!(r && r.travado);
@@ -766,7 +778,7 @@ function atendRegistrarContato(telefone, nome) {
 // Lista as conversas pro painel (mais recentes primeiro).
 function atendConversas(limite) {
   return db.prepare(`
-    SELECT e.telefone, e.pausado, e.motivo, e.nome, e.travado,
+    SELECT e.telefone, e.pausado, e.motivo, e.nome, e.travado, e.ativada,
            (SELECT COUNT(*) FROM atend_mensagens m WHERE m.telefone=e.telefone) AS qtd,
            (SELECT texto FROM atend_mensagens m WHERE m.telefone=e.telefone ORDER BY id DESC LIMIT 1) AS ultima,
            (SELECT criado_em FROM atend_mensagens m WHERE m.telefone=e.telefone ORDER BY id DESC LIMIT 1) AS ultima_em
@@ -1021,6 +1033,10 @@ function migrar() {
   // Travado é permanente e silencioso: a IA NUNCA responde esse número, nem avisa.
   // Serve pra contato pessoal, fornecedor, cliente que já é atendido na mão.
   try { db.exec('ALTER TABLE atend_estado ADD COLUMN travado INTEGER DEFAULT 0'); } catch(e) {}
+  // A Ronaldo só entra na conversa depois que a palavra-chave (LoggZap) aparecer —
+  // dita pelo cliente ou pelo próprio Ronaldo. Antes disso ela fica muda. É a trava
+  // que permite o bot morar no número pessoal sem responder quem não devia.
+  try { db.exec('ALTER TABLE atend_estado ADD COLUMN ativada INTEGER DEFAULT 0'); } catch(e) {}
   // Configuração do bot (liga/desliga e base de conhecimento editável pelo admin).
   try {
     db.exec(`CREATE TABLE IF NOT EXISTS atend_config (
@@ -2072,7 +2088,7 @@ module.exports = {
   salvarLead, listarLeads, contarLeads, vincularLeadALoja, deletarLead, removerLoja,
   atendGetConfig, atendSetConfig, atendSalvarMensagem, atendHistorico, atendEstado,
   atendPausar, atendRetomar, atendRegistrarContato, atendConversas, salvarLeadWhatsApp,
-  atendTravar, atendEstaTravado,
+  atendTravar, atendEstaTravado, atendAtivar, atendEstaAtivada,
   addRastreioExtra, getRastreioExtra,
   upsertAuthSession, getAuthSession, completeAuthSession, deleteAuthSession,
   criarLicenca, criarTrial, getLicenca, getLicencaPorStore, vincularLicenca, validarLicenca,
