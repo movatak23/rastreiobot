@@ -160,9 +160,16 @@ src="https://www.facebook.com/tr?id=2038947806731470&ev=PageView&noscript=1"
   .prem .sub{margin-bottom:20px}
   .pdes{display:inline-block;background:var(--bdim);border:1px solid rgba(79,142,247,.22);padding:12px 20px;border-radius:8px;font-size:16px;font-weight:600;color:var(--blue);margin-bottom:52px}
 
-  .pflw{display:grid;grid-template-columns:repeat(auto-fit,minmax(165px,1fr));gap:0;margin-bottom:56px;border:1px solid rgba(79,142,247,.18);border-radius:14px;overflow:hidden}
+  /* 7 etapas em 2 fileiras: 4 em cima e 3 embaixo. Com auto-fit cabiam 6 na primeira
+     linha e a 7ª ficava sozinha, parecendo sobra. */
+  .pflw{display:grid;grid-template-columns:repeat(4,1fr);gap:0;margin-bottom:56px;border:1px solid rgba(79,142,247,.18);border-radius:14px;overflow:hidden}
   .pfs{padding:24px 20px;border-right:1px solid rgba(79,142,247,.12)}
   .pfs:last-child{border-right:none}
+  @media(min-width:901px){
+    /* sem borda dupla na coluna encostada na moldura e separador entre as fileiras */
+    .pfs:nth-child(4n){border-right:none}
+    .pfs:nth-child(-n+4){border-bottom:1px solid rgba(79,142,247,.12)}
+  }
   .pfn{font-family:'Poppins',sans-serif;font-size:38px;font-weight:800;color:rgba(79,142,247,.18);line-height:1;margin-bottom:8px}
   .pfs h4{font-size:13px;font-weight:700;color:var(--text);margin-bottom:5px}
   .pfs p{font-size:12px;color:var(--text3);line-height:1.6}
