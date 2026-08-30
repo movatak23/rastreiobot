@@ -16,6 +16,12 @@ const URL     = 'https://api.anthropic.com/v1/messages';
 // vendas: inventar preço, prazo ou função que o produto não tem.
 const TRANSFERIR = '[TRANSFERIR]';
 
+// Links oficiais. Ficam aqui (e não só no site coletado) porque a IA escreveu
+// "loggzap.com" — sem o .br — e mandou o lead pra um endereço que não existe.
+const LINK_SITE     = 'https://www.loggzap.com.br';
+const LINK_EXTENSAO = 'https://chromewebstore.google.com/detail/loggzap-dashboard/dpfnpaepnholpjgbblljpinbkfoldlpp';
+const LINK_PAINEL   = 'https://cliente.loggzap.com.br/painel';
+
 // O prompt PEDE formato de WhatsApp, mas modelo nenhum obedece 100%. Aqui o código
 // GARANTE: sem markdown, sem lista, curto e no máximo 1 emoji. Testado: a IA insistia
 // em responder com **negrito** e 5 parágrafos, o que entrega na hora que é robô.
@@ -23,6 +29,18 @@ const RE_EMOJI = /[\u{1F300}-\u{1FAFF}\u{2600}-\u{27BF}\u{FE0F}\u{2190}-\u{21FF}
 
 function humanizar(txt) {
   let s = String(txt || '').trim();
+  // Conserta o domínio: ela mandou um lead pra "loggzap.com" (sem .br), que não existe.
+  // Pega com ou sem www/http e não toca no que já está certo (o lookahead exclui .br).
+  s = s.replace(/\b(?:https?:\/\/)?(?:www\.)?loggzap\.com\b(?!\.br)/gi, LINK_SITE);
+
+  // Tira os links de cena antes de mexer no texto. Sem isso o corte por frases
+  // enxergava os pontos do domínio como fim de frase e ENTREGAVA LINK PELA METADE
+  // ("https://www.loggzap." em vez do endereço inteiro).
+  const links = [];
+  s = s.replace(/https?:\/\/[^\s<>"]+|\b[a-z0-9.-]+\.(?:com\.br|com|br)\b(?:\/[^\s<>"]*)?/gi, (m) => {
+    links.push(m.replace(/[.,;:]$/, '')); // ponto final da frase não faz parte do link
+    return ' @@L' + (links.length - 1) + '@@ ';
+  });
   // Markdown fora: o WhatsApp mostraria os asteriscos crus.
   s = s.replace(/\*\*(.+?)\*\*/g, '$1')
        .replace(/(^|\s)\*(\S[^*]*?)\*(?=\s|$|[.,!?])/g, '$1$2')
@@ -42,12 +60,16 @@ function humanizar(txt) {
   let vistos = 0;
   s = s.replace(RE_EMOJI, (m) => (++vistos <= 1 ? m : '')).replace(/\s{2,}/g, ' ').trim();
 
-  // Rede de segurança de tamanho.
+  // Rede de segurança de tamanho (ainda com os links fora, pra não cortar no meio deles).
   if (s.length > 420) {
     const corte = s.lastIndexOf(' ', 400);
     s = s.slice(0, corte > 200 ? corte : 400).trim().replace(/[,;:]$/, '') + '.';
   }
-  return s;
+
+  // Devolve os links inteiros. Se algum ficou de fora por causa do corte, tudo bem —
+  // melhor a resposta sem link do que com link quebrado.
+  s = s.replace(/@@L(\d+)@@/g, (m, i) => links[Number(i)] || '');
+  return s.replace(/\s{2,}/g, ' ').trim();
 }
 
 function configurada() {
@@ -102,6 +124,14 @@ function montarSystem(conteudoSite, notas) {
     'apenas devolva ' + TRANSFERIR + '. Dar palpite fora do produto é o pior erro que',
     'você pode cometer aqui.',
     'Errar um preço custa mais caro do que demorar pra responder.',
+    '',
+    'LINKS — copie EXATAMENTE, nunca escreva de memória:',
+    '- Site (é onde a pessoa começa o teste grátis): ' + LINK_SITE,
+    '- Extensão do Chrome (só no computador): ' + LINK_EXTENSAO,
+    '- Painel, para quem já tem conta: ' + LINK_PAINEL,
+    'O domínio termina em .com.br — "loggzap.com" está ERRADO e leva a lugar nenhum.',
+    'Não invente nem encurte endereço. Se o link que você precisa não está nesta lista,',
+    'não mande link nenhum.',
     '',
     'NÚMEROS E COMPARAÇÕES:',
     '- Cite valor, prazo e limite exatamente como estão no material. Não arredonde.',
