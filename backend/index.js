@@ -4962,7 +4962,10 @@ app.get('/status', (req, res) => {
 
 // TEMPORÁRIO (diagnóstico de pendentes) — remover após validar.
 // Roda a verificação na hora e devolve os pedidos pendentes crus para inspeção.
-app.get('/diag/pendentes/:storeId', async (req, res) => {
+// PROTEGIDO: esta rota devolve TELEFONE dos clientes finais da loja. Sem auth, bastava
+// adivinhar um store_id (são números curtos e sequenciais) pra extrair dado pessoal de
+// terceiros — vazamento de LGPD, e o dado nem é nosso: é dos compradores do lojista.
+app.get('/diag/pendentes/:storeId', auth, async (req, res) => {
   const storeId = req.params.storeId;
   try {
     const cfg = db.getConfig(storeId) || {};
@@ -5202,7 +5205,10 @@ async function enviarChaveAssinaturaEmail(email, chave, plano, proximaCobranca) 
   });
 }
 
-app.get('/teste/email', async (req, res) => {
+// PROTEGIDO: sem auth isto era um RELAY ABERTO — qualquer um mandava e-mail em nome de
+// contato@loggzap.com.br pra qualquer endereço. Abuso queimaria a reputação do domínio
+// transacional e derrubaria a entrega das chaves de ativação (e o Resend baniria a conta).
+app.get('/teste/email', auth, async (req, res) => {
   const email = req.query.email;
   if (!email) return res.status(400).json({ error: 'Informe ?email=seu@email.com' });
   try {
@@ -5813,7 +5819,9 @@ app.post('/teste/email', auth, async (req, res) => {
   } catch(e) { res.status(500).json({ success: false, error: e.message }); }
 });
 
-app.get('/diagnostico/:storeId', async (req, res) => {
+// PROTEGIDO: expunha pedaço do access_token da loja e confirmava quais store_ids existem
+// (enumeração). Ferramenta de diagnóstico não deve ser pública.
+app.get('/diagnostico/:storeId', auth, async (req, res) => {
   const { storeId } = req.params;
   try {
     const row = db.getToken(storeId);
