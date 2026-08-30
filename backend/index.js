@@ -17,7 +17,24 @@ const app = express();
 app.use(express.json({ verify: (req, _res, buf) => { req.rawBody = buf; } }));
 app.use(cors({ origin: '*' }));
 // Contador de visitas da landing (página inicial) para o painel de gestão.
-app.get('/', (req, res, next) => { try { db.registrarVisita(); } catch (e) {} next(); });
+// Só conta o que parece PESSOA num navegador. Antes contava TODA requisição a "/",
+// então bot, monitor de uptime e curl entravam no denominador e faziam a taxa de
+// conversão do painel parecer pior do que é.
+const UA_BOT = /bot|crawler|spider|crawling|slurp|curl|wget|headless|phantom|monitor|uptime|pingdom|lighthouse|python-requests|axios|node-fetch|go-http|java\/|libwww|okhttp|scrapy|facebookexternalhit|whatsapp|telegram|preview|scanner|semrush|ahrefs|mj12|dotbot|petal|bytespider|gptbot|ccbot|claudebot/i;
+function pareceVisitaReal(req) {
+  // Navegador pedindo página pede text/html; curl manda "*/*" e bots costumam omitir.
+  if (!String(req.headers['accept'] || '').includes('text/html')) return false;
+  const ua = String(req.headers['user-agent'] || '');
+  if (!ua || UA_BOT.test(ua)) return false;
+  // Sec-Fetch-Mode: navigate = navegação de verdade (navegadores modernos sempre mandam).
+  const sfm = req.headers['sec-fetch-mode'];
+  if (sfm && sfm !== 'navigate') return false;
+  return true;
+}
+app.get('/', (req, res, next) => {
+  try { if (pareceVisitaReal(req)) db.registrarVisita(); } catch (e) {}
+  next();
+});
 app.use(express.static(path.join(__dirname, 'public')));
 
 
