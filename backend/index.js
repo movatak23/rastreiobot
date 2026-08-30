@@ -10,6 +10,7 @@ const path    = require('path');
 const db      = require('./db');
 const prospeccao = require('./prospeccao');
 const ia      = require('./ia');
+const conhecimento = require('./conhecimento');
 
 db.migrar();
 
@@ -505,6 +506,8 @@ app.get('/admin-loggzap/api/atendimento', auth, (req, res) => {
       success: true,
       ligado: db.atendGetConfig('ligado', '0') === '1',
       conhecimento: db.atendGetConfig('conhecimento', ''),
+      site_chars: String(db.atendGetConfig('conteudo_site', '')).length,
+      site_em: db.atendGetConfig('conteudo_site_em', ''),
       msg_transferencia: db.atendGetConfig('msg_transferencia', ''),
       ia_configurada: ia.configurada(),
       modelo: ia.model,
@@ -522,13 +525,35 @@ app.post('/admin-loggzap/api/atendimento', auth, (req, res) => {
       // Não deixa ligar sem IA ou sem Evolution: ligaria um bot que não responde.
       if (b.ligado && !ia.configurada()) return res.status(400).json({ error: 'Falta ANTHROPIC_API_KEY no Railway.' });
       if (b.ligado && !(EVOLUTION_URL && EVOLUTION_API_KEY)) return res.status(400).json({ error: 'Evolution não configurada.' });
-      if (b.ligado && !String(db.atendGetConfig('conhecimento', '')).trim() && !String(b.conhecimento || '').trim())
-        return res.status(400).json({ error: 'Escreva a base de conhecimento antes de ligar — sem ela a IA transfere tudo.' });
+      // Precisa ter material: o site coletado OU notas escritas. Sem nada, ela só transfere.
+      if (b.ligado
+          && !String(db.atendGetConfig('conteudo_site', '')).trim()
+          && !String(db.atendGetConfig('conhecimento', '')).trim()
+          && !String(b.conhecimento || '').trim())
+        return res.status(400).json({ error: 'Sem material pra ela aprender. Clique em "Atualizar do site" ou escreva as observações antes de ligar.' });
       db.atendSetConfig('ligado', b.ligado ? '1' : '0');
     }
     if (b.conhecimento !== undefined) db.atendSetConfig('conhecimento', b.conhecimento);
     if (b.msg_transferencia !== undefined) db.atendSetConfig('msg_transferencia', b.msg_transferencia);
     res.json({ success: true, ligado: db.atendGetConfig('ligado', '0') === '1' });
+  } catch (e) { res.status(500).json({ error: e.message }); }
+});
+
+// Trava/destrava um número: travado = a Ronaldo nunca responde, em silêncio.
+app.post('/admin-loggzap/api/atendimento/travar', auth, (req, res) => {
+  try {
+    const tel = String(req.body?.telefone || '').replace(/\D/g, '');
+    if (!tel) return res.status(400).json({ error: 'telefone obrigatório' });
+    db.atendTravar(tel, !!req.body?.travar);
+    res.json({ success: true, travado: db.atendEstaTravado(tel) });
+  } catch (e) { res.status(500).json({ error: e.message }); }
+});
+
+// Recoleta o conteúdo do site (fonte principal de aprendizado).
+app.post('/admin-loggzap/api/atendimento/atualizar-site', auth, async (req, res) => {
+  try {
+    const r = await atendAtualizarConteudoSite();
+    res.json({ success: true, ok: r.ok, chars: (r.texto || '').length, paginas: r.paginas });
   } catch (e) { res.status(500).json({ error: e.message }); }
 });
 
@@ -2581,6 +2606,20 @@ const ATEND_INSTANCE = process.env.ATEND_INSTANCE || 'loggzap_atendimento';
 // Número que recebe o aviso quando a IA transfere (o WhatsApp do Ronaldo).
 const ATEND_AVISO = (process.env.ATEND_AVISO || '5581976041948').replace(/\D/g, '');
 
+// Recoleta o conteúdo do site e guarda. Mantém o anterior se a coleta falhar —
+// melhor a atendente responder com material de ontem do que ficar sem nada.
+async function atendAtualizarConteudoSite() {
+  const r = await conhecimento.coletar();
+  if (r.ok && r.texto) {
+    db.atendSetConfig('conteudo_site', r.texto);
+    db.atendSetConfig('conteudo_site_em', new Date().toISOString());
+    console.log('[Atendimento] conteúdo do site atualizado: ' + r.texto.length + ' caracteres');
+  } else {
+    console.warn('[Atendimento] coleta do site falhou; mantendo o conteúdo anterior');
+  }
+  return r;
+}
+
 async function atendEnviar(telefone, mensagem) {
   if (!EVOLUTION_URL || !EVOLUTION_API_KEY) throw new Error('Evolution não configurado.');
   const res = await axios.post(
@@ -2612,6 +2651,10 @@ async function atenderComIA(telefone, texto, nome) {
   // Trava geral: o Ronaldo pode desligar o bot na hora pelo painel.
   if (db.atendGetConfig('ligado', '0') !== '1') return;
 
+  // CONVERSA TRAVADA: a IA não responde e não avisa — silêncio total. Vem ANTES de
+  // qualquer coisa (nem grava mensagem) pra conversa pessoal/fornecedor ficar intocada.
+  if (db.atendEstaTravado(tel)) return;
+
   db.atendRegistrarContato(tel, nome);
   // Fecha o último vazamento do funil: quem chama no zap agora vira lead registrado.
   try { db.salvarLeadWhatsApp(tel, nome); } catch (e) { console.error('[Atendimento] lead:', e.message); }
@@ -2621,9 +2664,12 @@ async function atenderComIA(telefone, texto, nome) {
   const estado = db.atendEstado(tel);
   if (estado.pausado) return;
 
-  const conhecimento = db.atendGetConfig('conhecimento', '');
+  // Fonte principal = o próprio site (coletado e guardado). As notas do painel
+  // complementam e, em caso de conflito, mandam mais.
+  const conteudoSite = db.atendGetConfig('conteudo_site', '');
+  const notas = db.atendGetConfig('conhecimento', '');
   const historico = db.atendHistorico(tel, 12).slice(0, -1); // tira a pergunta atual
-  const r = await ia.responder(conhecimento, historico, texto);
+  const r = await ia.responder(conteudoSite, notas, historico, texto);
 
   if (r.transferir) {
     db.atendPausar(tel, r.motivo, nome);
@@ -2965,6 +3011,14 @@ cron.schedule('*/30 * * * *', async () => {
 });
 
 // Rastreios: 1x por dia às 18h (limite SeuRastreio 200/mês)
+// A atendente reaprende com o site todo dia de madrugada. Assim, mudança de preço ou
+// de texto na landing chega nela sozinha — sem depender de alguém lembrar de editar.
+cron.schedule('30 4 * * *', async () => {
+  if (db.atendGetConfig('ligado', '0') !== '1') return; // bot desligado, não gasta requisição
+  try { await atendAtualizarConteudoSite(); }
+  catch (e) { console.error('[Atendimento] cron do site:', e.message); }
+});
+
 cron.schedule('0 18 * * *', async () => {
   console.log('[Cron Rastreios] Iniciando verificação diária 18h...');
   try {

@@ -161,8 +161,20 @@
 
     <div id="at-qr" style="display:none;text-align:center;background:var(--bg3);border:1px solid var(--border);border-radius:12px;padding:20px;margin-bottom:16px"></div>
 
+    <div style="background:var(--bg3);border:1px solid var(--border);border-left:3px solid var(--green);border-radius:10px;padding:14px 16px;margin-bottom:16px">
+      <div style="display:flex;justify-content:space-between;align-items:center;gap:12px;flex-wrap:wrap">
+        <div>
+          <div style="font-weight:700;font-size:13px">📚 Fonte principal: o site</div>
+          <div id="at-site-info" style="font-size:12px;color:var(--text3);margin-top:2px">—</div>
+        </div>
+        <button class="btn" onclick="atAtualizarSite()">↻ Atualizar do site</button>
+      </div>
+      <div id="at-site-paginas" style="font-size:11px;color:var(--text3);margin-top:10px"></div>
+    </div>
+
     <div style="margin-bottom:8px;color:var(--text2);font-size:13px">
-      Base de conhecimento — a IA responde <b>somente</b> com o que estiver aqui. Fora disso ela para e te avisa.
+      Observações — complementam o site. Se algo aqui contradisser o site, <b>isto</b> vale mais.
+      Fora do site + observações, ela para e te avisa.
     </div>
     <!-- data-editando trava o recarregamento automático por cima do que ele está digitando -->
     <textarea id="at-conhecimento" spellcheck="false" oninput="this.dataset.editando='1'" style="width:100%;min-height:260px;background:#11151e;border:1px solid var(--border);border-radius:10px;color:var(--text);padding:14px;font-size:13px;font-family:ui-monospace,Menlo,monospace;line-height:1.6;resize:vertical"></textarea>
@@ -295,7 +307,14 @@ async function carregarAtendimento(){
       + item(d.evolution_configurada,'Evolution', d.evolution_configurada? 'configurada' : 'Falta EVOLUTION_URL/API_KEY')
       + item(wa.conectado,'WhatsApp', wa.conectado? 'conectado ('+esc(d.instancia)+')' : 'não conectado — clique em Conectar')
       + item(d.ligado,'Bot', d.ligado? 'respondendo' : 'desligado');
-    $('at-status').textContent = d.ligado ? '(ligado)' : '(desligado)';
+    $('at-status').textContent = d.ligado ? '(ligada)' : '(desligada)';
+    // Estado da coleta do site
+    const quandoSite = d.site_em ? new Date(d.site_em) : null;
+    $('at-site-info').innerHTML = d.site_chars
+      ? esc(d.site_chars.toLocaleString('pt-BR'))+' caracteres lidos do site'
+        + (quandoSite && !isNaN(quandoSite) ? ' · atualizado em '+quandoSite.toLocaleString('pt-BR',{timeZone:'America/Recife',day:'2-digit',month:'2-digit',hour:'2-digit',minute:'2-digit'}) : '')
+        + ' · reaprende sozinha todo dia'
+      : '<span style="color:var(--amber)">ainda não coletado — clique em Atualizar do site</span>';
     const btn=$('at-toggle');
     btn.textContent = d.ligado ? '⏸ Desligar bot' : '▶ Ligar bot';
     btn.className = d.ligado ? 'btn' : 'btn g';
@@ -307,15 +326,24 @@ async function carregarAtendimento(){
     if(!C.length){ body.innerHTML='<tr><td colspan="5" class="muted">Nenhuma conversa ainda.</td></tr>'; return; }
     const quando=(x)=>{ if(!x) return '—'; const dt=new Date(String(x).replace(' ','T')+'Z');
       return isNaN(dt)?x:dt.toLocaleString('pt-BR',{timeZone:'America/Recife',day:'2-digit',month:'2-digit',hour:'2-digit',minute:'2-digit'}); };
-    body.innerHTML = C.map(c=>'<tr>'
-      + '<td class="nowrap"><a href="https://wa.me/'+esc(c.telefone)+'" target="_blank" rel="noopener" style="color:#25D366;text-decoration:none">'+(c.nome?esc(c.nome)+' ':'')+'+'+esc(c.telefone)+'</a></td>'
-      + '<td class="nowrap">'+(c.pausado
+    body.innerHTML = C.map(c=>{
+      const quem = c.travado
+        ? '<span style="color:var(--red);font-weight:600">🔒 Travada</span><br><small style="color:var(--text3)">a Ronaldo nunca responde</small>'
+        : (c.pausado
           ? '<span style="color:var(--amber);font-weight:600">👤 Você</span><br><small style="color:var(--text3)">'+esc(c.motivo||'')+'</small>'
-          : '<span style="color:var(--green);font-weight:600">🤖 IA</span>')+'</td>'
+          : '<span style="color:var(--green);font-weight:600">🤖 Ronaldo</span>');
+      const acoes = (c.travado
+          ? '<button class="btn-add" onclick="atTravar(\''+esc(c.telefone)+'\',false,this)">Destravar</button>'
+          : (c.pausado?'<button class="btn-add" onclick="atRetomar(\''+esc(c.telefone)+'\',this)">Devolver p/ IA</button> ':'')
+            + '<button class="btn-del" onclick="atTravar(\''+esc(c.telefone)+'\',true,this)" title="A IA nunca mais responde este número">🔒 Travar</button>');
+      return '<tr>'
+      + '<td class="nowrap"><a href="https://wa.me/'+esc(c.telefone)+'" target="_blank" rel="noopener" style="color:#25D366;text-decoration:none">'+(c.nome?esc(c.nome)+' ':'')+'+'+esc(c.telefone)+'</a></td>'
+      + '<td class="nowrap">'+quem+'</td>'
       + '<td><small>'+esc(String(c.ultima||'').slice(0,70))+'</small><br><span class="muted" style="font-size:11px">'+quando(c.ultima_em)+'</span></td>'
       + '<td class="muted">'+(c.qtd||0)+'</td>'
-      + '<td>'+(c.pausado?'<button class="btn-add" onclick="atRetomar(\''+esc(c.telefone)+'\',this)">Devolver p/ IA</button>':'')+'</td>'
-      + '</tr>').join('');
+      + '<td class="nowrap"><div class="acoes">'+acoes+'</div></td>'
+      + '</tr>';
+    }).join('');
   }catch(e){ $('at-msg').textContent = 'Erro: '+e.message; }
 }
 
@@ -342,6 +370,23 @@ async function atRetomar(tel, btn){
   btn.disabled=true;
   try{ await apiAt('/retomar', {method:'POST', body: JSON.stringify({telefone:tel})}); await carregarAtendimento(); }
   catch(e){ alert('Erro: '+e.message); btn.disabled=false; }
+}
+
+async function atTravar(tel, travar, btn){
+  if(travar && !confirm('Travar +'+tel+'?\n\nA Ronaldo nunca mais responde esse número — em silêncio, sem avisar ninguém.\nUse para contato pessoal, fornecedor ou cliente que você atende na mão.')) return;
+  btn.disabled=true;
+  try{ await apiAt('/travar', {method:'POST', body: JSON.stringify({telefone:tel, travar})}); await carregarAtendimento(); }
+  catch(e){ alert('Erro: '+e.message); btn.disabled=false; }
+}
+
+async function atAtualizarSite(){
+  const info=$('at-site-info'), pags=$('at-site-paginas');
+  info.textContent='Lendo o site…'; pags.innerHTML='';
+  try{
+    const d = await apiAt('/atualizar-site', {method:'POST', body: JSON.stringify({})});
+    pags.innerHTML = (d.paginas||[]).map(p=>(p.ok?'✅':'⚠️')+' '+esc(p.url.replace(/^https?:\/\//,''))+(p.ok?' ('+p.chars+' car.)':' — '+esc(p.erro||'falhou'))).join('<br>');
+    await carregarAtendimento();
+  }catch(e){ info.innerHTML='<span style="color:var(--red)">Erro: '+esc(e.message)+'</span>'; }
 }
 
 async function atConectar(){

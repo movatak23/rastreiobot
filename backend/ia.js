@@ -20,9 +20,13 @@ function configurada() {
   return !!API_KEY;
 }
 
-function montarSystem(conhecimento) {
+// conteudoSite = texto extraído do próprio site (fonte principal, atualizada sozinha).
+// notas = base escrita à mão no painel, para complementar ou corrigir o site.
+function montarSystem(conteudoSite, notas) {
+  const temSite = !!String(conteudoSite || '').trim();
+  const temNotas = !!String(notas || '').trim();
   return [
-    'Você é o atendente virtual do LoggZap no WhatsApp. O LoggZap é um produto para',
+    'Você é a Ronaldo, atendente do LoggZap no WhatsApp. O LoggZap é um produto para',
     'lojistas da Nuvemshop: mostra as vendas da loja em tempo real e envia mensagens',
     'automáticas aos clientes finais pelo WhatsApp (rastreio, entrega, satisfação,',
     'recuperação de carrinho).',
@@ -32,26 +36,34 @@ function montarSystem(conhecimento) {
     '- No máximo 3 frases por resposta. Nada de texto longo ou lista enorme.',
     '- Não use markdown (nada de ** ou #). WhatsApp não renderiza.',
     '- Responda só a mensagem final ao cliente, sem explicar seu raciocínio.',
-    '- Trate a pessoa por você. Não invente nome.',
+    '- Trate a pessoa por você. Não invente o nome dela.',
+    '- Se perguntarem seu nome, diga que é a Ronaldo, do LoggZap.',
     '',
     'REGRA MAIS IMPORTANTE:',
-    'Use SOMENTE o que está na base de conhecimento abaixo. Se a pergunta não tiver',
-    'resposta clara na base — principalmente preço, prazo, funcionalidade, cobrança,',
-    'reembolso ou promessa de resultado — NÃO tente adivinhar e NÃO responda por',
-    'aproximação. Nesse caso responda exatamente com ' + TRANSFERIR + ' e mais nada.',
+    'Use SOMENTE o que está no material abaixo. Se a pergunta não tiver resposta clara',
+    'nele — principalmente preço, prazo, funcionalidade, cobrança, reembolso ou promessa',
+    'de resultado — NÃO tente adivinhar e NÃO responda por aproximação. Nesse caso',
+    'responda exatamente com ' + TRANSFERIR + ' e mais nada.',
     'Responda ' + TRANSFERIR + ' também se a pessoa pedir para falar com um humano,',
     'reclamar, cobrar algo, falar de assunto sensível ou parecer irritada.',
     'Errar um preço custa mais caro do que demorar pra responder.',
     '',
-    '=== BASE DE CONHECIMENTO ===',
-    (conhecimento || '(vazia — se a base está vazia, responda ' + TRANSFERIR + ' sempre)')
-  ].join('\n');
+    'O material vem do próprio site do LoggZap. É texto de página, então pode ter',
+    'sobras de menu e botão: ignore isso e use só a informação sobre o produto.',
+    temNotas ? 'Se as OBSERVAÇÕES contradisserem o site, as OBSERVAÇÕES valem mais.' : '',
+    '',
+    '===== CONTEÚDO DO SITE =====',
+    temSite ? conteudoSite : '(não foi possível ler o site agora)',
+    '',
+    temNotas ? '===== OBSERVAÇÕES DO RONALDO =====\n' + notas : '',
+    (!temSite && !temNotas) ? '\nSem material nenhum: responda ' + TRANSFERIR + ' sempre.' : ''
+  ].filter(l => l !== '').join('\n');
 }
 
 // historico: [{ role:'user'|'assistant', texto }] em ordem cronológica.
 // Retorna { texto } com a resposta, ou { transferir:true, motivo } quando o humano
 // precisa assumir (IA desligada, falha de rede, base insuficiente ou pedido explícito).
-async function responder(conhecimento, historico, pergunta) {
+async function responder(conteudoSite, notas, historico, pergunta) {
   if (!configurada()) return { transferir: true, motivo: 'IA não configurada (falta ANTHROPIC_API_KEY)' };
 
   const messages = [
@@ -72,7 +84,7 @@ async function responder(conhecimento, historico, pergunta) {
       body: JSON.stringify({
         model: MODEL,
         max_tokens: 400,
-        system: montarSystem(conhecimento),
+        system: montarSystem(conteudoSite, notas),
         messages,
       }),
     });
