@@ -9,6 +9,7 @@ const cron    = require('node-cron');
 const path    = require('path');
 const db      = require('./db');
 const prospeccao = require('./prospeccao');
+const ia      = require('./ia');
 
 db.migrar();
 
@@ -495,6 +496,96 @@ app.delete('/admin-loggzap/api/leads/:id', auth, (req, res) => {
     if (!n) return res.status(404).json({ error: 'Cadastro não encontrado.' });
     res.json({ success: true });
   } catch (e) { res.status(500).json({ error: e.message }); }
+});
+
+// ── Atendimento por IA: administração ────────────────────────────────────────
+app.get('/admin-loggzap/api/atendimento', auth, (req, res) => {
+  try {
+    res.json({
+      success: true,
+      ligado: db.atendGetConfig('ligado', '0') === '1',
+      conhecimento: db.atendGetConfig('conhecimento', ''),
+      msg_transferencia: db.atendGetConfig('msg_transferencia', ''),
+      ia_configurada: ia.configurada(),
+      modelo: ia.model,
+      instancia: ATEND_INSTANCE,
+      evolution_configurada: !!(EVOLUTION_URL && EVOLUTION_API_KEY),
+      conversas: db.atendConversas(50)
+    });
+  } catch (e) { res.status(500).json({ error: e.message }); }
+});
+
+app.post('/admin-loggzap/api/atendimento', auth, (req, res) => {
+  try {
+    const b = req.body || {};
+    if (b.ligado !== undefined) {
+      // Não deixa ligar sem IA ou sem Evolution: ligaria um bot que não responde.
+      if (b.ligado && !ia.configurada()) return res.status(400).json({ error: 'Falta ANTHROPIC_API_KEY no Railway.' });
+      if (b.ligado && !(EVOLUTION_URL && EVOLUTION_API_KEY)) return res.status(400).json({ error: 'Evolution não configurada.' });
+      if (b.ligado && !String(db.atendGetConfig('conhecimento', '')).trim() && !String(b.conhecimento || '').trim())
+        return res.status(400).json({ error: 'Escreva a base de conhecimento antes de ligar — sem ela a IA transfere tudo.' });
+      db.atendSetConfig('ligado', b.ligado ? '1' : '0');
+    }
+    if (b.conhecimento !== undefined) db.atendSetConfig('conhecimento', b.conhecimento);
+    if (b.msg_transferencia !== undefined) db.atendSetConfig('msg_transferencia', b.msg_transferencia);
+    res.json({ success: true, ligado: db.atendGetConfig('ligado', '0') === '1' });
+  } catch (e) { res.status(500).json({ error: e.message }); }
+});
+
+// Devolve a IA pra uma conversa que estava com humano.
+app.post('/admin-loggzap/api/atendimento/retomar', auth, (req, res) => {
+  try {
+    const tel = String(req.body?.telefone || '').replace(/\D/g, '');
+    if (!tel) return res.status(400).json({ error: 'telefone obrigatório' });
+    db.atendRetomar(tel);
+    res.json({ success: true });
+  } catch (e) { res.status(500).json({ error: e.message }); }
+});
+
+// Histórico completo de uma conversa.
+app.get('/admin-loggzap/api/atendimento/conversa/:telefone', auth, (req, res) => {
+  try {
+    const tel = String(req.params.telefone).replace(/\D/g, '');
+    res.json({ success: true, estado: db.atendEstado(tel), mensagens: db.atendHistorico(tel, 200) });
+  } catch (e) { res.status(500).json({ error: e.message }); }
+});
+
+// Conecta o WhatsApp comercial (QR) na instância do atendimento.
+app.post('/admin-loggzap/api/atendimento/conectar', auth, async (req, res) => {
+  if (!EVOLUTION_URL || !EVOLUTION_API_KEY) return res.status(400).json({ error: 'Evolution não configurada.' });
+  try {
+    try {
+      await axios.post(`${EVOLUTION_URL}/instance/create`,
+        { instanceName: ATEND_INSTANCE, integration: 'WHATSAPP-BAILEYS', qrcode: true },
+        { headers: { apikey: EVOLUTION_API_KEY, 'Content-Type': 'application/json' }, timeout: 30000 });
+    } catch (e) {
+      const msg = JSON.stringify(e.response?.data || '');
+      if (![403, 409].includes(e.response?.status) && !/already|exists|in use/i.test(msg)) throw e;
+    }
+    // Webhook apontando pro MESMO endpoint das lojas — a separação é pelo nome da instância.
+    const base = (process.env.APP_URL || '').replace(/\/$/, '');
+    if (!base) return res.status(400).json({ error: 'APP_URL não configurada no Railway — sem ela a Evolution não sabe pra onde mandar as mensagens.' });
+    try {
+      await axios.post(`${EVOLUTION_URL}/webhook/set/${ATEND_INSTANCE}`,
+        { webhook: { enabled: true, url: `${base}/webhook/evolution`, webhookByEvents: false, webhookBase64: false, events: ['MESSAGES_UPSERT'] } },
+        { headers: { apikey: EVOLUTION_API_KEY, 'Content-Type': 'application/json' }, timeout: 20000 });
+    } catch (e) { console.warn('[Atendimento] webhook set:', e.response?.status, e.message); }
+
+    const r = await axios.get(`${EVOLUTION_URL}/instance/connect/${ATEND_INSTANCE}`,
+      { headers: { apikey: EVOLUTION_API_KEY }, timeout: 30000 });
+    const d = r.data || {};
+    res.json({ success: true, qr: d.base64 || d.qrcode?.base64 || null, code: d.pairingCode || d.code || null });
+  } catch (e) { res.status(500).json({ error: e.response?.data?.message || e.message }); }
+});
+
+app.get('/admin-loggzap/api/atendimento/status', auth, async (req, res) => {
+  if (!EVOLUTION_URL || !EVOLUTION_API_KEY) return res.json({ success: true, conectado: false, motivo: 'Evolution não configurada' });
+  try {
+    const r = await axios.get(`${EVOLUTION_URL}/instance/connectionState/${ATEND_INSTANCE}`,
+      { headers: { apikey: EVOLUTION_API_KEY }, timeout: 15000 });
+    const st = r.data?.instance?.state || r.data?.state || '';
+    res.json({ success: true, conectado: st === 'open', estado: st });
+  } catch (e) { res.json({ success: true, conectado: false, estado: 'desconhecido' }); }
 });
 
 // Remove a instalação de uma loja (tira de "Lojas instaladas" e desconecta a automação).
@@ -2481,6 +2572,78 @@ async function sendViaEvolution(numeroComDDI, mensagem, storeId) {
     { headers: { apikey: EVOLUTION_API_KEY, 'Content-Type': 'application/json' }, timeout: 30000 }
   );
   return res.data;
+}
+
+// ── ATENDIMENTO POR IA no WhatsApp comercial do LoggZap ─────────────────────
+// Instância PRÓPRIA, separada das instâncias loja_<id> dos lojistas: aqui quem fala é
+// o LoggZap vendendo, não a loja falando com o comprador dela.
+const ATEND_INSTANCE = process.env.ATEND_INSTANCE || 'loggzap_atendimento';
+// Número que recebe o aviso quando a IA transfere (o WhatsApp do Ronaldo).
+const ATEND_AVISO = (process.env.ATEND_AVISO || '5581976041948').replace(/\D/g, '');
+
+async function atendEnviar(telefone, mensagem) {
+  if (!EVOLUTION_URL || !EVOLUTION_API_KEY) throw new Error('Evolution não configurado.');
+  const res = await axios.post(
+    `${EVOLUTION_URL}/message/sendText/${ATEND_INSTANCE}`,
+    { number: telefone, text: mensagem },
+    { headers: { apikey: EVOLUTION_API_KEY, 'Content-Type': 'application/json' }, timeout: 30000 }
+  );
+  return res.data;
+}
+
+// Avisa o Ronaldo que uma conversa precisa dele. Nunca deixa o erro subir: falhar o
+// aviso não pode impedir a conversa de ser pausada.
+async function atendAvisarHumano(telefone, nome, motivo, ultima) {
+  if (!ATEND_AVISO || ATEND_AVISO === String(telefone).replace(/\D/g, '')) return;
+  const txt = '🔔 Atendimento LoggZap precisa de você\n\n' +
+    'De: ' + (nome ? nome + ' — ' : '') + '+' + telefone + '\n' +
+    'Motivo: ' + motivo + '\n' +
+    (ultima ? '\nÚltima mensagem:\n"' + String(ultima).slice(0, 300) + '"\n' : '') +
+    '\nA IA parou nessa conversa. Responda direto no WhatsApp que ela não volta a responder.';
+  try { await atendEnviar(ATEND_AVISO, txt); }
+  catch (e) { console.error('[Atendimento] falha ao avisar humano:', e.message); }
+}
+
+// Cérebro do atendimento. Chamado pelo webhook da instância comercial.
+async function atenderComIA(telefone, texto, nome) {
+  const tel = String(telefone).replace(/\D/g, '');
+  if (!tel || !texto) return;
+
+  // Trava geral: o Ronaldo pode desligar o bot na hora pelo painel.
+  if (db.atendGetConfig('ligado', '0') !== '1') return;
+
+  db.atendRegistrarContato(tel, nome);
+  // Fecha o último vazamento do funil: quem chama no zap agora vira lead registrado.
+  try { db.salvarLeadWhatsApp(tel, nome); } catch (e) { console.error('[Atendimento] lead:', e.message); }
+  db.atendSalvarMensagem(tel, 'user', texto);
+
+  // Conversa pausada = humano assumiu. A IA não volta a falar por cima dele.
+  const estado = db.atendEstado(tel);
+  if (estado.pausado) return;
+
+  const conhecimento = db.atendGetConfig('conhecimento', '');
+  const historico = db.atendHistorico(tel, 12).slice(0, -1); // tira a pergunta atual
+  const r = await ia.responder(conhecimento, historico, texto);
+
+  if (r.transferir) {
+    db.atendPausar(tel, r.motivo, nome);
+    const aviso = db.atendGetConfig('msg_transferencia',
+      'Vou chamar alguém do time pra te responder certinho, tá? Já já te falam por aqui. 👍');
+    try { await atendEnviar(tel, aviso); db.atendSalvarMensagem(tel, 'assistant', aviso); }
+    catch (e) { console.error('[Atendimento] envio da transferência:', e.message); }
+    await atendAvisarHumano(tel, nome, r.motivo, texto);
+    console.log('[Atendimento] transferido p/ humano: ' + tel + ' (' + r.motivo + ')');
+    return;
+  }
+
+  try {
+    await atendEnviar(tel, r.texto);
+    db.atendSalvarMensagem(tel, 'assistant', r.texto);
+  } catch (e) {
+    console.error('[Atendimento] falha ao enviar resposta:', e.message);
+    db.atendPausar(tel, 'Falha ao enviar pelo WhatsApp', nome);
+    await atendAvisarHumano(tel, nome, 'Falha ao enviar a resposta pelo WhatsApp', texto);
+  }
 }
 
 // Gestão de instância Evolution (onboarding self-service de WhatsApp por loja)
@@ -6217,12 +6380,37 @@ app.post('/webhook/evolution', async (req, res) => {
     const b = req.body || {};
     const data = b.data || {};
     const key = data.key || {};
-    if (key.fromMe) return;
     const jid = key.remoteJid || '';
     if (!jid || jid.endsWith('@g.us')) return; // ignora grupos
     const texto = data.message?.conversation || data.message?.extendedTextMessage?.text || '';
     const telefone = String(jid).split('@')[0];
-    const storeIdContexto = String(b.instance || '').replace(/^loja_/, '') || null;
+    const instancia = String(b.instance || '');
+
+    // A instância comercial é o atendimento do LoggZap (IA). As loja_<id> continuam
+    // sendo a conversa do lojista com os compradores dele.
+    if (instancia === ATEND_INSTANCE) {
+      if (key.fromMe) {
+        // O Ronaldo respondeu na mão → a IA se cala nessa conversa. É a forma mais
+        // natural de assumir: basta responder, sem comando nenhum.
+        if (texto) {
+          const tel = String(telefone).replace(/\D/g, '');
+          if (tel && tel !== ATEND_AVISO) {
+            db.atendSalvarMensagem(tel, 'humano', texto);
+            const e = db.atendEstado(tel);
+            if (!e.pausado) {
+              db.atendPausar(tel, 'Você assumiu a conversa');
+              console.log('[Atendimento] humano assumiu: ' + tel);
+            }
+          }
+        }
+        return;
+      }
+      if (texto) await atenderComIA(telefone, texto, data.pushName || null);
+      return;
+    }
+
+    if (key.fromMe) return;
+    const storeIdContexto = instancia.replace(/^loja_/, '') || null;
     if (texto) await processarRespostaCliente(telefone, texto, storeIdContexto);
   } catch(e) { console.error('[Evolution] Erro no webhook inbound:', e.message); }
 });

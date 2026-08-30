@@ -710,6 +710,72 @@ function contarLeads() {
   };
 }
 
+// ── Atendimento por IA ───────────────────────────────────────────────────────
+function atendGetConfig(chave, padrao) {
+  const r = db.prepare('SELECT valor FROM atend_config WHERE chave=?').get(String(chave));
+  return r && r.valor != null ? r.valor : (padrao !== undefined ? padrao : null);
+}
+function atendSetConfig(chave, valor) {
+  db.prepare(`INSERT INTO atend_config (chave, valor) VALUES (?,?)
+              ON CONFLICT(chave) DO UPDATE SET valor=excluded.valor`).run(String(chave), String(valor == null ? '' : valor));
+}
+function atendSalvarMensagem(telefone, role, texto) {
+  db.prepare('INSERT INTO atend_mensagens (telefone, role, texto) VALUES (?,?,?)')
+    .run(String(telefone), String(role), String(texto || ''));
+}
+// Últimas N mensagens em ordem cronológica (o histórico que vai pro contexto da IA).
+// 'humano' entra como 'assistant': pra IA, é resposta do mesmo atendimento.
+function atendHistorico(telefone, limite) {
+  const linhas = db.prepare(`SELECT role, texto FROM atend_mensagens WHERE telefone=?
+                             ORDER BY id DESC LIMIT ?`).all(String(telefone), Number(limite) || 12);
+  return linhas.reverse().map(m => ({ role: m.role === 'user' ? 'user' : 'assistant', texto: m.texto }));
+}
+function atendEstado(telefone) {
+  return db.prepare('SELECT * FROM atend_estado WHERE telefone=?').get(String(telefone))
+    || { telefone: String(telefone), pausado: 0, motivo: null, nome: null };
+}
+function atendPausar(telefone, motivo, nome) {
+  db.prepare(`INSERT INTO atend_estado (telefone, pausado, motivo, nome) VALUES (?,1,?,?)
+              ON CONFLICT(telefone) DO UPDATE SET pausado=1, motivo=excluded.motivo,
+                nome=COALESCE(excluded.nome, nome), atualizado_em=datetime('now')`)
+    .run(String(telefone), String(motivo || ''), nome || null);
+}
+function atendRetomar(telefone) {
+  db.prepare(`INSERT INTO atend_estado (telefone, pausado) VALUES (?,0)
+              ON CONFLICT(telefone) DO UPDATE SET pausado=0, motivo=NULL, atualizado_em=datetime('now')`)
+    .run(String(telefone));
+}
+function atendRegistrarContato(telefone, nome) {
+  db.prepare(`INSERT INTO atend_estado (telefone, pausado, nome) VALUES (?,0,?)
+              ON CONFLICT(telefone) DO UPDATE SET nome=COALESCE(excluded.nome, nome)`)
+    .run(String(telefone), nome || null);
+}
+// Lista as conversas pro painel (mais recentes primeiro).
+function atendConversas(limite) {
+  return db.prepare(`
+    SELECT e.telefone, e.pausado, e.motivo, e.nome,
+           (SELECT COUNT(*) FROM atend_mensagens m WHERE m.telefone=e.telefone) AS qtd,
+           (SELECT texto FROM atend_mensagens m WHERE m.telefone=e.telefone ORDER BY id DESC LIMIT 1) AS ultima,
+           (SELECT criado_em FROM atend_mensagens m WHERE m.telefone=e.telefone ORDER BY id DESC LIMIT 1) AS ultima_em
+    FROM atend_estado e
+    ORDER BY datetime(COALESCE((SELECT criado_em FROM atend_mensagens m WHERE m.telefone=e.telefone ORDER BY id DESC LIMIT 1), e.atualizado_em)) DESC
+    LIMIT ?`).all(Number(limite) || 50);
+}
+// Lead vindo do WhatsApp: não tem e-mail, então dedupa por TELEFONE.
+function salvarLeadWhatsApp(telefone, nome) {
+  const tel = String(telefone || '').replace(/\D/g, '');
+  if (!tel) return { id: null, novo: false };
+  const ex = db.prepare('SELECT id FROM leads WHERE telefone=? ORDER BY id LIMIT 1').get(tel);
+  if (ex) {
+    if (nome) db.prepare("UPDATE leads SET nome=CASE WHEN nome IS NULL OR nome='' THEN ? ELSE nome END WHERE id=?").run(String(nome), ex.id);
+    return { id: ex.id, novo: false };
+  }
+  const info = db.prepare(`INSERT INTO leads (nome, email, whatsapp, telefone, plano, origem)
+                           VALUES (?,?,?,?,?,'whatsapp')`)
+    .run(String(nome || ''), '', tel, tel, '');
+  return { id: info.lastInsertRowid, novo: true };
+}
+
 // Rastreios avulsos do MÊS CORRENTE (crédito extra que o admin concede).
 // Aceita qtd negativa pra corrigir um lançamento errado; nunca deixa o saldo abaixo de 0.
 function addRastreioExtra(storeId, qtd) {
@@ -912,6 +978,76 @@ function migrar() {
   } catch(e) {}
   // De onde veio o lead: landing (formulário), checkout (digitou e-mail pra pagar) ou painel.
   try { db.exec("ALTER TABLE leads ADD COLUMN origem TEXT DEFAULT 'landing'"); } catch(e) {}
+  // Lead que chega pelo WhatsApp não tem e-mail — só telefone. Coluna própria pra permitir
+  // gravar o contato mesmo assim (o dedupe do salvarLead exige e-mail).
+  try { db.exec("ALTER TABLE leads ADD COLUMN telefone TEXT"); } catch(e) {}
+
+  // ── Atendimento por IA no WhatsApp comercial ──────────────────────────────
+  // Histórico da conversa (o que alimenta o contexto da IA).
+  try {
+    db.exec(`CREATE TABLE IF NOT EXISTS atend_mensagens (
+      id        INTEGER PRIMARY KEY AUTOINCREMENT,
+      telefone  TEXT NOT NULL,
+      role      TEXT NOT NULL,          -- 'user' (lojista) | 'assistant' (IA) | 'humano'
+      texto     TEXT,
+      criado_em TEXT DEFAULT (datetime('now'))
+    )`);
+    db.exec('CREATE INDEX IF NOT EXISTS idx_atend_msg_tel ON atend_mensagens(telefone, id)');
+  } catch(e) {}
+  // Estado por conversa: pausada = a IA para de responder (humano assumiu ou transferiu).
+  try {
+    db.exec(`CREATE TABLE IF NOT EXISTS atend_estado (
+      telefone     TEXT PRIMARY KEY,
+      pausado      INTEGER DEFAULT 0,
+      motivo       TEXT,
+      nome         TEXT,
+      atualizado_em TEXT DEFAULT (datetime('now'))
+    )`);
+  } catch(e) {}
+  // Configuração do bot (liga/desliga e base de conhecimento editável pelo admin).
+  try {
+    db.exec(`CREATE TABLE IF NOT EXISTS atend_config (
+      chave TEXT PRIMARY KEY,
+      valor TEXT
+    )`);
+    // Semeia uma base inicial com os fatos REAIS do produto, pra ele não começar de uma
+    // caixa vazia (base vazia = a IA transfere tudo). Só na 1ª vez; edições não são tocadas.
+    const jaTem = db.prepare("SELECT 1 FROM atend_config WHERE chave='conhecimento'").get();
+    if (!jaTem) {
+      db.prepare("INSERT INTO atend_config (chave, valor) VALUES ('conhecimento', ?)").run(
+`O QUE É
+O LoggZap é uma ferramenta para lojas da Nuvemshop. Ele mostra as vendas da loja em tempo real e envia mensagens automáticas para os clientes da loja pelo WhatsApp.
+
+COMO ACESSA
+De três jeitos, à escolha do lojista: extensão do Chrome no computador, painel pelo navegador, ou o mesmo painel instalado como aplicativo no celular (Android e iPhone). Não está na App Store nem na Play Store: instala pelo navegador.
+
+O QUE FAZ
+- Painel com vendas do dia, faturamento, ticket médio, frete pago e pedidos pendentes
+- Metas e alertas
+- Rastreio automático: avisa o cliente a cada movimentação do pedido
+- Aviso de envio e de entrega
+- Pesquisa de satisfação depois da entrega
+- Recuperação de carrinho abandonado e de boleto/Pix não pago
+- Reativação de cliente sem compra há 30 dias
+
+TESTE GRÁTIS
+7 dias, sem cartão de crédito, com as funções do plano Pro e limite de 50 rastreios no período. Um teste por loja. Ao terminar, nada é cobrado: o painel e a visualização de pedidos continuam grátis e só os envios automáticos pausam.
+
+PLANOS (cobrança mensal pelo Mercado Pago, sem fidelidade)
+- Essencial: R$ 97 por mês. Painel completo, pedidos e rastreios, até 200 rastreios por mês. NÃO inclui os envios automáticos de WhatsApp nem recuperação de carrinho.
+- Pro: R$ 147 por mês. Tudo do Essencial mais toda a automação de WhatsApp, até 500 rastreios por mês.
+Quem sai do teste para um plano pago tem o contador zerado.
+
+CANCELAMENTO
+Pode cancelar quando quiser, sem multa. Vale para o ciclo seguinte. Quem se arrepende em até 7 dias tem o valor devolvido.
+
+COMO COMEÇA
+Entra em loggzap.com.br, clica em Começar grátis e conecta a loja Nuvemshop. Leva cerca de 2 minutos.
+
+IMPORTANTE
+O número de WhatsApp usado nos envios é o do próprio lojista, conectado por QR Code no painel.`);
+    }
+  } catch(e) {}
   // Rastreios AVULSOS: crédito extra por loja, válido só no mês em que foi dado.
   // Soma ao teto do plano em getLimiteRastreio. Expira sozinho na virada do mês.
   try {
@@ -1917,6 +2053,8 @@ module.exports = {
   registrarClienteAtivo, jaClienteAtivo,
   getAdminStats, getLojistaStats, registrarVisita, getGestaoStats,
   salvarLead, listarLeads, contarLeads, vincularLeadALoja, deletarLead, removerLoja,
+  atendGetConfig, atendSetConfig, atendSalvarMensagem, atendHistorico, atendEstado,
+  atendPausar, atendRetomar, atendRegistrarContato, atendConversas, salvarLeadWhatsApp,
   addRastreioExtra, getRastreioExtra,
   upsertAuthSession, getAuthSession, completeAuthSession, deleteAuthSession,
   criarLicenca, criarTrial, getLicenca, getLicencaPorStore, vincularLicenca, validarLicenca,

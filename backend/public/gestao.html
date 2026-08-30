@@ -146,6 +146,40 @@
     <div class="leg"><span><i style="background:var(--blue)"></i>Visitas</span><span><i style="background:var(--green)"></i>Instalações</span></div>
   </div>
 
+  <!-- Atendimento por IA no WhatsApp comercial -->
+  <div class="sect">
+    <h3>🤖 Atendimento por IA <span id="at-status" style="color:var(--text3);font-weight:400;text-transform:none;letter-spacing:0"></span></h3>
+
+    <div id="at-checklist" class="grid" style="margin-bottom:16px"></div>
+
+    <div style="display:flex;gap:8px;flex-wrap:wrap;align-items:center;margin-bottom:16px">
+      <button class="btn" id="at-toggle" onclick="atToggle()">Carregando…</button>
+      <button class="btn" onclick="atConectar()">📱 Conectar WhatsApp</button>
+      <button class="btn" onclick="carregarAtendimento()">↻ Atualizar</button>
+      <span id="at-msg" style="font-size:12px;color:var(--text3)"></span>
+    </div>
+
+    <div id="at-qr" style="display:none;text-align:center;background:var(--bg3);border:1px solid var(--border);border-radius:12px;padding:20px;margin-bottom:16px"></div>
+
+    <div style="margin-bottom:8px;color:var(--text2);font-size:13px">
+      Base de conhecimento — a IA responde <b>somente</b> com o que estiver aqui. Fora disso ela para e te avisa.
+    </div>
+    <!-- data-editando trava o recarregamento automático por cima do que ele está digitando -->
+    <textarea id="at-conhecimento" spellcheck="false" oninput="this.dataset.editando='1'" style="width:100%;min-height:260px;background:#11151e;border:1px solid var(--border);border-radius:10px;color:var(--text);padding:14px;font-size:13px;font-family:ui-monospace,Menlo,monospace;line-height:1.6;resize:vertical"></textarea>
+    <div style="display:flex;gap:8px;align-items:center;margin-top:10px">
+      <button class="btn g" onclick="atSalvar()">Salvar base</button>
+      <span id="at-salvo" style="font-size:12px;color:var(--green)"></span>
+    </div>
+
+    <h3 style="margin-top:28px">Conversas <span id="at-conv-count" style="color:var(--text3);font-weight:400;text-transform:none;letter-spacing:0"></span></h3>
+    <div style="overflow-x:auto">
+      <table>
+        <thead><tr><th>Contato</th><th>Quem responde</th><th>Última mensagem</th><th>Msgs</th><th></th></tr></thead>
+        <tbody id="at-conversas"><tr><td colspan="5" class="muted">—</td></tr></tbody>
+      </table>
+    </div>
+  </div>
+
   <!-- Leads da landing (cadastrou o formulário, tendo conectado a loja ou não) -->
   <div class="sect">
     <h3>Cadastros da landing <span id="leads-count" style="color:var(--text3);font-weight:400;text-transform:none;letter-spacing:0"></span></h3>
@@ -229,8 +263,104 @@ function render(d){
   $('p-pro').textContent = fmt(p.pro);
   renderChart(v.serie||[], i.serie||[]);
   $('status').textContent = 'Atualizado ' + new Date().toLocaleTimeString('pt-BR');
+  carregarAtendimento();
   carregarLeads();
   carregarLojas();
+}
+
+// ── Atendimento por IA ───────────────────────────────────────────────────────
+let atLigado = false;
+async function apiAt(path, opts){
+  const s = localStorage.getItem(KEY);
+  const r = await fetch('/admin-loggzap/api/atendimento'+path, Object.assign({
+    headers: Object.assign({ 'x-secret': s }, (opts&&opts.body)?{'Content-Type':'application/json'}:{})
+  }, opts||{}));
+  const d = await r.json();
+  if(!r.ok || d.error) throw new Error(d.error||'erro');
+  return d;
+}
+
+async function carregarAtendimento(){
+  const s = localStorage.getItem(KEY); if(!s) return;
+  try{
+    const d = await apiAt('');
+    atLigado = d.ligado;
+    // Checklist honesto: mostra exatamente o que falta pra funcionar.
+    const item=(ok,titulo,detalhe)=>'<div class="card"><div class="lbl">'+(ok?'✅':'⚠️')+' '+esc(titulo)+'</div>'
+      +'<small style="color:'+(ok?'var(--text3)':'var(--amber)')+'">'+esc(detalhe)+'</small></div>';
+    let wa = {conectado:false, estado:'—'};
+    try { wa = await apiAt('/status'); } catch(e){}
+    $('at-checklist').innerHTML =
+        item(d.ia_configurada,'Chave da IA', d.ia_configurada? d.modelo : 'Falta ANTHROPIC_API_KEY no Railway')
+      + item(d.evolution_configurada,'Evolution', d.evolution_configurada? 'configurada' : 'Falta EVOLUTION_URL/API_KEY')
+      + item(wa.conectado,'WhatsApp', wa.conectado? 'conectado ('+esc(d.instancia)+')' : 'não conectado — clique em Conectar')
+      + item(d.ligado,'Bot', d.ligado? 'respondendo' : 'desligado');
+    $('at-status').textContent = d.ligado ? '(ligado)' : '(desligado)';
+    const btn=$('at-toggle');
+    btn.textContent = d.ligado ? '⏸ Desligar bot' : '▶ Ligar bot';
+    btn.className = d.ligado ? 'btn' : 'btn g';
+    if(!$('at-conhecimento').dataset.editando) $('at-conhecimento').value = d.conhecimento||'';
+
+    const C = d.conversas||[];
+    $('at-conv-count').textContent = '('+C.length+')';
+    const body=$('at-conversas');
+    if(!C.length){ body.innerHTML='<tr><td colspan="5" class="muted">Nenhuma conversa ainda.</td></tr>'; return; }
+    const quando=(x)=>{ if(!x) return '—'; const dt=new Date(String(x).replace(' ','T')+'Z');
+      return isNaN(dt)?x:dt.toLocaleString('pt-BR',{timeZone:'America/Recife',day:'2-digit',month:'2-digit',hour:'2-digit',minute:'2-digit'}); };
+    body.innerHTML = C.map(c=>'<tr>'
+      + '<td class="nowrap"><a href="https://wa.me/'+esc(c.telefone)+'" target="_blank" rel="noopener" style="color:#25D366;text-decoration:none">'+(c.nome?esc(c.nome)+' ':'')+'+'+esc(c.telefone)+'</a></td>'
+      + '<td class="nowrap">'+(c.pausado
+          ? '<span style="color:var(--amber);font-weight:600">👤 Você</span><br><small style="color:var(--text3)">'+esc(c.motivo||'')+'</small>'
+          : '<span style="color:var(--green);font-weight:600">🤖 IA</span>')+'</td>'
+      + '<td><small>'+esc(String(c.ultima||'').slice(0,70))+'</small><br><span class="muted" style="font-size:11px">'+quando(c.ultima_em)+'</span></td>'
+      + '<td class="muted">'+(c.qtd||0)+'</td>'
+      + '<td>'+(c.pausado?'<button class="btn-add" onclick="atRetomar(\''+esc(c.telefone)+'\',this)">Devolver p/ IA</button>':'')+'</td>'
+      + '</tr>').join('');
+  }catch(e){ $('at-msg').textContent = 'Erro: '+e.message; }
+}
+
+async function atToggle(){
+  const btn=$('at-toggle'); btn.disabled=true;
+  try{
+    await apiAt('', {method:'POST', body: JSON.stringify({ ligado: !atLigado, conhecimento: $('at-conhecimento').value })});
+    $('at-msg').textContent='';
+    await carregarAtendimento();
+  }catch(e){ $('at-msg').textContent = e.message; }
+  btn.disabled=false;
+}
+
+async function atSalvar(){
+  try{
+    await apiAt('', {method:'POST', body: JSON.stringify({ conhecimento: $('at-conhecimento').value })});
+    $('at-conhecimento').dataset.editando='';
+    $('at-salvo').textContent='Salvo ✓'; setTimeout(()=>{$('at-salvo').textContent='';},2500);
+  }catch(e){ $('at-salvo').style.color='var(--red)'; $('at-salvo').textContent=e.message; }
+}
+
+async function atRetomar(tel, btn){
+  if(!confirm('Devolver esta conversa para a IA?\n\nEla volta a responder essa pessoa automaticamente.')) return;
+  btn.disabled=true;
+  try{ await apiAt('/retomar', {method:'POST', body: JSON.stringify({telefone:tel})}); await carregarAtendimento(); }
+  catch(e){ alert('Erro: '+e.message); btn.disabled=false; }
+}
+
+async function atConectar(){
+  const box=$('at-qr'); box.style.display='block';
+  box.innerHTML='<span class="muted">Gerando QR Code…</span>';
+  try{
+    const d = await apiAt('/conectar', {method:'POST', body: JSON.stringify({})});
+    if(d.qr){
+      const src = String(d.qr).startsWith('data:') ? d.qr : 'data:image/png;base64,'+d.qr;
+      box.innerHTML = '<div style="color:var(--text2);font-size:13px;margin-bottom:12px">Abra o WhatsApp do número comercial → Aparelhos conectados → Conectar aparelho</div>'
+        + '<img src="'+src+'" alt="QR Code" style="width:260px;max-width:100%;background:#fff;padding:8px;border-radius:10px">'
+        + '<div style="margin-top:12px"><button class="btn" onclick="carregarAtendimento()">Já conectei</button></div>';
+    } else if(d.code){
+      box.innerHTML = '<div style="color:var(--text2);font-size:13px;margin-bottom:8px">Código de pareamento:</div>'
+        + '<div style="font-size:26px;font-weight:800;letter-spacing:3px;color:var(--green)">'+esc(d.code)+'</div>';
+    } else {
+      box.innerHTML='<span class="muted">A Evolution não devolveu QR. O número já pode estar conectado — clique em Atualizar.</span>';
+    }
+  }catch(e){ box.innerHTML='<span style="color:var(--red)">Erro: '+esc(e.message)+'</span>'; }
 }
 
 // De onde o lead veio. "Checkout" é o mais quente: digitou o e-mail pra pagar.
