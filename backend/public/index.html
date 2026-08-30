@@ -866,12 +866,14 @@ src="https://www.facebook.com/tr?id=2038947806731470&ev=PageView&noscript=1"
   // No celular o CTA "Instalar" agora abre o CADASTRO (dispara Lead) — não renomeia mais pra WhatsApp.
   // Só blindamos o link da Chrome Web Store (ex.: no modal de sucesso), que não instala em celular:
   // no mobile ele aponta pro WhatsApp, que é onde a gente ajuda a ativar.
-  // #suc-cta fica de fora: no celular ele é reescrito por prepararSucesso() pro PAINEL (PWA),
-  // que é o caminho de ativação self-service — não pro WhatsApp.
+  // #suc-cta fica de fora: no celular ele é reescrito por prepararSucesso() pro PAINEL (PWA).
+  // Nos demais CTAs o clique é interceptado por instalar() (abre o cadastro); o href só vale
+  // como fallback (abrir em nova aba, segurar o link). Esse fallback aponta pro PAINEL — não
+  // pro WhatsApp — pra não jogar quem está no celular num atendimento manual.
   document.querySelectorAll('a[href*="chromewebstore.google.com"]:not(#suc-cta)').forEach(function (a) {
-    a.setAttribute('href', ZAP_URL);
-    a.setAttribute('target', '_blank');
+    a.setAttribute('href', PAINEL_URL);
     a.setAttribute('rel', 'noopener');
+    a.removeAttribute('target');
   });
 })();
 </script>
