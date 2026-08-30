@@ -497,6 +497,21 @@ app.delete('/admin-loggzap/api/leads/:id', auth, (req, res) => {
   } catch (e) { res.status(500).json({ error: e.message }); }
 });
 
+// Remove a instalação de uma loja (tira de "Lojas instaladas" e desconecta a automação).
+// Exige confirmar o store_id no corpo — evita apagar a loja errada por clique torto.
+app.delete('/admin-loggzap/api/lojas/:storeId', auth, (req, res) => {
+  try {
+    const sid = String(req.params.storeId || '').trim();
+    if (String(req.body?.confirmar_store_id || '').trim() !== sid) {
+      return res.status(400).json({ error: 'Confirmação não confere com o Store ID.' });
+    }
+    const r = db.removerLoja(sid);
+    if (!r.ok) return res.status(404).json({ error: r.motivo });
+    console.log('[Admin] Loja removida: ' + sid + ' (cadastros desvinculados: ' + r.leadsSoltos + ')');
+    res.json({ success: true, ...r });
+  } catch (e) { res.status(500).json({ error: e.message }); }
+});
+
 // Rastreios avulsos: crédito extra pra uma loja, válido só no mês corrente.
 app.post('/admin-loggzap/api/rastreios-avulsos', auth, (req, res) => {
   try {

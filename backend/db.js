@@ -664,6 +664,22 @@ function vincularLeadALoja(storeId, ...emails) {
 function deletarLead(id) {
   return db.prepare('DELETE FROM leads WHERE id = ?').run(Number(id)).changes;
 }
+
+// Remove a INSTALAÇÃO da loja (o token do OAuth) — é o que a tira de "Lojas instaladas"
+// e desconecta a automação. NÃO apaga licença/assinatura de propósito: isso é histórico
+// de pagamento e some-lo esconderia receita. Se a loja reinstalar, a licença volta a valer.
+function removerLoja(storeId) {
+  const sid = String(storeId || '').trim();
+  if (!sid) return { ok: false, motivo: 'store_id vazio' };
+  const tinha = !!db.prepare('SELECT 1 FROM tokens WHERE store_id = ?').get(sid);
+  if (!tinha) return { ok: false, motivo: 'Loja não encontrada.' };
+  const removidos = db.prepare('DELETE FROM tokens WHERE store_id = ?').run(sid).changes;
+  // Desfaz o casamento: o cadastro volta pra "ainda não instalou" em vez de apontar
+  // pra uma loja que não existe mais (e fica livre pra casar de novo se reinstalar).
+  let leadsSoltos = 0;
+  try { leadsSoltos = db.prepare('UPDATE leads SET store_id = NULL WHERE store_id = ?').run(sid).changes; } catch (e) {}
+  return { ok: true, removidos, leadsSoltos };
+}
 function contarLeads() {
   const n = (sql) => { try { return db.prepare(sql).get().n || 0; } catch (e) { return 0; } };
   return {
@@ -1878,7 +1894,7 @@ module.exports = {
   jaNotificadoPorTelefone, listarNotificadosRecentes,
   registrarClienteAtivo, jaClienteAtivo,
   getAdminStats, getLojistaStats, registrarVisita, getGestaoStats,
-  salvarLead, listarLeads, contarLeads, vincularLeadALoja, deletarLead,
+  salvarLead, listarLeads, contarLeads, vincularLeadALoja, deletarLead, removerLoja,
   addRastreioExtra, getRastreioExtra,
   upsertAuthSession, getAuthSession, completeAuthSession, deleteAuthSession,
   criarLicenca, criarTrial, getLicenca, getLicencaPorStore, vincularLicenca, validarLicenca,
