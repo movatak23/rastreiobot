@@ -725,15 +725,19 @@ src="https://www.facebook.com/tr?id=2038947806731470&ev=PageView&noscript=1"
 
   // Ajusta o modal de sucesso ao aparelho. No CELULAR a extensão do Chrome não existe:
   // o caminho certo é o painel web (PWA), que instala no Android e no iPhone.
-  function prepararSucesso() {
+  function prepararSucesso(emailFalhou) {
     var texto = document.getElementById('suc-texto');
     var cta = document.getElementById('suc-cta');
     var dica = document.getElementById('suc-dica');
     var zap = document.getElementById('suc-zap');
     if (!texto || !cta) return;
+    // Se o e-mail não saiu, não promete e-mail nenhum — manda seguir pelo painel/WhatsApp.
+    var abertura = emailFalhou
+      ? 'Sua conta está criada! (o e-mail de confirmação pode demorar — siga direto por aqui)'
+      : 'Enviamos as instruções para o seu e-mail.';
     if (ehMobile()) {
       var ehIphone = /iPhone|iPad|iPod/i.test(navigator.userAgent || '');
-      texto.innerHTML = 'Enviamos as instruções para o seu e-mail. Seu teste de <b>7 dias já está ativo</b> — abra seu painel agora pelo celular:';
+      texto.innerHTML = abertura + ' Seu teste de <b>7 dias já está ativo</b> — abra seu painel agora pelo celular:';
       cta.textContent = '📱 Abrir meu painel';
       cta.setAttribute('href', PAINEL_URL);
       dica.innerHTML = ehIphone
@@ -743,10 +747,12 @@ src="https://www.facebook.com/tr?id=2038947806731470&ev=PageView&noscript=1"
       zap.setAttribute('href', ZAP_URL);
       zap.style.display = 'inline-block';
     } else {
-      texto.innerHTML = 'Enviamos as instruções para o seu e-mail. Agora instale a extensão para ver sua loja direto no Chrome:';
+      texto.innerHTML = abertura + ' Agora instale a extensão para ver sua loja direto no Chrome:';
       cta.textContent = '🔗 Instalar no Chrome agora';
       dica.style.display = 'none';
-      zap.style.display = 'none';
+      // Se o e-mail falhou, deixa o WhatsApp à mão também no desktop.
+      if (emailFalhou) { zap.setAttribute('href', ZAP_URL); zap.style.display = 'inline-block'; }
+      else { zap.style.display = 'none'; }
     }
   }
 
@@ -783,7 +789,7 @@ src="https://www.facebook.com/tr?id=2038947806731470&ev=PageView&noscript=1"
         if (planoSelecionado === 'trial' && !ehMobile()) {
           window.open('https://chromewebstore.google.com/detail/loggzap-dashboard/dpfnpaepnholpjgbblljpinbkfoldlpp', '_blank');
         }
-        prepararSucesso();
+        prepararSucesso(!!d.email_falhou);
         document.getElementById('modal-sucesso').style.display = 'flex';
       } else {
         erro.textContent = d.error || 'Erro ao enviar. Tente novamente.';

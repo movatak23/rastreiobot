@@ -152,8 +152,8 @@
     <div style="color:var(--text3);font-size:12px;margin:-6px 0 12px">Quem preencheu o formulário do site. Ainda não é loja instalada — vira instalação quando conecta a Nuvemshop.</div>
     <div style="overflow-x:auto">
       <table>
-        <thead><tr><th>Nome</th><th>Email</th><th>WhatsApp</th><th>Plano</th><th>Instalou?</th><th>Cadastrou</th><th></th></tr></thead>
-        <tbody id="leads-body"><tr><td colspan="7" class="muted">Carregando cadastros…</td></tr></tbody>
+        <thead><tr><th>Nome</th><th>Email</th><th>WhatsApp</th><th>Plano</th><th>Origem</th><th>Instalou?</th><th>Cadastrou</th><th></th></tr></thead>
+        <tbody id="leads-body"><tr><td colspan="8" class="muted">Carregando cadastros…</td></tr></tbody>
       </table>
     </div>
   </div>
@@ -233,6 +233,17 @@ function render(d){
   carregarLojas();
 }
 
+// De onde o lead veio. "Checkout" é o mais quente: digitou o e-mail pra pagar.
+function rotuloOrigem(o){
+  const map = {
+    landing:  ['Formulário','var(--text2)'],
+    checkout: ['💳 Checkout','var(--amber)'],
+    painel:   ['Painel','var(--blue)']
+  };
+  const [txt,cor] = map[String(o||'landing')] || [String(o),'var(--text3)'];
+  return '<span style="color:'+cor+';font-size:12px;font-weight:600">'+esc(txt)+'</span>';
+}
+
 async function carregarLeads(){
   const s = localStorage.getItem(KEY); if(!s) return;
   const body = $('leads-body');
@@ -251,13 +262,14 @@ async function carregarLeads(){
       + '<td>'+(l.email?'<a href="mailto:'+esc(l.email)+'" style="color:var(--green);text-decoration:none">'+esc(l.email)+'</a>':'<span class="muted">—</span>')+'</td>'
       + '<td>'+(l.whatsapp?'<a href="https://wa.me/55'+esc(String(l.whatsapp).replace(/\D/g,''))+'" target="_blank" rel="noopener" style="color:#25D366;text-decoration:none">'+esc(l.whatsapp)+'</a>':'<span class="muted">—</span>')+'</td>'
       + '<td><span class="tag">'+esc(l.plano||'—')+'</span></td>'
+      + '<td class="nowrap">'+rotuloOrigem(l.origem)+'</td>'
       + '<td>'+(l.store_id
           ? '<span style="color:var(--green);font-weight:600">✓ '+esc(l.store_id)+'</span>'
           : '<span class="muted">ainda não</span>')+'</td>'
-      + '<td class="muted">'+quando(l.criado_em)+'</td>'
+      + '<td class="muted nowrap">'+quando(l.criado_em)+'</td>'
       + '<td><button class="btn-del" onclick="deletarLead('+Number(l.id)+',this)" title="Apagar este cadastro">Deletar</button></td>'
       + '</tr>').join('');
-  }catch(e){ body.innerHTML='<tr><td colspan="7" class="muted">Erro ao carregar cadastros: '+esc(e.message)+'</td></tr>'; }
+  }catch(e){ body.innerHTML='<tr><td colspan="8" class="muted">Erro ao carregar cadastros: '+esc(e.message)+'</td></tr>'; }
 }
 
 async function deletarLead(id, btn){

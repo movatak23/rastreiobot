@@ -2087,10 +2087,23 @@ app.post('/painel/api/register', (req, res) => {
     db.salvarPainelTemplates(String(store_id), { ...DEFAULT_AUTOMATION_TEMPLATES });
 
     // Envia o link da extensão pro e-mail cadastrado da loja (Nuvemshop). Não bloqueia o cadastro.
+    // Aproveita a ida à API pra REGISTRAR O LEAD: quem entra direto pelo painel (link do
+    // e-mail, ícone do PWA, favorito) nunca passou pelo formulário da landing e antes
+    // ficava invisível no funil. O salvarLead deduplica por e-mail, então quem já veio
+    // pela landing só tem o registro completado — não vira lead duplicado.
     try {
+      const loginEhEmail = /^[^@\s]+@[^@\s]+\.[^@\s]+$/.test(String(login).trim());
+      if (loginEhEmail) {
+        try { db.salvarLead('', String(login).trim(), '', 'trial', 'painel'); } catch (_) {}
+      }
       getStoreInfoSeguro(String(store_id)).then(function (st) {
         const em = st && (st.email || st.contact_email);
-        if (em) enviarEmailExtensao(em);
+        if (em) {
+          enviarEmailExtensao(em);
+          try { db.salvarLead('', em, '', 'trial', 'painel'); } catch (_) {}
+        }
+        // Já liga o cadastro a esta loja (fecha o funil mesmo sem passar pelo OAuth agora).
+        try { db.vincularLeadALoja(String(store_id), em, loginEhEmail ? String(login).trim() : null); } catch (_) {}
       }).catch(function () {});
     } catch (_) {}
 
@@ -5291,6 +5304,10 @@ document.getElementById('email').addEventListener('keydown', e => { if (e.key ==
 app.post('/checkout/criar', async (req, res) => {
   const { plano, email } = req.body;
   if (!plano || !email) return res.status(400).json({ error: 'plano e email obrigatorios' });
+  // Guarda o lead ANTES de mandar pro Mercado Pago: quem digita o e-mail aqui é o
+  // visitante de MAIOR intenção, e a maioria abandona o pagamento. Sem isso, esse
+  // contato se perdia por completo.
+  try { db.salvarLead('', email, '', plano, 'checkout'); } catch (e) { console.error('[Checkout] lead:', e.message); }
   if (!MP_ACCESS_TOKEN) return res.status(500).json({ error: 'MP_ACCESS_TOKEN nao configurado' });
   const precos = { basic: 97, premium: 147 };
   const nomes  = { basic: 'LoggZap Essencial', premium: 'LoggZap Pro' };
@@ -5313,6 +5330,8 @@ app.post('/checkout/criar', async (req, res) => {
 app.post('/assinatura/criar', async (req, res) => {
   const { plano, email, store_id } = req.body || {};
   if (!plano || !email || !store_id) return res.status(400).json({ error: 'plano, email e store_id obrigatorios' });
+  // Mesmo motivo do /checkout/criar: não perder quem abandona o pagamento.
+  try { db.salvarLead('', email, '', plano, 'checkout'); } catch (e) { console.error('[Assinatura] lead:', e.message); }
   if (!MP_ACCESS_TOKEN) return res.status(500).json({ error: 'MP_ACCESS_TOKEN nao configurado' });
   const precos = { basic: 97, premium: 147 };
   const nomes  = { basic: 'LoggZap Essencial', premium: 'LoggZap Pro' };
@@ -5553,7 +5572,8 @@ app.post('/cadastro', async (req, res) => {
 
   // Grava o lead ANTES de tentar o e-mail: se o Resend falhar, o cadastro não se perde.
   // (Antes daqui o /cadastro não gravava nada e o lead só existia nos e-mails.)
-  try { db.salvarLead(nome, email, whatsapp, plano); }
+  let leadSalvo = false;
+  try { db.salvarLead(nome, email, whatsapp, plano, 'landing'); leadSalvo = true; }
   catch (e) { console.error('[Cadastro] Falha ao gravar lead:', e.message); }
 
   // Lead server-side (CAPI) — espelha o pixel do navegador (dedup pelo event_id). Não bloqueia o fluxo.
@@ -5633,8 +5653,16 @@ app.post('/cadastro', async (req, res) => {
 
     res.json({ success: true, redirect: CHROME_URL });
   } catch(e) {
-    console.error('[Cadastro] Erro:', e.message);
-    res.status(500).json({ error: 'Erro ao enviar email. Tente novamente.' });
+    console.error('[Cadastro] Erro no envio de email:', e.message);
+    // O e-mail falhou, mas o LEAD JÁ ESTÁ SALVO. Antes daqui devolvíamos 500: o visitante
+    // via "erro", tentava de novo e a conversão nem era contada — mesmo com o cadastro
+    // gravado. Agora o cadastro é dado como concluído (ele consegue seguir pelo painel) e
+    // só o e-mail fica sinalizado pra reenvio.
+    if (leadSalvo) {
+      console.error('[Cadastro] ATENÇÃO: lead salvo mas SEM e-mail enviado →', email);
+      return res.json({ success: true, redirect: CHROME_URL, email_falhou: true });
+    }
+    res.status(500).json({ error: 'Não conseguimos concluir agora. Tente novamente.' });
   }
 });
 

@@ -633,16 +633,36 @@ function getAdminStats() {
   };
 }
 
-// Leads do formulário da landing (/cadastro).
-function salvarLead(nome, email, whatsapp, plano) {
-  const info = db.prepare('INSERT INTO leads (nome, email, whatsapp, plano) VALUES (?,?,?,?)')
-    .run(String(nome || '').trim(), String(email || '').trim().toLowerCase(), String(whatsapp || '').trim(), String(plano || '').trim());
-  return info.lastInsertRowid;
+// Guarda o lead vindo de QUALQUER porta de entrada (formulário, checkout, painel).
+// Deduplica por e-mail: quem volta não vira linha nova — completa a que já existe
+// (preserva o criado_em do primeiro contato, que é o que importa pro funil).
+// Devolve { id, novo } — `novo` diz se é a primeira vez que essa pessoa aparece.
+function salvarLead(nome, email, whatsapp, plano, origem) {
+  const em = String(email || '').trim().toLowerCase();
+  const nm = String(nome || '').trim();
+  const wa = String(whatsapp || '').trim();
+  const pl = String(plano || '').trim();
+  const og = String(origem || 'landing').trim();
+  if (!em) return { id: null, novo: false };
+
+  const existente = db.prepare('SELECT id FROM leads WHERE lower(email) = ? ORDER BY id LIMIT 1').get(em);
+  if (existente) {
+    // Só preenche o que estiver vazio ou mudou — nunca apaga dado bom com string vazia.
+    db.prepare(`UPDATE leads SET
+        nome     = CASE WHEN ? <> '' THEN ? ELSE nome END,
+        whatsapp = CASE WHEN ? <> '' THEN ? ELSE whatsapp END,
+        plano    = CASE WHEN ? <> '' THEN ? ELSE plano END
+      WHERE id = ?`).run(nm, nm, wa, wa, pl, pl, existente.id);
+    return { id: existente.id, novo: false };
+  }
+  const info = db.prepare('INSERT INTO leads (nome, email, whatsapp, plano, origem) VALUES (?,?,?,?,?)')
+    .run(nm, em, wa, pl, og);
+  return { id: info.lastInsertRowid, novo: true };
 }
 // Lista os leads mais recentes, marcando quem já conectou a loja (casa pelo e-mail
 // do cadastro com o e-mail da loja gravado em tokens, quando existir).
 function listarLeads(limite) {
-  return db.prepare(`SELECT id, nome, email, whatsapp, plano, store_id, criado_em
+  return db.prepare(`SELECT id, nome, email, whatsapp, plano, store_id, origem, criado_em
                      FROM leads ORDER BY datetime(criado_em) DESC LIMIT ?`).all(Number(limite) || 100);
 }
 // Casa o lead com a loja quando ela conecta o OAuth. O e-mail do formulário nem sempre
@@ -890,6 +910,8 @@ function migrar() {
     )`);
     db.exec('CREATE INDEX IF NOT EXISTS idx_leads_email ON leads(email)');
   } catch(e) {}
+  // De onde veio o lead: landing (formulário), checkout (digitou e-mail pra pagar) ou painel.
+  try { db.exec("ALTER TABLE leads ADD COLUMN origem TEXT DEFAULT 'landing'"); } catch(e) {}
   // Rastreios AVULSOS: crédito extra por loja, válido só no mês em que foi dado.
   // Soma ao teto do plano em getLimiteRastreio. Expira sozinho na virada do mês.
   try {
