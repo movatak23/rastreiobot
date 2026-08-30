@@ -6236,6 +6236,13 @@ app.get('/privacy-policy', (req, res) => {
   res.sendFile(path.join(__dirname, 'public', 'privacidade.html'));
 });
 
+// ── Termos de Uso ─────────────────────────────────────────────────────────────
+// Mesmas rotas sem extensão que a privacidade já tinha (o express.static sozinho
+// não resolve "/termos" sem o ".html").
+['/termos', '/termos-de-uso', '/terms', '/terms-of-use'].forEach((rota) => {
+  app.get(rota, (req, res) => res.sendFile(path.join(__dirname, 'public', 'termos.html')));
+});
+
 
 // ── Webhooks LGPD / Nuvemshop (obrigatórios: verificam assinatura e apagam dados) ──
 function verificarHmacNuvem(req) {
