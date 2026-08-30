@@ -2743,7 +2743,9 @@ async function responderAgora(tel, pergunta, nome) {
   if (r.transferir) {
     db.atendPausar(tel, r.motivo, nome);
     const aviso = db.atendGetConfig('msg_transferencia',
-      'Deixa eu confirmar isso certinho pra não te passar informação errada. Já te respondo por aqui. 👍');
+      // Não promete que ELA volta — quem volta é o Ronaldo. Prometer retorno dela e
+      // não cumprir é pior do que já ter parado.
+      'Essa eu prefiro confirmar com calma pra não te passar informação errada. Vou chamar aqui e já te retornam. 👍');
     try { await atendEnviarHumano(tel, aviso); db.atendSalvarMensagem(tel, 'assistant', aviso); }
     catch (e) { console.error('[Atendimento] envio da transferência:', e.message); }
     await atendAvisarHumano(tel, nome, r.motivo, pergunta);
@@ -3080,6 +3082,26 @@ cron.schedule('*/30 * * * *', async () => {
 });
 
 // Rastreios: 1x por dia às 18h (limite SeuRastreio 200/mês)
+// Lembrete de conversa parada: transferiu, avisou, e o Ronaldo não respondeu. O aviso
+// se perde fácil no meio das mensagens dele — e quem fica esperando é justamente o lead
+// mais quente, que insistiu. Cutuca de novo aos 15min e para no 2º lembrete (2 avisos
+// ajudam; 5 viram ruído e ele passa a ignorar todos).
+cron.schedule('*/5 * * * *', async () => {
+  if (db.atendGetConfig('ligado', '0') !== '1') return;
+  try {
+    for (const c of db.atendEsquecidas(15, 2)) {
+      const desde = Math.round((Date.now() - new Date(String(c.atualizado_em).replace(' ', 'T') + 'Z')) / 60000);
+      const txt = '⏰ Lead esperando há ' + desde + ' min\n\n' +
+        (c.nome ? c.nome + ' — ' : '') + '+' + c.telefone + '\n' +
+        'Motivo da parada: ' + (c.motivo || '—') + '\n' +
+        (c.ultima_do_cliente ? '\nO que ele disse:\n"' + String(c.ultima_do_cliente).slice(0, 250) + '"\n' : '') +
+        '\nResponda direto no WhatsApp dele. Se quiser devolver pra IA, use o painel.';
+      try { await atendEnviar(ATEND_AVISO, txt); db.atendMarcarLembrete(c.telefone); }
+      catch (e) { console.error('[Atendimento] lembrete falhou:', e.message); }
+    }
+  } catch (e) { console.error('[Atendimento] cron de lembretes:', e.message); }
+});
+
 // A atendente reaprende com o site todo dia de madrugada. Assim, mudança de preço ou
 // de texto na landing chega nela sozinha — sem depender de alguém lembrar de editar.
 cron.schedule('30 4 * * *', async () => {

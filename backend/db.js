@@ -754,6 +754,28 @@ function atendTravar(telefone, travar) {
     .run(tel, travar ? 1 : 0);
   return 1;
 }
+// Conversas paradas esperando o humano: pausadas há mais de X minutos e SEM nenhuma
+// mensagem sua depois da pausa. São os leads em risco de morrer esperando.
+function atendEsquecidas(minutos, maxLembretes) {
+  return db.prepare(`
+    SELECT e.telefone, e.nome, e.motivo, e.lembretes, e.atualizado_em,
+           (SELECT texto FROM atend_mensagens m WHERE m.telefone=e.telefone AND m.role='user'
+            ORDER BY m.id DESC LIMIT 1) AS ultima_do_cliente
+    FROM atend_estado e
+    WHERE e.pausado = 1
+      AND e.travado = 0
+      AND COALESCE(e.lembretes,0) < ?
+      AND datetime(e.atualizado_em) <= datetime('now', ?)
+      AND NOT EXISTS (
+        SELECT 1 FROM atend_mensagens m
+        WHERE m.telefone = e.telefone AND m.role = 'humano'
+          AND datetime(m.criado_em) >= datetime(e.atualizado_em)
+      )`).all(Number(maxLembretes) || 2, '-' + (Number(minutos) || 15) + ' minutes');
+}
+function atendMarcarLembrete(telefone) {
+  db.prepare('UPDATE atend_estado SET lembretes = COALESCE(lembretes,0) + 1 WHERE telefone = ?')
+    .run(String(telefone));
+}
 function atendAtivar(telefone, ativa) {
   const tel = String(telefone || '').replace(/\D/g, '');
   if (!tel) return 0;
@@ -1037,6 +1059,9 @@ function migrar() {
   // dita pelo cliente ou pelo próprio Ronaldo. Antes disso ela fica muda. É a trava
   // que permite o bot morar no número pessoal sem responder quem não devia.
   try { db.exec('ALTER TABLE atend_estado ADD COLUMN ativada INTEGER DEFAULT 0'); } catch(e) {}
+  // Quantos lembretes já mandamos de uma conversa parada esperando o humano. Sem isso,
+  // um aviso perdido no meio das mensagens = lead abandonado sem ninguém perceber.
+  try { db.exec('ALTER TABLE atend_estado ADD COLUMN lembretes INTEGER DEFAULT 0'); } catch(e) {}
   // Configuração do bot (liga/desliga e base de conhecimento editável pelo admin).
   try {
     db.exec(`CREATE TABLE IF NOT EXISTS atend_config (
@@ -2088,7 +2113,7 @@ module.exports = {
   salvarLead, listarLeads, contarLeads, vincularLeadALoja, deletarLead, removerLoja,
   atendGetConfig, atendSetConfig, atendSalvarMensagem, atendHistorico, atendEstado,
   atendPausar, atendRetomar, atendRegistrarContato, atendConversas, salvarLeadWhatsApp,
-  atendTravar, atendEstaTravado, atendAtivar, atendEstaAtivada,
+  atendTravar, atendEstaTravado, atendAtivar, atendEstaAtivada, atendEsquecidas, atendMarcarLembrete,
   addRastreioExtra, getRastreioExtra,
   upsertAuthSession, getAuthSession, completeAuthSession, deleteAuthSession,
   criarLicenca, criarTrial, getLicenca, getLicencaPorStore, vincularLicenca, validarLicenca,
