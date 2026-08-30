@@ -216,11 +216,37 @@ src="https://www.facebook.com/tr?id=2038947806731470&ev=PageView&noscript=1"
   .tname{font-size:14px;font-weight:700;color:var(--text)}
   .trole{font-size:12px;color:var(--text3);margin-top:2px}
 
+  /* CARROSSEL */
+  .carrw{position:relative;border-radius:16px;overflow:hidden;border:1px solid rgba(0,208,132,.12);box-shadow:0 40px 120px rgba(0,0,0,.7),0 0 80px rgba(0,208,132,.07);background:var(--bg2);aspect-ratio:16/9}
+  .carrt{display:flex;height:100%;transition:transform .7s cubic-bezier(.6,.02,.2,1);will-change:transform}
+  .carrs{min-width:100%;height:100%;flex-shrink:0}
+  .carrs img{width:100%;height:100%;object-fit:cover;display:block}
+  .carrn{position:absolute;top:50%;transform:translateY(-50%);width:44px;height:44px;border-radius:50%;background:rgba(7,9,14,.62);backdrop-filter:blur(10px);border:1px solid var(--border2);color:var(--text);font-size:17px;line-height:1;cursor:pointer;display:flex;align-items:center;justify-content:center;opacity:0;transition:opacity .25s,background .2s;z-index:2;font-family:inherit}
+  .carrw:hover .carrn,.carrn:focus-visible{opacity:1}
+  .carrn:hover{background:rgba(0,208,132,.85);color:#000}
+  .carrn.pv{left:16px}
+  .carrn.nx{right:16px}
+  .carrbar{position:absolute;left:0;bottom:0;height:3px;width:100%;background:rgba(255,255,255,.07);z-index:2}
+  .carrbar i{display:block;height:100%;width:0;background:var(--green);transition:width .1s linear}
+  .carrd{display:flex;justify-content:center;gap:10px;margin-top:24px}
+  .carrdot{width:34px;height:4px;border-radius:100px;background:rgba(255,255,255,.14);border:none;padding:0;cursor:pointer;transition:background .3s,width .3s}
+  .carrdot:hover{background:rgba(255,255,255,.3)}
+  .carrdot.on{background:var(--green);width:52px}
+
   /* Reveal */
   .rev{opacity:0;transform:translateY(24px);transition:opacity .6s ease,transform .6s ease}
   .rev.in{opacity:1;transform:none}
 
+  @media(prefers-reduced-motion:reduce){
+    .carrt{transition:none}
+    .carrbar i{display:none}
+  }
+  /* No celular o carrossel vai de ponta a ponta (arte 16:9 com texto ganha ~18% de área) */
+  @media(max-width:600px){
+    .carrw{margin-left:-28px;margin-right:-28px;width:calc(100% + 56px);border-radius:0;border-left:0;border-right:0}
+  }
   @media(max-width:900px){
+    .carrn{display:none}
     .pgrid,.feat,.feat.r{grid-template-columns:1fr;direction:ltr;gap:32px}
     .plano.pp{transform:none}
     .plano.pp:hover{transform:translateY(-4px)}
@@ -298,6 +324,23 @@ src="https://www.facebook.com/tr?id=2038947806731470&ev=PageView&noscript=1"
   <div class="wrap">
     <div class="stag">A solução</div>
     <div class="sh">Tudo que importa,<br>sempre <span class="g">à vista</span></div>
+    <p class="sub" style="margin-bottom:44px">Do primeiro clique de instalação até a mensagem que chega no WhatsApp do seu cliente:</p>
+
+    <!-- CARROSSEL 1 -->
+    <div class="rev" style="margin-bottom:80px">
+      <div class="carrw js-carr" data-intervalo="5000">
+        <div class="carrt">
+          <div class="carrs"><img src="carrossel-1.jpg" alt="LoggZap: recuperação de carrinho, acompanhamento de rastreio e pesquisa de satisfação automáticas no WhatsApp" width="1920" height="1080"></div>
+          <div class="carrs"><img src="carrossel-2.jpg" alt="LoggZap instala em 2 minutos, compatível com Nuvemshop e gratuito por 7 dias" width="1920" height="1080" loading="lazy"></div>
+          <div class="carrs"><img src="carrossel-3.jpg" alt="Dashboard LoggZap: saúde da loja em tempo real, custo com frete, horários de venda e ticket médio" width="1920" height="1080" loading="lazy"></div>
+        </div>
+        <button class="carrn pv" type="button" aria-label="Imagem anterior">&#10094;</button>
+        <button class="carrn nx" type="button" aria-label="Próxima imagem">&#10095;</button>
+        <div class="carrbar"><i></i></div>
+      </div>
+      <div class="carrd"></div>
+    </div>
+
     <div class="feats">
       <div class="feat rev">
         <div>
@@ -468,6 +511,29 @@ src="https://www.facebook.com/tr?id=2038947806731470&ev=PageView&noscript=1"
   </div>
 </section>
 
+<!-- CARROSSEL 2 -->
+<section class="sec" style="padding:100px 0 60px">
+  <div class="wrap">
+    <div style="text-align:center;margin-bottom:44px">
+      <div class="stag">Veja funcionando</div>
+      <div class="sh" style="text-align:center;margin-bottom:12px">É isso que você leva<br><span class="g">nos 7 dias grátis</span></div>
+      <p style="color:var(--text2);font-size:18px">Instala em 2 minutos. Sem cartão de crédito.</p>
+    </div>
+    <div class="rev">
+      <div class="carrw js-carr" data-intervalo="5000">
+        <div class="carrt">
+          <div class="carrs"><img src="carrossel-2.jpg" alt="LoggZap instala em 2 minutos, compatível com Nuvemshop e gratuito por 7 dias" width="1920" height="1080" loading="lazy"></div>
+          <div class="carrs"><img src="carrossel-3.jpg" alt="Dashboard LoggZap: saúde da loja em tempo real, custo com frete, horários de venda e ticket médio" width="1920" height="1080" loading="lazy"></div>
+          <div class="carrs"><img src="carrossel-1.jpg" alt="LoggZap: recuperação de carrinho, acompanhamento de rastreio e pesquisa de satisfação automáticas no WhatsApp" width="1920" height="1080" loading="lazy"></div>
+        </div>
+        <button class="carrn pv" type="button" aria-label="Imagem anterior">&#10094;</button>
+        <button class="carrn nx" type="button" aria-label="Próxima imagem">&#10095;</button>
+        <div class="carrbar"><i></i></div>
+      </div>
+      <div class="carrd"></div>
+    </div>
+  </div>
+</section>
 
 <!-- PLANOS -->
 <section class="planos" id="planos">
@@ -596,6 +662,89 @@ src="https://www.facebook.com/tr?id=2038947806731470&ev=PageView&noscript=1"
   }, {threshold:0.08});
   document.querySelectorAll('.rev').forEach(el => obs.observe(el));
 
+  /* CARROSSEL — passa sozinho, pausa no hover/fora da tela */
+  (function () {
+    document.querySelectorAll('.js-carr').forEach(function (carr) {
+      const track = carr.querySelector('.carrt');
+      const slides = carr.querySelectorAll('.carrs');
+      const barra = carr.querySelector('.carrbar i');
+      const dots = carr.parentElement.querySelector('.carrd');
+      const total = slides.length;
+      if (!track || total < 2) return;
+
+      const intervalo = parseInt(carr.dataset.intervalo, 10) || 5000;
+      let atual = 0, pausado = false, visivel = true, decorrido = 0, ultimo = 0, raf = null;
+
+      // Dots
+      const bolinhas = [];
+      if (dots) {
+        for (let i = 0; i < total; i++) {
+          const b = document.createElement('button');
+          b.type = 'button';
+          b.className = 'carrdot' + (i === 0 ? ' on' : '');
+          b.setAttribute('aria-label', 'Ir para a imagem ' + (i + 1));
+          b.addEventListener('click', function () { ir(i, true); });
+          dots.appendChild(b);
+          bolinhas.push(b);
+        }
+      }
+
+      function ir(i, reset) {
+        atual = (i + total) % total;
+        track.style.transform = 'translateX(-' + (atual * 100) + '%)';
+        bolinhas.forEach(function (b, n) { b.classList.toggle('on', n === atual); });
+        if (reset !== false) { decorrido = 0; if (barra) barra.style.width = '0%'; }
+      }
+
+      // Loop do autoplay (rAF: não acumula enquanto a aba está em segundo plano)
+      function tick(ts) {
+        if (!ultimo) ultimo = ts;
+        const delta = ts - ultimo;
+        ultimo = ts;
+        if (!pausado && visivel && !document.hidden) {
+          decorrido += delta;
+          if (barra) barra.style.width = Math.min(100, (decorrido / intervalo) * 100) + '%';
+          if (decorrido >= intervalo) ir(atual + 1);
+        }
+        raf = requestAnimationFrame(tick);
+      }
+      // Sempre passa sozinho; em prefers-reduced-motion o CSS troca o deslize por corte seco.
+      raf = requestAnimationFrame(tick);
+
+      // Pausa no hover / foco do teclado
+      carr.addEventListener('mouseenter', function () { pausado = true; });
+      carr.addEventListener('mouseleave', function () { pausado = false; });
+      carr.addEventListener('focusin', function () { pausado = true; });
+      carr.addEventListener('focusout', function () { pausado = false; });
+
+      // Só roda enquanto estiver na tela
+      if ('IntersectionObserver' in window) {
+        new IntersectionObserver(function (es) {
+          es.forEach(function (e) { visivel = e.isIntersecting; });
+        }, { threshold: 0.25 }).observe(carr);
+      }
+
+      // Setas
+      const pv = carr.querySelector('.carrn.pv');
+      const nx = carr.querySelector('.carrn.nx');
+      if (pv) pv.addEventListener('click', function () { ir(atual - 1, true); });
+      if (nx) nx.addEventListener('click', function () { ir(atual + 1, true); });
+
+      // Swipe no celular
+      let x0 = null, y0 = null;
+      carr.addEventListener('touchstart', function (e) {
+        x0 = e.touches[0].clientX; y0 = e.touches[0].clientY; pausado = true;
+      }, { passive: true });
+      carr.addEventListener('touchend', function (e) {
+        if (x0 === null) return;
+        const dx = e.changedTouches[0].clientX - x0;
+        const dy = e.changedTouches[0].clientY - y0;
+        if (Math.abs(dx) > 45 && Math.abs(dx) > Math.abs(dy)) ir(atual + (dx < 0 ? 1 : -1), true);
+        x0 = null; y0 = null; pausado = false;
+      }, { passive: true });
+    });
+  })();
+
   function irCheckout(e, plano) {
     e.preventDefault();
     if (plano === 'basic' || plano === 'premium') {
@@ -686,8 +835,14 @@ src="https://www.facebook.com/tr?id=2038947806731470&ev=PageView&noscript=1"
   }
 
   // Fechar modal clicando fora
-  document.getElementById('modal-cadastro').addEventListener('click', e => { if(e.target === document.getElementById('modal-cadastro')) fecharModal(); });
-  document.getElementById('modal-sucesso').addEventListener('click', e => { if(e.target === document.getElementById('modal-sucesso')) fecharTudo(); });
+  // (os modais ficam DEPOIS deste script no HTML — sem esperar o DOM, getElementById
+  //  devolvia null e o TypeError impedia o "clicar fora para fechar" de funcionar)
+  document.addEventListener('DOMContentLoaded', () => {
+    const mc = document.getElementById('modal-cadastro');
+    const ms = document.getElementById('modal-sucesso');
+    if (mc) mc.addEventListener('click', e => { if(e.target === mc) fecharModal(); });
+    if (ms) ms.addEventListener('click', e => { if(e.target === ms) fecharTudo(); });
+  });
 
 </script>
 
