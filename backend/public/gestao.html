@@ -23,7 +23,10 @@
   .login h2{font-size:17px;margin-bottom:6px}
   .login p{color:var(--text2);font-size:13px;margin-bottom:16px}
   .err{color:var(--red);font-size:13px;margin-top:10px;min-height:16px}
-  .hidden{display:none}
+  /* !important porque .hidden precisa ganhar de qualquer display declarado depois dela.
+     Sem isso, .chat-fundo{display:flex} (lá embaixo, mesma especificidade) vencia e a
+     janela de conversa ficava aberta por cima do painel inteiro, bloqueando os cliques. */
+  .hidden{display:none !important}
 
   /* Funil */
   .funil{display:grid;grid-template-columns:1fr auto 1fr auto 1fr;align-items:center;gap:8px;margin-bottom:12px}
