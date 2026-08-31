@@ -574,7 +574,47 @@ app.post('/admin-loggzap/api/atendimento/retomar', auth, (req, res) => {
 app.get('/admin-loggzap/api/atendimento/conversa/:telefone', auth, (req, res) => {
   try {
     const tel = String(req.params.telefone).replace(/\D/g, '');
-    res.json({ success: true, estado: db.atendEstado(tel), mensagens: db.atendHistorico(tel, 200) });
+    res.json({ success: true, telefone: tel, estado: db.atendEstado(tel), mensagens: db.atendHistoricoPainel(tel, 200) });
+  } catch (e) { res.status(500).json({ error: e.message }); }
+});
+
+// Responder pelo próprio painel, sem abrir o WhatsApp. A regra é a MESMA do celular:
+// escreveu a palavra-chave, você devolveu a conversa pra IA; sem ela, você assumiu e
+// ela se cala. Duas portas, um comportamento só — senão o painel e o celular
+// discordariam sobre quem está atendendo.
+app.post('/admin-loggzap/api/atendimento/enviar', auth, async (req, res) => {
+  try {
+    const tel = String(req.body?.telefone || '').replace(/\D/g, '');
+    const texto = String(req.body?.texto || '').trim();
+    if (tel.length < 10) return res.status(400).json({ error: 'Número inválido.' });
+    if (!texto) return res.status(400).json({ error: 'Escreva a mensagem antes de enviar.' });
+    if (!EVOLUTION_URL || !EVOLUTION_API_KEY) return res.status(400).json({ error: 'Evolution não configurada.' });
+    // Travada é conversa pessoal: o LoggZap não envia nem guarda nada por ela.
+    if (db.atendEstaTravado(tel)) {
+      return res.status(400).json({ error: 'Conversa travada. Destrave antes, ou fale com essa pessoa direto no WhatsApp.' });
+    }
+    await atendEnviar(tel, texto);
+    db.atendRegistrarContato(tel, req.body?.nome || null);
+    db.atendSalvarMensagem(tel, 'humano', texto);
+    if (mencionaLoggZap(texto)) {
+      db.atendAtivar(tel, true);
+      db.atendRetomar(tel);
+    } else if (!db.atendEstado(tel).pausado) {
+      db.atendPausar(tel, 'Você assumiu a conversa');
+    }
+    res.json({ success: true, estado: db.atendEstado(tel), mensagens: db.atendHistoricoPainel(tel, 200) });
+  } catch (e) {
+    res.status(500).json({ error: e.response?.data?.message || e.response?.data?.error || e.message });
+  }
+});
+
+// Apaga o histórico guardado de um número. Existe por causa das conversas travadas:
+// contato pessoal que caiu no número comercial não precisa ficar arquivado aqui.
+app.delete('/admin-loggzap/api/atendimento/conversa/:telefone', auth, (req, res) => {
+  try {
+    const tel = String(req.params.telefone).replace(/\D/g, '');
+    if (!tel) return res.status(400).json({ error: 'Número inválido.' });
+    res.json({ success: true, apagadas: db.atendApagarHistorico(tel) });
   } catch (e) { res.status(500).json({ error: e.message }); }
 });
 
@@ -6540,7 +6580,9 @@ app.post('/webhook/evolution', async (req, res) => {
       if (key.fromMe) {
         if (texto) {
           const tel = String(telefone).replace(/\D/g, '');
-          if (tel && tel !== ATEND_AVISO) {
+          // Travada é conversa pessoal — nem guardar o que você escreve nela. Antes,
+          // travar calava a IA mas o texto continuava indo pro banco do LoggZap.
+          if (tel && tel !== ATEND_AVISO && !db.atendEstaTravado(tel)) {
             db.atendSalvarMensagem(tel, 'humano', texto);
             if (mencionaLoggZap(texto)) {
               // O Ronaldo escreveu a palavra-chave → está passando a conversa PRA ela.

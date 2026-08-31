@@ -736,6 +736,22 @@ function atendHistorico(telefone, limite) {
                              ORDER BY id DESC LIMIT ?`).all(String(telefone), Number(limite) || 12);
   return linhas.reverse().map(m => ({ role: m.role === 'user' ? 'user' : 'assistant', texto: m.texto }));
 }
+// Histórico completo pra TELA. Diferente do atendHistorico (que é o contexto enxuto
+// da IA e achata 'humano' em 'assistant'), aqui a origem e a hora são preservadas —
+// sem isso a janela de conversa não sabe de que lado desenhar o balão.
+function atendHistoricoPainel(telefone, limite) {
+  const linhas = db.prepare(`SELECT id, role, texto, criado_em FROM atend_mensagens
+                             WHERE telefone=? ORDER BY id DESC LIMIT ?`)
+    .all(String(telefone).replace(/\D/g, ''), Number(limite) || 200);
+  return linhas.reverse();
+}
+// Apaga o histórico de um número. Usado quando a conversa é travada: travada é
+// contato pessoal, e o LoggZap não tem por que guardar conversa pessoal.
+function atendApagarHistorico(telefone) {
+  const tel = String(telefone || '').replace(/\D/g, '');
+  if (!tel) return 0;
+  return db.prepare('DELETE FROM atend_mensagens WHERE telefone=?').run(tel).changes;
+}
 function atendEstado(telefone) {
   return db.prepare('SELECT * FROM atend_estado WHERE telefone=?').get(String(telefone))
     || { telefone: String(telefone), pausado: 0, motivo: null, nome: null };
@@ -2127,6 +2143,7 @@ module.exports = {
   getAdminStats, getLojistaStats, registrarVisita, getGestaoStats,
   salvarLead, listarLeads, contarLeads, vincularLeadALoja, deletarLead, removerLoja,
   atendGetConfig, atendSetConfig, atendSalvarMensagem, atendHistorico, atendEstado,
+  atendHistoricoPainel, atendApagarHistorico,
   atendPausar, atendRetomar, atendRegistrarContato, atendConversas, salvarLeadWhatsApp,
   atendTravar, atendEstaTravado, atendAtivar, atendEstaAtivada, atendEsquecidas, atendMarcarLembrete, atendContarTravadas,
   addRastreioExtra, getRastreioExtra,

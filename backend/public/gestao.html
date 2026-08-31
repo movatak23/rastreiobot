@@ -73,6 +73,36 @@
   .btn-del:hover:not(:disabled){border-color:var(--red);color:var(--red)}
   .btn-add:hover:not(:disabled){border-color:var(--green);color:var(--green)}
   .btn-del:disabled,.btn-add:disabled{opacity:.5;cursor:default}
+
+  /* Janela de conversa — responder pelo painel sem sair pro WhatsApp */
+  tr.clicavel{cursor:pointer}
+  .chat-fundo{position:fixed;inset:0;background:rgba(4,6,11,.72);backdrop-filter:blur(3px);z-index:60;display:flex;align-items:center;justify-content:center;padding:20px}
+  .chat{background:var(--bg2);border:1px solid var(--border);border-radius:16px;width:100%;max-width:620px;height:min(760px,88vh);display:flex;flex-direction:column;overflow:hidden;box-shadow:0 24px 60px rgba(0,0,0,.5)}
+  .chat-topo{display:flex;align-items:center;gap:12px;padding:14px 16px;border-bottom:1px solid var(--border);background:var(--bg3)}
+  .chat-topo .quem{flex:1;min-width:0}
+  .chat-topo .nome{font-weight:700;font-size:15px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+  .chat-topo .sub2{font-size:12px;color:var(--text3);margin-top:2px}
+  .chat-fechar{background:none;border:none;color:var(--text3);font-size:24px;line-height:1;cursor:pointer;padding:0 4px;font-family:inherit}
+  .chat-fechar:hover{color:var(--text)}
+  .chat-barra{display:flex;gap:6px;flex-wrap:wrap;padding:10px 16px;border-bottom:1px solid var(--border)}
+  .chat-msgs{flex:1;overflow-y:auto;padding:18px 16px;display:flex;flex-direction:column;gap:10px;background:var(--bg)}
+  .bolha{max-width:78%;padding:9px 13px;border-radius:14px;font-size:13.5px;line-height:1.45;white-space:pre-wrap;word-break:break-word}
+  .bolha .hora{display:block;font-size:10px;color:var(--text3);margin-top:4px}
+  .bolha.deles{align-self:flex-start;background:var(--bg3);border:1px solid var(--border);border-bottom-left-radius:4px}
+  .bolha.minha{align-self:flex-end;background:#134e35;border:1px solid #1c6b49;border-bottom-right-radius:4px}
+  .bolha.ia{align-self:flex-end;background:var(--bg2);border:1px solid var(--border);border-bottom-right-radius:4px}
+  .bolha .autor{display:block;font-size:10px;font-weight:700;text-transform:uppercase;letter-spacing:.4px;color:var(--text3);margin-bottom:3px}
+  .chat-vazio{margin:auto;color:var(--text3);font-size:13px;text-align:center;line-height:1.6}
+  .chat-baixo{border-top:1px solid var(--border);padding:12px 16px;background:var(--bg2)}
+  .chat-baixo textarea{width:100%;background:var(--bg3);border:1px solid var(--border);border-radius:10px;color:var(--text);padding:11px 13px;font-size:14px;font-family:inherit;resize:none;line-height:1.4;min-height:46px;max-height:150px}
+  .chat-baixo textarea:focus{outline:none;border-color:var(--green)}
+  .chat-envio{display:flex;align-items:center;gap:10px;margin-top:9px}
+  .chat-dica{flex:1;font-size:11px;color:var(--text3);line-height:1.4}
+  @media(max-width:640px){
+    .chat-fundo{padding:0}
+    .chat{max-width:none;height:100%;border-radius:0;border:none}
+    .bolha{max-width:88%}
+  }
 </style>
 </head>
 <body>
@@ -222,6 +252,28 @@
   <div class="status" id="status"></div>
 </div>
 
+<!-- Janela de conversa: abre por cima da lista, sem trocar de página -->
+<div id="chat-fundo" class="chat-fundo hidden" onclick="if(event.target===this)fecharConversa()">
+  <div class="chat">
+    <div class="chat-topo">
+      <div class="quem">
+        <div class="nome" id="chat-nome">—</div>
+        <div class="sub2" id="chat-sub">—</div>
+      </div>
+      <button class="chat-fechar" onclick="fecharConversa()" title="Fechar (Esc)">&times;</button>
+    </div>
+    <div class="chat-barra" id="chat-barra"></div>
+    <div class="chat-msgs" id="chat-msgs"></div>
+    <div class="chat-baixo">
+      <textarea id="chat-texto" rows="1" placeholder="Escreva sua mensagem…" oninput="chatAltura(this)" onkeydown="chatTecla(event)"></textarea>
+      <div class="chat-envio">
+        <div class="chat-dica" id="chat-dica">Enter envia · Shift+Enter pula linha</div>
+        <button class="btn g" id="chat-enviar" onclick="chatEnviar()">Enviar</button>
+      </div>
+    </div>
+  </div>
+</div>
+
 <script>
 const KEY = 'lz_admin_loggzap_secret';
 function $(id){return document.getElementById(id);}
@@ -349,12 +401,13 @@ async function carregarAtendimento(){
         : (c.pausado
           ? '<span style="color:var(--amber);font-weight:600">👤 Você</span><br><small style="color:var(--text3)">'+esc(c.motivo||'')+'</small>'
           : '<span style="color:var(--green);font-weight:600">🤖 Ronaldo</span>');
-      const acoes = (c.travado
+      const acoes = '<button class="btn-add" onclick="abrirConversa(\''+esc(c.telefone)+'\',this.closest(\'tr\').dataset.nome)">💬 Abrir</button>'
+        + (c.travado
           ? '<button class="btn-add" onclick="atTravar(\''+esc(c.telefone)+'\',false,this)">Destravar</button>'
           : (c.pausado?'<button class="btn-add" onclick="atRetomar(\''+esc(c.telefone)+'\',this)">Devolver p/ IA</button> ':'')
             + '<button class="btn-del" onclick="atTravar(\''+esc(c.telefone)+'\',true,this)" title="A IA nunca mais responde este número">🔒 Travar</button>');
-      return '<tr>'
-      + '<td class="nowrap"><a href="https://wa.me/'+esc(c.telefone)+'" target="_blank" rel="noopener" style="color:#25D366;text-decoration:none">'+(c.nome?esc(c.nome)+' ':'')+'+'+esc(c.telefone)+'</a></td>'
+      return '<tr class="clicavel" data-tel="'+esc(c.telefone)+'" data-nome="'+esc(c.nome||'')+'" onclick="abrirDaLinha(this,event)" title="Clique para abrir a conversa">'
+      + '<td class="nowrap"><span style="color:#25D366">'+(c.nome?esc(c.nome)+' ':'')+'+'+esc(c.telefone)+'</span></td>'
       + '<td class="nowrap">'+quem+'</td>'
       + '<td><small>'+esc(String(c.ultima||'').slice(0,70))+'</small><br><span class="muted" style="font-size:11px">'+quando(c.ultima_em)+'</span></td>'
       + '<td class="muted">'+(c.qtd||0)+'</td>'
@@ -425,6 +478,136 @@ async function atConectar(){
   }catch(e){ box.innerHTML='<span style="color:var(--red)">Erro: '+esc(e.message)+'</span>'; }
 }
 
+// ── Janela de conversa (responder pelo painel) ───────────────────────────────
+// O lead está na tabela; abrir o WhatsApp em outra aba pra responder era sair do
+// contexto e perder o histórico do que a IA já disse. Aqui a conversa abre no lugar.
+let chatTel = '', chatNome = '', chatTimer = null, chatEstado = {}, chatPrimeiraPintura = true;
+
+// WhatsApp exige o número com DDI. O que o lojista digita no site vem sem ele.
+function telWhats(v){
+  const d = String(v||'').replace(/\D/g,'');
+  if(!d) return '';
+  return d.length <= 11 ? '55'+d : d;
+}
+
+function abrirConversa(tel, nome){
+  const t = telWhats(tel);
+  if(!t){ alert('Esse cadastro não tem WhatsApp.'); return; }
+  chatTel = t; chatNome = nome || '';
+  $('chat-nome').textContent = chatNome || ('+'+t);
+  $('chat-sub').textContent = chatNome ? '+'+t : 'WhatsApp';
+  $('chat-msgs').innerHTML = '<div class="chat-vazio">Carregando conversa…</div>';
+  $('chat-fundo').classList.remove('hidden');
+  chatPrimeiraPintura = true;
+  $('chat-texto').value=''; chatAltura($('chat-texto'));
+  chatCarregar().then(()=>$('chat-texto').focus());
+  // Sem isso, a resposta da pessoa só apareceria se ele fechasse e abrisse de novo.
+  clearInterval(chatTimer); chatTimer = setInterval(chatCarregar, 10000);
+}
+
+function fecharConversa(){
+  $('chat-fundo').classList.add('hidden');
+  clearInterval(chatTimer); chatTimer = null; chatTel='';
+  carregarAtendimento(); carregarLeads();
+}
+document.addEventListener('keydown', e=>{ if(e.key==='Escape' && chatTel) fecharConversa(); });
+
+function chatAltura(el){ el.style.height='auto'; el.style.height=Math.min(150, el.scrollHeight)+'px'; }
+function chatTecla(e){ if(e.key==='Enter' && !e.shiftKey){ e.preventDefault(); chatEnviar(); } }
+
+function chatPintar(d){
+  const est = chatEstado = d.estado || {};
+  const M = d.mensagens || [];
+  // Cabeçalho: quem está atendendo agora, em uma linha.
+  const quem = est.travado ? '🔒 Travada — o Ronaldo nunca responde'
+    : (est.pausado ? '👤 Você está atendendo' + (est.motivo? ' · '+est.motivo : '')
+    : (est.ativada ? '🤖 O Ronaldo está atendendo' : '💤 A IA ainda não foi acionada aqui'));
+  $('chat-sub').innerHTML = '+'+esc(chatTel)+' · <span style="color:var(--text2)">'+esc(quem)+'</span>';
+
+  const acoes = [];
+  if(est.travado){
+    acoes.push('<button class="btn-add" onclick="chatTravar(false)">Destravar</button>');
+    acoes.push('<button class="btn-del" onclick="chatApagarHistorico()" title="Remove as mensagens guardadas deste número">🗑 Apagar histórico</button>');
+  } else {
+    if(est.pausado) acoes.push('<button class="btn-add" onclick="chatRetomar()">Devolver p/ IA</button>');
+    acoes.push('<button class="btn-del" onclick="chatTravar(true)" title="A IA nunca mais responde este número">🔒 Travar</button>');
+  }
+  acoes.push('<a class="btn-add" href="https://wa.me/'+esc(chatTel)+'" target="_blank" rel="noopener" style="text-decoration:none;display:inline-block">Abrir no WhatsApp ↗</a>');
+  $('chat-barra').innerHTML = acoes.join('');
+
+  const bloqueado = !!est.travado;
+  $('chat-texto').disabled = bloqueado;
+  $('chat-enviar').disabled = bloqueado;
+  $('chat-dica').textContent = bloqueado
+    ? 'Conversa travada: o LoggZap não envia nem guarda nada por aqui.'
+    : 'Enter envia · Shift+Enter pula linha · escrever "loggzap" devolve a conversa pra IA';
+
+  const box = $('chat-msgs');
+  if(!M.length){
+    box.innerHTML = '<div class="chat-vazio">'
+      + (bloqueado ? 'Nada guardado desta conversa.' : 'Nenhuma mensagem ainda.<br>Escreva abaixo pra puxar assunto — sai do seu WhatsApp comercial.')
+      + '</div>';
+    return;
+  }
+  const hora=(x)=>{ if(!x) return ''; const dt=new Date(String(x).replace(' ','T')+'Z');
+    return isNaN(dt)?'':dt.toLocaleString('pt-BR',{timeZone:'America/Recife',day:'2-digit',month:'2-digit',hour:'2-digit',minute:'2-digit'}); };
+  const perto = box.scrollHeight - box.scrollTop - box.clientHeight < 80;
+  box.innerHTML = M.map(m=>{
+    const cls = m.role==='user' ? 'deles' : (m.role==='humano' ? 'minha' : 'ia');
+    const autor = m.role==='assistant' ? '<span class="autor">Ronaldo (IA)</span>' : '';
+    return '<div class="bolha '+cls+'">'+autor+esc(m.texto||'')+'<span class="hora">'+esc(hora(m.criado_em))+'</span></div>';
+  }).join('');
+  // Só cola no fim se ele já estava no fim — senão a atualização joga a rolagem fora
+  // do lugar bem na hora em que ele está lendo o começo da conversa.
+  if(perto || chatPrimeiraPintura) box.scrollTop = box.scrollHeight;
+  chatPrimeiraPintura = false;
+}
+
+async function chatCarregar(){
+  if(!chatTel) return;
+  try{ chatPintar(await apiAt('/conversa/'+encodeURIComponent(chatTel))); }
+  catch(e){ $('chat-msgs').innerHTML = '<div class="chat-vazio" style="color:var(--red)">Erro ao carregar: '+esc(e.message)+'</div>'; }
+}
+
+async function chatEnviar(){
+  const ta = $('chat-texto'), btn = $('chat-enviar');
+  const texto = ta.value.trim(); if(!texto || !chatTel) return;
+  btn.disabled = true; btn.textContent = 'Enviando…';
+  try{
+    const d = await apiAt('/enviar', { method:'POST', body: JSON.stringify({ telefone: chatTel, texto, nome: chatNome||null }) });
+    ta.value=''; chatAltura(ta); chatPintar(d);
+    $('chat-msgs').scrollTop = $('chat-msgs').scrollHeight;
+  }catch(e){ alert('Não enviou: '+e.message); }
+  btn.disabled = false; btn.textContent = 'Enviar'; ta.focus();
+}
+
+async function chatRetomar(){
+  if(!confirm('Devolver esta conversa para a IA?\n\nEla volta a responder essa pessoa automaticamente.')) return;
+  try{ await apiAt('/retomar', {method:'POST', body: JSON.stringify({telefone:chatTel})}); await chatCarregar(); }
+  catch(e){ alert('Erro: '+e.message); }
+}
+
+async function chatTravar(travar){
+  if(travar && !confirm('Travar +'+chatTel+'?\n\nO Ronaldo nunca mais responde esse número — em silêncio, sem avisar ninguém.\nA conversa some do painel (só volta em "Ver travadas") e o que for escrito nela deixa de ser guardado.')) return;
+  try{ await apiAt('/travar', {method:'POST', body: JSON.stringify({telefone:chatTel, travar})}); await chatCarregar(); }
+  catch(e){ alert('Erro: '+e.message); }
+}
+
+async function chatApagarHistorico(){
+  if(!confirm('Apagar as mensagens guardadas de +'+chatTel+'?\n\nSome do banco do LoggZap para sempre. A conversa no seu WhatsApp não é tocada.')) return;
+  try{
+    await apiAt('/conversa/'+encodeURIComponent(chatTel), { method:'DELETE' });
+    await chatCarregar();
+  }catch(e){ alert('Erro: '+e.message); }
+}
+
+// Clique na LINHA abre a conversa. Clique num link ou botão dentro dela (deletar,
+// e-mail, abrir no WhatsApp) faz o que aquele controle faz — não abre a janela junto.
+function abrirDaLinha(tr, ev){
+  if(ev && ev.target.closest('a,button')) return;
+  abrirConversa(tr.dataset.tel, tr.dataset.nome);
+}
+
 // De onde o lead veio. "Checkout" é o mais quente: digitou o e-mail pra pagar.
 function rotuloOrigem(o){
   const map = {
@@ -449,18 +632,23 @@ async function carregarLeads(){
     if(!L.length){ body.innerHTML='<tr><td colspan="7" class="muted">Nenhum cadastro ainda.</td></tr>'; return; }
     const quando = (s)=>{ if(!s) return '—'; const dt=new Date(s.replace(' ','T')+'Z');
       return isNaN(dt) ? s : dt.toLocaleString('pt-BR',{timeZone:'America/Recife',day:'2-digit',month:'2-digit',hour:'2-digit',minute:'2-digit'}); };
-    body.innerHTML = L.map(l=>'<tr>'
+    body.innerHTML = L.map(l=>{
+      const tel = telWhats(l.whatsapp || l.telefone);
+      return '<tr'+(tel?' class="clicavel" data-tel="'+esc(tel)+'" data-nome="'+esc(l.nome||'')+'" onclick="abrirDaLinha(this,event)" title="Clique para conversar pelo WhatsApp"':'')+'>'
       + '<td>'+(l.nome?esc(l.nome):'<span class="muted">—</span>')+'</td>'
       + '<td>'+(l.email?'<a href="mailto:'+esc(l.email)+'" style="color:var(--green);text-decoration:none">'+esc(l.email)+'</a>':'<span class="muted">—</span>')+'</td>'
-      + '<td>'+(l.whatsapp?'<a href="https://wa.me/55'+esc(String(l.whatsapp).replace(/\D/g,''))+'" target="_blank" rel="noopener" style="color:#25D366;text-decoration:none">'+esc(l.whatsapp)+'</a>':'<span class="muted">—</span>')+'</td>'
+      + '<td class="nowrap">'+(tel?'<span style="color:#25D366">'+esc(l.whatsapp||tel)+'</span>':'<span class="muted">—</span>')+'</td>'
       + '<td><span class="tag">'+esc(l.plano||'—')+'</span></td>'
       + '<td class="nowrap">'+rotuloOrigem(l.origem)+'</td>'
       + '<td>'+(l.store_id
           ? '<span style="color:var(--green);font-weight:600">✓ '+esc(l.store_id)+'</span>'
           : '<span class="muted">ainda não</span>')+'</td>'
       + '<td class="muted nowrap">'+quando(l.criado_em)+'</td>'
-      + '<td><button class="btn-del" onclick="deletarLead('+Number(l.id)+',this)" title="Apagar este cadastro">Deletar</button></td>'
-      + '</tr>').join('');
+      + '<td><div class="acoes">'
+        + (tel?'<button class="btn-add" onclick="abrirConversa(\''+esc(tel)+'\',this.closest(\'tr\').dataset.nome)">💬 Conversar</button>':'')
+        + '<button class="btn-del" onclick="deletarLead('+Number(l.id)+',this)" title="Apagar este cadastro">Deletar</button></div></td>'
+      + '</tr>';
+    }).join('');
   }catch(e){ body.innerHTML='<tr><td colspan="8" class="muted">Erro ao carregar cadastros: '+esc(e.message)+'</td></tr>'; }
 }
 
