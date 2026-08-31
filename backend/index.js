@@ -15,6 +15,11 @@ const conhecimento = require('./conhecimento');
 db.migrar();
 
 const app = express();
+// Áudio e anexo viajam em base64 e não cabem no limite padrão do express (100kb).
+// Só ESTA rota ganha o limite grande — o resto da API continua apertado de propósito,
+// inclusive os webhooks públicos. Precisa vir antes do express.json geral: o primeiro
+// que casar com a rota parseia, e o de baixo enxerga o corpo já pronto e não mexe.
+app.use('/admin-loggzap/api/atendimento/enviar-midia', express.json({ limit: '26mb' }));
 // Guarda o corpo cru (necessário p/ verificar assinatura HMAC de webhooks, ex.: Seu|Rastreio)
 app.use(express.json({ verify: (req, _res, buf) => { req.rawBody = buf; } }));
 app.use(cors({ origin: '*' }));
@@ -594,20 +599,50 @@ app.post('/admin-loggzap/api/atendimento/enviar', auth, async (req, res) => {
       return res.status(400).json({ error: 'Conversa travada. Destrave antes, ou fale com essa pessoa direto no WhatsApp.' });
     }
     await atendEnviar(tel, texto);
-    db.atendRegistrarContato(tel, req.body?.nome || null);
-    // Marcar o estado ANTES de gravar a mensagem: o lembrete de lead esquecido compara
-    // a hora da pausa com a da sua última resposta. Na ordem inversa, os dois caem no
-    // mesmo segundo e ele te cobraria por uma conversa que você acabou de responder.
-    if (mencionaLoggZap(texto)) {
-      db.atendAtivar(tel, true);
-      db.atendRetomar(tel);
-    } else if (!db.atendEstado(tel).pausado) {
-      db.atendPausar(tel, 'Você assumiu a conversa');
-    }
-    db.atendSalvarMensagem(tel, 'humano', texto);
+    atendRespostaHumana(tel, texto, texto, req.body?.nome);
     res.json({ success: true, estado: db.atendEstado(tel), mensagens: db.atendHistoricoPainel(tel, 200) });
   } catch (e) {
     res.status(500).json({ error: e.response?.data?.message || e.response?.data?.error || e.message });
+  }
+});
+
+// Áudio gravado no painel e anexo. Mesmas regras do texto — o que muda é o transporte.
+app.post('/admin-loggzap/api/atendimento/enviar-midia', auth, async (req, res) => {
+  try {
+    const b = req.body || {};
+    const tel = String(b.telefone || '').replace(/\D/g, '');
+    if (tel.length < 10) return res.status(400).json({ error: 'Número inválido.' });
+    if (!EVOLUTION_URL || !EVOLUTION_API_KEY) return res.status(400).json({ error: 'Evolution não configurada.' });
+    if (db.atendEstaTravado(tel)) {
+      return res.status(400).json({ error: 'Conversa travada. Destrave antes, ou fale com essa pessoa direto no WhatsApp.' });
+    }
+    // Aceita tanto o base64 puro quanto o data: URI que o navegador produz.
+    let base64 = String(b.base64 || '');
+    let mimetype = String(b.mimetype || '');
+    const duri = base64.match(/^data:([^;,]+);base64,([\s\S]*)$/);
+    if (duri) { mimetype = mimetype || duri[1]; base64 = duri[2]; }
+    base64 = base64.replace(/\s/g, '');
+    if (!base64) return res.status(400).json({ error: 'Arquivo vazio.' });
+    const bytes = Math.floor(base64.length * 3 / 4);
+    if (bytes > ATEND_MAX_BYTES) {
+      return res.status(400).json({ error: 'Arquivo de ' + (bytes / 1048576).toFixed(1) + ' MB. O limite aqui é 16 MB.' });
+    }
+    const ptt = !!b.audio;
+    const nome = String(b.nome || '').slice(0, 120) || (ptt ? 'audio.ogg' : 'arquivo');
+    const legenda = String(b.legenda || '').trim().slice(0, 900);
+
+    await atendEnviarMidia({ telefone: tel, base64, mimetype, nome, legenda, ptt });
+
+    // O binário não fica no banco — o histórico guarda o rótulo, e o arquivo mesmo
+    // vive no WhatsApp. Guardar mídia aqui incharia o banco sem ninguém pedir.
+    const rotulo = ptt
+      ? '🎤 Áudio' + (b.dur ? ' (' + segundosMmSs(b.dur) + ')' : '')
+      : (tipoMidia(mimetype) === 'image' ? '🖼 ' : tipoMidia(mimetype) === 'video' ? '🎬 ' : '📎 ') + nome;
+    atendRespostaHumana(tel, rotulo + (legenda ? '\n' + legenda : ''), legenda, b.nome_contato);
+    res.json({ success: true, estado: db.atendEstado(tel), mensagens: db.atendHistoricoPainel(tel, 200) });
+  } catch (e) {
+    const det = e.response?.data;
+    res.status(500).json({ error: det?.message || det?.error || (typeof det === 'string' ? det : '') || e.message });
   }
 });
 
@@ -2678,6 +2713,100 @@ async function atendEnviar(telefone, mensagem, delayMs) {
     { headers: { apikey: EVOLUTION_API_KEY, 'Content-Type': 'application/json' }, timeout: 45000 }
   );
   return res.data;
+}
+
+// O que veio quando NÃO é texto puro. Sem isso, o lead manda um áudio e o painel não
+// mostra nada — parece que ele sumiu, quando na verdade ele está falando.
+function descreverMidia(msg) {
+  const m = msg || {};
+  const doc = m.documentMessage || m.documentWithCaptionMessage?.message?.documentMessage;
+  const legenda = m.imageMessage?.caption || m.videoMessage?.caption || doc?.caption || '';
+  let rotulo = '';
+  if (m.audioMessage) rotulo = '🎤 Áudio';
+  else if (m.imageMessage) rotulo = '🖼 Imagem';
+  else if (m.videoMessage) rotulo = '🎬 Vídeo';
+  else if (doc) rotulo = '📎 ' + (doc.fileName || 'Arquivo');
+  else if (m.stickerMessage) rotulo = '😀 Figurinha';
+  else if (m.locationMessage) rotulo = '📍 Localização';
+  else if (m.contactMessage || m.contactsArrayMessage) rotulo = '👤 Contato';
+  return { rotulo, legenda: String(legenda || '') };
+}
+
+// Cliente mandou áudio/arquivo. A IA não abre mídia — fingir que entendeu seria pior
+// que passar pra você. Registra, para nessa conversa e te chama.
+async function atendMidiaDoCliente(tel, midia, nome) {
+  if (db.atendGetConfig('ligado', '0') !== '1') return;
+  const registro = midia.rotulo + (midia.legenda ? '\n' + midia.legenda : '');
+  db.atendRegistrarContato(tel, nome);
+  db.atendSalvarMensagem(tel, 'user', registro);
+  if (!db.atendEstaAtivada(tel)) return;   // a IA nem foi acionada nessa conversa
+  if (db.atendEstado(tel).pausado) return; // você já está atendendo
+  const motivo = 'Cliente mandou ' + midia.rotulo.replace(/^\S+\s/, '').toLowerCase() + ' — a IA não abre mídia';
+  db.atendPausar(tel, motivo, nome);
+  const aviso = db.atendGetConfig('msg_transferencia', '');
+  if (aviso) {
+    try { await atendEnviarHumano(tel, aviso); db.atendSalvarMensagem(tel, 'assistant', aviso); }
+    catch (e) { console.error('[Atendimento] falha ao avisar o cliente:', e.message); }
+  }
+  await atendAvisarHumano(tel, nome, motivo, registro);
+}
+
+function segundosMmSs(s) {
+  const n = Math.max(0, Math.round(Number(s) || 0));
+  return Math.floor(n / 60) + ':' + String(n % 60).padStart(2, '0');
+}
+
+// Você respondeu — pelo painel ou pelo celular, dá no mesmo. 'registro' é o que fica
+// no histórico; 'gatilho' é o texto onde a palavra-chave é procurada (num anexo, é a
+// legenda: o nome do arquivo não pode acordar a IA por acidente).
+function atendRespostaHumana(telefone, registro, gatilho, nome) {
+  const tel = String(telefone).replace(/\D/g, '');
+  db.atendRegistrarContato(tel, nome || null);
+  if (mencionaLoggZap(gatilho)) {
+    db.atendAtivar(tel, true);
+    db.atendRetomar(tel);
+  } else if (!db.atendEstado(tel).pausado) {
+    db.atendPausar(tel, 'Você assumiu a conversa');
+  }
+  // Gravar DEPOIS de pausar: o lembrete de lead esquecido compara a hora da pausa com
+  // a da sua última resposta. Na ordem inversa os dois caem no mesmo segundo, e basta
+  // a pausa cair no segundo seguinte pra ele ser cobrado por algo que acabou de responder.
+  db.atendSalvarMensagem(tel, 'humano', registro);
+}
+
+// Teto do anexo. O WhatsApp aceita mais em documento, mas base64 dentro de JSON já
+// pesa 33% a mais — passar disso é pedir timeout no meio do envio.
+const ATEND_MAX_BYTES = 16 * 1024 * 1024;
+
+function tipoMidia(mimetype) {
+  const m = String(mimetype || '').toLowerCase();
+  if (m.startsWith('image/')) return 'image';
+  if (m.startsWith('video/')) return 'video';
+  return 'document';
+}
+
+// Manda arquivo pelo WhatsApp comercial. Áudio gravado vai pela rota de PTT — é o que
+// faz chegar como balão de voz, e não como um anexo de áudio que ninguém abre.
+async function atendEnviarMidia({ telefone, base64, mimetype, nome, legenda, ptt }) {
+  if (!EVOLUTION_URL || !EVOLUTION_API_KEY) throw new Error('Evolution não configurado.');
+  const url = ptt
+    ? `${EVOLUTION_URL}/message/sendWhatsAppAudio/${ATEND_INSTANCE}`
+    : `${EVOLUTION_URL}/message/sendMedia/${ATEND_INSTANCE}`;
+  const corpo = ptt
+    ? { number: telefone, audio: base64, encoding: true }
+    : {
+        number: telefone,
+        mediatype: tipoMidia(mimetype),
+        mimetype: mimetype || 'application/octet-stream',
+        media: base64,
+        fileName: nome || 'arquivo',
+        ...(legenda ? { caption: legenda } : {})
+      };
+  const r = await axios.post(url, corpo, {
+    headers: { apikey: EVOLUTION_API_KEY, 'Content-Type': 'application/json' },
+    timeout: 120000, maxBodyLength: Infinity, maxContentLength: Infinity
+  });
+  return r.data;
 }
 
 // Avisa o Ronaldo que uma conversa precisa dele. Nunca deixa o erro subir: falhar o
@@ -6580,31 +6709,23 @@ app.post('/webhook/evolution', async (req, res) => {
     // A instância comercial é o atendimento do LoggZap (IA). As loja_<id> continuam
     // sendo a conversa do lojista com os compradores dele.
     if (instancia === ATEND_INSTANCE) {
+      const tel = String(telefone).replace(/\D/g, '');
+      // Travada é conversa pessoal — nem guardar o que se escreve nela. Antes, travar
+      // calava a IA mas o texto continuava indo pro banco do LoggZap.
+      if (!tel || tel === ATEND_AVISO || db.atendEstaTravado(tel)) return;
+      const midia = descreverMidia(data.message);
       if (key.fromMe) {
-        if (texto) {
-          const tel = String(telefone).replace(/\D/g, '');
-          // Travada é conversa pessoal — nem guardar o que você escreve nela. Antes,
-          // travar calava a IA mas o texto continuava indo pro banco do LoggZap.
-          if (tel && tel !== ATEND_AVISO && !db.atendEstaTravado(tel)) {
-            if (mencionaLoggZap(texto)) {
-              // O Ronaldo escreveu a palavra-chave → está passando a conversa PRA ela.
-              db.atendAtivar(tel, true);
-              db.atendRetomar(tel);
-              console.log('[Atendimento] Ronaldo ativou a IA na conversa: ' + tel);
-            } else if (!db.atendEstado(tel).pausado) {
-              // Respondeu na mão sem a palavra → assumiu. A IA se cala nessa conversa.
-              db.atendPausar(tel, 'Você assumiu a conversa');
-              console.log('[Atendimento] humano assumiu: ' + tel);
-            }
-            // Gravar DEPOIS de pausar: o lembrete de lead esquecido compara a hora da
-            // pausa com a da sua última resposta. Gravando antes, os dois caem no mesmo
-            // segundo e ele te cobra por uma conversa que você acabou de responder.
-            db.atendSalvarMensagem(tel, 'humano', texto);
-          }
+        // Respondeu na mão: sem a palavra-chave você assumiu e a IA se cala; com ela,
+        // devolveu a conversa pra IA. Vale igual pra texto, áudio e anexo.
+        if (texto || midia.rotulo) {
+          atendRespostaHumana(tel, texto || (midia.rotulo + (midia.legenda ? '\n' + midia.legenda : '')),
+            texto || midia.legenda, null);
+          console.log('[Atendimento] você respondeu na conversa: ' + tel);
         }
         return;
       }
-      if (texto) await atenderComIA(telefone, texto, data.pushName || null);
+      if (texto) { await atenderComIA(telefone, texto, data.pushName || null); return; }
+      if (midia.rotulo) await atendMidiaDoCliente(tel, midia, data.pushName || null);
       return;
     }
 

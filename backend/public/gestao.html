@@ -96,8 +96,19 @@
   .chat-baixo{border-top:1px solid var(--border);padding:12px 16px;background:var(--bg2)}
   .chat-baixo textarea{width:100%;background:var(--bg3);border:1px solid var(--border);border-radius:10px;color:var(--text);padding:11px 13px;font-size:14px;font-family:inherit;resize:none;line-height:1.4;min-height:46px;max-height:150px}
   .chat-baixo textarea:focus{outline:none;border-color:var(--green)}
-  .chat-envio{display:flex;align-items:center;gap:10px;margin-top:9px}
+  .chat-envio{display:flex;align-items:center;gap:8px;margin-top:9px}
   .chat-dica{flex:1;font-size:11px;color:var(--text3);line-height:1.4}
+  .btn-ico{background:var(--bg3);border:1px solid var(--border);border-radius:9px;width:38px;height:38px;font-size:17px;line-height:1;cursor:pointer;color:var(--text);flex:none;font-family:inherit}
+  .btn-ico:hover:not(:disabled){border-color:var(--green)}
+  .btn-ico:disabled{opacity:.4;cursor:default}
+  .btn-ico.gravando{background:rgba(255,90,90,.18);border-color:var(--red);animation:pulsa 1.1s ease-in-out infinite}
+  @keyframes pulsa{50%{opacity:.45}}
+  .anexo{display:flex;align-items:center;gap:10px;background:var(--bg3);border:1px solid var(--border);border-radius:10px;padding:9px 12px;margin-bottom:9px;font-size:12.5px}
+  .anexo .nome{flex:1;min-width:0;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+  .anexo .peso{color:var(--text3);font-size:11px;flex:none}
+  .anexo audio{height:32px;max-width:210px}
+  .anexo .x{background:none;border:none;color:var(--text3);font-size:19px;cursor:pointer;padding:0 2px;line-height:1;font-family:inherit;flex:none}
+  .anexo .x:hover{color:var(--red)}
   @media(max-width:640px){
     .chat-fundo{padding:0}
     .chat{max-width:none;height:100%;border-radius:0;border:none}
@@ -265,11 +276,15 @@
     <div class="chat-barra" id="chat-barra"></div>
     <div class="chat-msgs" id="chat-msgs"></div>
     <div class="chat-baixo">
+      <div id="chat-anexo" class="anexo hidden"></div>
       <textarea id="chat-texto" rows="1" placeholder="Escreva sua mensagem…" oninput="chatAltura(this)" onkeydown="chatTecla(event)"></textarea>
       <div class="chat-envio">
+        <button class="btn-ico" id="chat-clipe" onclick="chatEscolherArquivo()" title="Anexar arquivo (até 16 MB)">📎</button>
+        <button class="btn-ico" id="chat-mic" onclick="chatGravar()" title="Gravar áudio">🎤</button>
         <div class="chat-dica" id="chat-dica">Enter envia · Shift+Enter pula linha</div>
         <button class="btn g" id="chat-enviar" onclick="chatEnviar()">Enviar</button>
       </div>
+      <input type="file" id="chat-file" class="hidden" onchange="chatArquivoEscolhido(this)">
     </div>
   </div>
 </div>
@@ -499,6 +514,7 @@ function abrirConversa(tel, nome){
   $('chat-msgs').innerHTML = '<div class="chat-vazio">Carregando conversa…</div>';
   $('chat-fundo').classList.remove('hidden');
   chatPrimeiraPintura = true;
+  chatEncerrarGravacao(); chatLimparAnexo(true);
   $('chat-texto').value=''; chatAltura($('chat-texto'));
   chatCarregar().then(()=>$('chat-texto').focus());
   // Sem isso, a resposta da pessoa só apareceria se ele fechasse e abrisse de novo.
@@ -508,7 +524,19 @@ function abrirConversa(tel, nome){
 function fecharConversa(){
   $('chat-fundo').classList.add('hidden');
   clearInterval(chatTimer); chatTimer = null; chatTel='';
+  // Fechar com o microfone ligado deixaria a luzinha da câmera/mic acesa pra sempre.
+  chatEncerrarGravacao(); chatLimparAnexo(true);
   carregarAtendimento(); carregarLeads();
+}
+
+// Corta a gravação em andamento sem transformá-la em anexo (cancelar, não enviar).
+function chatEncerrarGravacao(){
+  clearInterval(gravTimer); gravTimer = null;
+  if(gravador){
+    const g = gravador; gravador = null;         // zera antes: o onstop vê que foi cancelada
+    try{ g.onstop = null; g.stream.getTracks().forEach(t=>t.stop()); if(g.state!=='inactive') g.stop(); }catch(e){}
+  }
+  chatBotaoGravar(false);
 }
 document.addEventListener('keydown', e=>{ if(e.key==='Escape' && chatTel) fecharConversa(); });
 
@@ -538,9 +566,12 @@ function chatPintar(d){
   const bloqueado = !!est.travado;
   $('chat-texto').disabled = bloqueado;
   $('chat-enviar').disabled = bloqueado;
-  $('chat-dica').textContent = bloqueado
-    ? 'Conversa travada: o LoggZap não envia nem guarda nada por aqui.'
-    : 'Enter envia · Shift+Enter pula linha · escrever "loggzap" devolve a conversa pra IA';
+  const gravando = !!(gravador && gravador.state === 'recording');
+  $('chat-clipe').disabled = bloqueado || gravando;
+  $('chat-mic').disabled = bloqueado;
+  // Não sobrescreve o cronômetro se ele estiver gravando neste instante (a conversa se
+  // recarrega sozinha a cada 10s e apagaria o "● Gravando 0:12" no meio da gravação).
+  if(!gravando) chatDicaPadrao();
 
   const box = $('chat-msgs');
   if(!M.length){
@@ -569,13 +600,129 @@ async function chatCarregar(){
   catch(e){ $('chat-msgs').innerHTML = '<div class="chat-vazio" style="color:var(--red)">Erro ao carregar: '+esc(e.message)+'</div>'; }
 }
 
+// ── Anexo e áudio ────────────────────────────────────────────────────────────
+const CHAT_MAX_BYTES = 16*1024*1024;
+let chatArquivo = null;              // {base64, mimetype, nome, tamanho, audio, dur, url}
+let gravador = null, gravPedacos = [], gravTimer = null, gravInicio = 0;
+
+function chatEscolherArquivo(){ $('chat-file').click(); }
+
+function lerBase64(blob){
+  return new Promise((ok,err)=>{
+    const r = new FileReader();
+    r.onload = ()=> ok(String(r.result).split(',')[1]||'');
+    r.onerror = ()=> err(new Error('não consegui ler o arquivo'));
+    r.readAsDataURL(blob);
+  });
+}
+function pesoLegivel(b){ return b>=1048576 ? (b/1048576).toFixed(1)+' MB' : Math.max(1,Math.round(b/1024))+' KB'; }
+
+async function chatArquivoEscolhido(input){
+  const f = input.files && input.files[0]; input.value='';
+  if(!f) return;
+  if(f.size > CHAT_MAX_BYTES){ alert('Esse arquivo tem '+pesoLegivel(f.size)+'. O limite aqui é 16 MB.'); return; }
+  chatLimparAnexo();
+  try{
+    chatArquivo = { base64: await lerBase64(f), mimetype: f.type||'application/octet-stream',
+                    nome: f.name, tamanho: f.size, audio:false };
+    chatPintarAnexo();
+  }catch(e){ alert('Não consegui ler o arquivo: '+e.message); }
+}
+
+// Gravação: clica pra começar, clica de novo pra parar. O áudio vira um anexo
+// pendente — ele revê antes de mandar, em vez de disparar no susto ao soltar.
+async function chatGravar(){
+  if(gravador && gravador.state === 'recording'){ gravador.stop(); return; }
+  if(!navigator.mediaDevices || !window.MediaRecorder){ alert('Este navegador não grava áudio.'); return; }
+  let stream;
+  try{ stream = await navigator.mediaDevices.getUserMedia({ audio:true }); }
+  catch(e){ alert('Não consegui usar o microfone. Autorize o acesso no navegador.\n\n('+e.name+')'); return; }
+  const tipo = ['audio/webm;codecs=opus','audio/ogg;codecs=opus','audio/mp4','audio/webm']
+    .find(t=>MediaRecorder.isTypeSupported(t)) || '';
+  gravador = tipo ? new MediaRecorder(stream,{mimeType:tipo}) : new MediaRecorder(stream);
+  gravPedacos = [];
+  gravador.ondataavailable = e=>{ if(e.data && e.data.size) gravPedacos.push(e.data); };
+  gravador.onstop = async ()=>{
+    stream.getTracks().forEach(t=>t.stop());
+    clearInterval(gravTimer); gravTimer = null;
+    const dur = Math.round((Date.now()-gravInicio)/1000);
+    const blob = new Blob(gravPedacos, { type: gravador.mimeType || 'audio/webm' });
+    gravador = null; chatBotaoGravar(false);
+    if(!blob.size || dur < 1){ chatDicaPadrao(); return; }   // toque acidental
+    if(blob.size > CHAT_MAX_BYTES){ alert('Áudio longo demais ('+pesoLegivel(blob.size)+').'); chatDicaPadrao(); return; }
+    chatLimparAnexo();
+    chatArquivo = { base64: await lerBase64(blob), mimetype: String(blob.type).split(';')[0]||'audio/webm',
+                    nome:'audio', tamanho: blob.size, audio:true, dur, url: URL.createObjectURL(blob) };
+    chatPintarAnexo();
+  };
+  gravInicio = Date.now();
+  gravador.start();
+  chatBotaoGravar(true);
+  gravTimer = setInterval(()=>{
+    const s = Math.round((Date.now()-gravInicio)/1000);
+    $('chat-dica').innerHTML = '<span style="color:var(--red);font-weight:700">● Gravando '+mmss(s)+'</span> — clique no 🎤 pra parar';
+    if(s >= 180 && gravador) gravador.stop();   // teto de 3 min: passou disso, é ligação
+  }, 500);
+}
+function mmss(s){ return Math.floor(s/60)+':'+String(s%60).padStart(2,'0'); }
+function chatBotaoGravar(ligado){
+  const b = $('chat-mic');
+  b.classList.toggle('gravando', ligado);
+  b.textContent = ligado ? '⏹' : '🎤';
+  b.title = ligado ? 'Parar de gravar' : 'Gravar áudio';
+  $('chat-clipe').disabled = ligado;
+  if(!ligado) chatDicaPadrao();
+}
+function chatDicaPadrao(){
+  $('chat-dica').textContent = chatEstado.travado
+    ? 'Conversa travada: o LoggZap não envia nem guarda nada por aqui.'
+    : (chatArquivo
+        // Balão de voz do WhatsApp não carrega legenda — dizer que carrega seria mentira.
+        ? (chatArquivo.audio ? 'O áudio vai sozinho — o texto escrito continua aqui pra você mandar depois.'
+                             : 'O texto acima vai como legenda do anexo.')
+        : 'Enter envia · Shift+Enter pula linha · escrever "loggzap" devolve a conversa pra IA');
+}
+function chatPintarAnexo(){
+  const box = $('chat-anexo');
+  if(!chatArquivo){ box.classList.add('hidden'); box.innerHTML=''; chatDicaPadrao(); return; }
+  box.classList.remove('hidden');
+  box.innerHTML = (chatArquivo.audio
+      ? '<audio controls src="'+chatArquivo.url+'"></audio><span class="nome">Áudio '+mmss(chatArquivo.dur)+'</span>'
+      : '<span class="nome">📎 '+esc(chatArquivo.nome)+'</span>')
+    + '<span class="peso">'+pesoLegivel(chatArquivo.tamanho)+'</span>'
+    + '<button class="x" onclick="chatLimparAnexo(true)" title="Remover">&times;</button>';
+  chatDicaPadrao();
+}
+function chatLimparAnexo(repintar){
+  if(chatArquivo && chatArquivo.url) URL.revokeObjectURL(chatArquivo.url);
+  chatArquivo = null;
+  if(repintar) chatPintarAnexo();
+}
+
 async function chatEnviar(){
+  if(chatArquivo) return chatEnviarArquivo();
   const ta = $('chat-texto'), btn = $('chat-enviar');
   const texto = ta.value.trim(); if(!texto || !chatTel) return;
   btn.disabled = true; btn.textContent = 'Enviando…';
   try{
     const d = await apiAt('/enviar', { method:'POST', body: JSON.stringify({ telefone: chatTel, texto, nome: chatNome||null }) });
     ta.value=''; chatAltura(ta); chatPintar(d);
+    $('chat-msgs').scrollTop = $('chat-msgs').scrollHeight;
+  }catch(e){ alert('Não enviou: '+e.message); }
+  btn.disabled = false; btn.textContent = 'Enviar'; ta.focus();
+}
+
+async function chatEnviarArquivo(){
+  const ta = $('chat-texto'), btn = $('chat-enviar'), a = chatArquivo;
+  if(!a || !chatTel) return;
+  btn.disabled = true; btn.textContent = 'Enviando…';
+  try{
+    const d = await apiAt('/enviar-midia', { method:'POST', body: JSON.stringify({
+      telefone: chatTel, base64: a.base64, mimetype: a.mimetype, nome: a.nome,
+      legenda: a.audio ? '' : ta.value.trim(), audio: a.audio, dur: a.dur||0, nome_contato: chatNome||null
+    })});
+    if(!a.audio) ta.value='';
+    chatAltura(ta); chatLimparAnexo(true); chatPintar(d);
     $('chat-msgs').scrollTop = $('chat-msgs').scrollHeight;
   }catch(e){ alert('Não enviou: '+e.message); }
   btn.disabled = false; btn.textContent = 'Enviar'; ta.focus();
