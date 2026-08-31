@@ -595,13 +595,16 @@ app.post('/admin-loggzap/api/atendimento/enviar', auth, async (req, res) => {
     }
     await atendEnviar(tel, texto);
     db.atendRegistrarContato(tel, req.body?.nome || null);
-    db.atendSalvarMensagem(tel, 'humano', texto);
+    // Marcar o estado ANTES de gravar a mensagem: o lembrete de lead esquecido compara
+    // a hora da pausa com a da sua última resposta. Na ordem inversa, os dois caem no
+    // mesmo segundo e ele te cobraria por uma conversa que você acabou de responder.
     if (mencionaLoggZap(texto)) {
       db.atendAtivar(tel, true);
       db.atendRetomar(tel);
     } else if (!db.atendEstado(tel).pausado) {
       db.atendPausar(tel, 'Você assumiu a conversa');
     }
+    db.atendSalvarMensagem(tel, 'humano', texto);
     res.json({ success: true, estado: db.atendEstado(tel), mensagens: db.atendHistoricoPainel(tel, 200) });
   } catch (e) {
     res.status(500).json({ error: e.response?.data?.message || e.response?.data?.error || e.message });
@@ -6583,7 +6586,6 @@ app.post('/webhook/evolution', async (req, res) => {
           // Travada é conversa pessoal — nem guardar o que você escreve nela. Antes,
           // travar calava a IA mas o texto continuava indo pro banco do LoggZap.
           if (tel && tel !== ATEND_AVISO && !db.atendEstaTravado(tel)) {
-            db.atendSalvarMensagem(tel, 'humano', texto);
             if (mencionaLoggZap(texto)) {
               // O Ronaldo escreveu a palavra-chave → está passando a conversa PRA ela.
               db.atendAtivar(tel, true);
@@ -6594,6 +6596,10 @@ app.post('/webhook/evolution', async (req, res) => {
               db.atendPausar(tel, 'Você assumiu a conversa');
               console.log('[Atendimento] humano assumiu: ' + tel);
             }
+            // Gravar DEPOIS de pausar: o lembrete de lead esquecido compara a hora da
+            // pausa com a da sua última resposta. Gravando antes, os dois caem no mesmo
+            // segundo e ele te cobra por uma conversa que você acabou de responder.
+            db.atendSalvarMensagem(tel, 'humano', texto);
           }
         }
         return;
