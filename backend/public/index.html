@@ -837,6 +837,7 @@ src="https://www.facebook.com/tr?id=2038947806731470&ev=PageView&noscript=1"
         body: JSON.stringify({ email: email, plataforma: wzDados.plataforma, pedidos_mes: wzDados.pedidos_mes, usa_rastreio: wzDados.usa_rastreio })
       });
     } catch (e) { /* não trava o usuário por falha de rede */ }
+    wzMarcarResolvido();
     document.getElementById('wz-bloq').innerHTML =
       '<div style="font-size:44px;margin-bottom:14px;text-align:center">✅</div>' +
       '<h2 class="wz-h" style="text-align:center">Anotado!</h2>' +
@@ -844,14 +845,42 @@ src="https://www.facebook.com/tr?id=2038947806731470&ev=PageView&noscript=1"
       '<button onclick="fecharModal()" style="width:100%;background:transparent;border:1px solid rgba(255,255,255,0.1);color:#8b93a8;border-radius:10px;padding:12px;font-size:14px;cursor:pointer;font-family:inherit">Fechar</button>';
   }
 
-  function abrirCadastro(plano) {
+  // `auto` = abriu sozinho na chegada (não foi clique em CTA). Nesse caso mostramos
+  // a saída "ver o site primeiro" — o wizard qualifica, não prende.
+  function abrirCadastro(plano, auto) {
     planoSelecionado = plano;
     const nomes = { trial: 'Trial — 7 dias grátis', basic: 'Plano Essencial — R$97/mês', premium: 'Plano Pro — R$147/mês' };
     document.getElementById('modal-plano-badge').textContent = nomes[plano] || plano;
     wzDados = { plataforma: '', pedidos_mes: '', usa_rastreio: '' };
     wzIr(1);
+    var sair = document.getElementById('wz-ver-site');
+    if (sair) sair.style.display = auto ? 'block' : 'none';
     document.getElementById('modal-cadastro').style.display = 'flex';
   }
+
+  // Marca que essa pessoa já resolveu a vida (cadastrou ou entrou na fila): não abre
+  // o wizard sozinho nunca mais nesse navegador.
+  function wzMarcarResolvido() {
+    try { localStorage.setItem('lz_cadastrado', '1'); } catch (e) {}
+  }
+
+  // ABERTURA AUTOMÁTICA PARA VISITANTE NOVO.
+  // O tráfego pago trazia gente sem loja Nuvemshop e a qualificação só acontecia se a
+  // pessoa clicasse num CTA — a maioria nunca clicava. Agora a pergunta vem na chegada.
+  // Só UMA VEZ por navegador: quem já viu (ou já se cadastrou) navega em paz.
+  document.addEventListener('DOMContentLoaded', function () {
+    var novo = true;
+    try {
+      if (localStorage.getItem('lz_wz_visto') || localStorage.getItem('lz_cadastrado')) novo = false;
+      else localStorage.setItem('lz_wz_visto', '1');
+    } catch (e) { /* storage bloqueado (aba anônima): mostra assim mesmo, 1x por carregamento */ }
+    if (!novo) return;
+    // respiro pro layout pintar — abrir no meio do primeiro paint dá sensação de travamento
+    setTimeout(function () {
+      var m = document.getElementById('modal-cadastro');
+      if (m && getComputedStyle(m).display === 'none') abrirCadastro('trial', true);
+    }, 800);
+  });
 
   function fecharModal() {
     document.getElementById('modal-cadastro').style.display = 'none';
@@ -928,6 +957,7 @@ src="https://www.facebook.com/tr?id=2038947806731470&ev=PageView&noscript=1"
         return;
       }
       if (d.success) {
+        wzMarcarResolvido();
         // Só Lead. O Contact duplicado aqui sujava o evento e atrapalhava a otimização da campanha.
         if (window.fbq) { fbq('track', 'Lead', { content_name: 'Cadastro LoggZap', plano: planoSelecionado }, { eventID: eventId }); }
         document.getElementById('modal-cadastro').style.display = 'none';
@@ -997,6 +1027,9 @@ src="https://www.facebook.com/tr?id=2038947806731470&ev=PageView&noscript=1"
         <button class="wz-op" onclick="wzPlataforma('outra','outra plataforma')">Outra plataforma</button>
         <button class="wz-op" onclick="wzPlataforma('sem_loja','sua futura loja')">Ainda não tenho loja</button>
       </div>
+      <!-- Só aparece quando o wizard abriu sozinho na chegada: quem quer conhecer o
+           produto antes de responder precisa de uma saída óbvia (senão vira armadilha). -->
+      <button id="wz-ver-site" onclick="fecharModal()" style="display:none;width:100%;background:transparent;border:none;color:#8b93a8;font-size:13px;cursor:pointer;font-family:inherit;margin-top:16px;padding:6px">Prefiro ver o site primeiro →</button>
     </div>
 
     <!-- PASSO 2 — volume -->
