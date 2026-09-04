@@ -243,11 +243,23 @@
   <!-- Leads da landing (cadastrou o formulário, tendo conectado a loja ou não) -->
   <div class="sect">
     <h3>Cadastros da landing <span id="leads-count" style="color:var(--text3);font-weight:400;text-transform:none;letter-spacing:0"></span></h3>
-    <div style="color:var(--text3);font-size:12px;margin:-6px 0 12px">Quem preencheu o formulário do site. Ainda não é loja instalada — vira instalação quando conecta a Nuvemshop.</div>
+    <div style="color:var(--text3);font-size:12px;margin:-6px 0 12px">Quem passou no wizard de qualificação (tem loja Nuvemshop). Ainda não é loja instalada — vira instalação quando conecta a Nuvemshop.</div>
     <div style="overflow-x:auto">
       <table>
-        <thead><tr><th>Nome</th><th>Email</th><th>WhatsApp</th><th>Plano</th><th>Origem</th><th>Instalou?</th><th>Cadastrou</th><th></th></tr></thead>
-        <tbody id="leads-body"><tr><td colspan="8" class="muted">Carregando cadastros…</td></tr></tbody>
+        <thead><tr><th>Nome</th><th>Email</th><th>WhatsApp</th><th>Plano</th><th>Perfil da loja</th><th>Origem</th><th>Instalou?</th><th>Cadastrou</th><th></th></tr></thead>
+        <tbody id="leads-body"><tr><td colspan="9" class="muted">Carregando cadastros…</td></tr></tbody>
+      </table>
+    </div>
+  </div>
+
+  <!-- Fila de espera: barrados pelo wizard por não terem loja Nuvemshop -->
+  <div class="sect">
+    <h3>Fila de espera <span id="fila-count" style="color:var(--text3);font-weight:400;text-transform:none;letter-spacing:0"></span></h3>
+    <div style="color:var(--text3);font-size:12px;margin:-6px 0 12px">Quem o wizard barrou por não vender na Nuvemshop. <b>Não são leads</b> — ficam guardados caso o LoggZap abra para outra plataforma.</div>
+    <div style="overflow-x:auto">
+      <table>
+        <thead><tr><th>Email</th><th>Plataforma</th><th>Pedidos/mês</th><th>Rastreio hoje</th><th>Quando</th></tr></thead>
+        <tbody id="fila-body"><tr><td colspan="5" class="muted">Carregando…</td></tr></tbody>
       </table>
     </div>
   </div>
@@ -350,7 +362,7 @@ function render(d){
   renderChart(v.serie||[], i.serie||[]);
   $('status').textContent = 'Atualizado ' + new Date().toLocaleTimeString('pt-BR');
   carregarAtendimento();
-  carregarLeads();
+  carregarLeads(); carregarFilaEspera();
   carregarLojas();
 }
 
@@ -529,7 +541,7 @@ function fecharConversa(){
   clearInterval(chatTimer); chatTimer = null; chatTel='';
   // Fechar com o microfone ligado deixaria a luzinha da câmera/mic acesa pra sempre.
   chatEncerrarGravacao(); chatLimparAnexo(true);
-  carregarAtendimento(); carregarLeads();
+  carregarAtendimento(); carregarLeads(); carregarFilaEspera();
 }
 
 // Corta a gravação em andamento sem transformá-la em anexo (cancelar, não enviar).
@@ -769,6 +781,11 @@ function rotuloOrigem(o){
   return '<span style="color:'+cor+';font-size:12px;font-weight:600">'+esc(txt)+'</span>';
 }
 
+// Rótulos legíveis das respostas do wizard de qualificação da landing.
+const LB_PEDIDOS = { ate_30:'até 30/mês', '31_100':'31–100/mês', '101_300':'101–300/mês', '301_1000':'301–1.000/mês', mais_1000:'+1.000/mês' };
+const LB_RASTREIO = { nao_aviso:'não avisa hoje', manual:'manda na mão', outra_ferramenta:'usa outra ferramenta', cliente_pergunta:'só quando perguntam' };
+const LB_PLATAFORMA = { nuvemshop:'Nuvemshop', shopify:'Shopify', loja_integrada:'Loja Integrada', tray:'Tray', woocommerce:'WooCommerce', marketplace:'Mercado Livre / Shopee', outra:'Outra', sem_loja:'Ainda não tem loja' };
+
 async function carregarLeads(){
   const s = localStorage.getItem(KEY); if(!s) return;
   const body = $('leads-body');
@@ -779,7 +796,7 @@ async function carregarLeads(){
     const L = d.leads || [];
     const instalados = L.filter(l=>l.store_id).length;
     $('leads-count').textContent = '('+L.length+(L.length?' · '+instalados+' instalaram':'')+')';
-    if(!L.length){ body.innerHTML='<tr><td colspan="7" class="muted">Nenhum cadastro ainda.</td></tr>'; return; }
+    if(!L.length){ body.innerHTML='<tr><td colspan="9" class="muted">Nenhum cadastro ainda.</td></tr>'; return; }
     const quando = (s)=>{ if(!s) return '—'; const dt=new Date(s.replace(' ','T')+'Z');
       return isNaN(dt) ? s : dt.toLocaleString('pt-BR',{timeZone:'America/Recife',day:'2-digit',month:'2-digit',hour:'2-digit',minute:'2-digit'}); };
     body.innerHTML = L.map(l=>{
@@ -789,6 +806,10 @@ async function carregarLeads(){
       + '<td>'+(l.email?'<a href="mailto:'+esc(l.email)+'" style="color:var(--green);text-decoration:none">'+esc(l.email)+'</a>':'<span class="muted">—</span>')+'</td>'
       + '<td class="nowrap">'+(tel?'<span style="color:#25D366">'+esc(l.whatsapp||tel)+'</span>':'<span class="muted">—</span>')+'</td>'
       + '<td><span class="tag">'+esc(l.plano||'—')+'</span></td>'
+      + '<td class="nowrap">'+(l.pedidos_mes
+          ? '<span style="color:var(--green);font-weight:600">'+esc(LB_PEDIDOS[l.pedidos_mes]||l.pedidos_mes)+'</span>'
+            + (l.usa_rastreio?'<br><span class="muted" style="font-size:11px">'+esc(LB_RASTREIO[l.usa_rastreio]||l.usa_rastreio)+'</span>':'')
+          : '<span class="muted">—</span>')+'</td>'
       + '<td class="nowrap">'+rotuloOrigem(l.origem)+'</td>'
       + '<td>'+(l.store_id
           ? '<span style="color:var(--green);font-weight:600">✓ '+esc(l.store_id)+'</span>'
@@ -799,7 +820,31 @@ async function carregarLeads(){
         + '<button class="btn-del" onclick="deletarLead('+Number(l.id)+',this)" title="Apagar este cadastro">Deletar</button></div></td>'
       + '</tr>';
     }).join('');
-  }catch(e){ body.innerHTML='<tr><td colspan="8" class="muted">Erro ao carregar cadastros: '+esc(e.message)+'</td></tr>'; }
+  }catch(e){ body.innerHTML='<tr><td colspan="9" class="muted">Erro ao carregar cadastros: '+esc(e.message)+'</td></tr>'; }
+}
+
+// Fila de espera = quem o wizard barrou (não vende na Nuvemshop). Fica separado dos leads
+// de propósito: misturar os dois é justamente o que enchia o funil de gente desqualificada.
+async function carregarFilaEspera(){
+  const s = localStorage.getItem(KEY); if(!s) return;
+  const body = $('fila-body'); if(!body) return;
+  try{
+    const r = await fetch('/admin-loggzap/api/fila-espera', { headers: { 'x-secret': s } });
+    const d = await r.json();
+    if(!r.ok || d.error) throw new Error(d.error||'erro');
+    const F = d.fila || [];
+    $('fila-count').textContent = F.length ? '('+F.length+')' : '';
+    if(!F.length){ body.innerHTML='<tr><td colspan="5" class="muted">Ninguém na fila.</td></tr>'; return; }
+    const quando = (v)=>{ if(!v) return '—'; const dt=new Date(v.replace(' ','T')+'Z');
+      return isNaN(dt) ? v : dt.toLocaleString('pt-BR',{timeZone:'America/Recife',day:'2-digit',month:'2-digit',hour:'2-digit',minute:'2-digit'}); };
+    body.innerHTML = F.map(f=>'<tr>'
+      + '<td>'+(f.email?'<a href="mailto:'+esc(f.email)+'" style="color:var(--green);text-decoration:none">'+esc(f.email)+'</a>':'<span class="muted">—</span>')+'</td>'
+      + '<td><span class="tag">'+esc(LB_PLATAFORMA[f.plataforma]||f.plataforma||'—')+'</span></td>'
+      + '<td class="nowrap">'+esc(LB_PEDIDOS[f.pedidos_mes]||f.pedidos_mes||'—')+'</td>'
+      + '<td class="nowrap muted">'+esc(LB_RASTREIO[f.usa_rastreio]||f.usa_rastreio||'—')+'</td>'
+      + '<td class="muted nowrap">'+quando(f.criado_em)+'</td>'
+      + '</tr>').join('');
+  }catch(e){ body.innerHTML='<tr><td colspan="5" class="muted">Erro ao carregar a fila: '+esc(e.message)+'</td></tr>'; }
 }
 
 async function deletarLead(id, btn){

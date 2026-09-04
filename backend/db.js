@@ -637,26 +637,35 @@ function getAdminStats() {
 // Deduplica por e-mail: quem volta não vira linha nova — completa a que já existe
 // (preserva o criado_em do primeiro contato, que é o que importa pro funil).
 // Devolve { id, novo } — `novo` diz se é a primeira vez que essa pessoa aparece.
-function salvarLead(nome, email, whatsapp, plano, origem) {
+// `qualif` (opcional) = { plataforma, pedidos_mes, usa_rastreio } — respostas do wizard da landing.
+function salvarLead(nome, email, whatsapp, plano, origem, qualif) {
   const em = String(email || '').trim().toLowerCase();
   const nm = String(nome || '').trim();
   const wa = String(whatsapp || '').trim();
   const pl = String(plano || '').trim();
   const og = String(origem || 'landing').trim();
+  const q  = qualif || {};
+  const qp = String(q.plataforma   || '').trim();
+  const qq = String(q.pedidos_mes  || '').trim();
+  const qr = String(q.usa_rastreio || '').trim();
   if (!em) return { id: null, novo: false };
 
   const existente = db.prepare('SELECT id FROM leads WHERE lower(email) = ? ORDER BY id LIMIT 1').get(em);
   if (existente) {
     // Só preenche o que estiver vazio ou mudou — nunca apaga dado bom com string vazia.
     db.prepare(`UPDATE leads SET
-        nome     = CASE WHEN ? <> '' THEN ? ELSE nome END,
-        whatsapp = CASE WHEN ? <> '' THEN ? ELSE whatsapp END,
-        plano    = CASE WHEN ? <> '' THEN ? ELSE plano END
-      WHERE id = ?`).run(nm, nm, wa, wa, pl, pl, existente.id);
+        nome         = CASE WHEN ? <> '' THEN ? ELSE nome END,
+        whatsapp     = CASE WHEN ? <> '' THEN ? ELSE whatsapp END,
+        plano        = CASE WHEN ? <> '' THEN ? ELSE plano END,
+        plataforma   = CASE WHEN ? <> '' THEN ? ELSE plataforma END,
+        pedidos_mes  = CASE WHEN ? <> '' THEN ? ELSE pedidos_mes END,
+        usa_rastreio = CASE WHEN ? <> '' THEN ? ELSE usa_rastreio END
+      WHERE id = ?`).run(nm, nm, wa, wa, pl, pl, qp, qp, qq, qq, qr, qr, existente.id);
     return { id: existente.id, novo: false };
   }
-  const info = db.prepare('INSERT INTO leads (nome, email, whatsapp, plano, origem) VALUES (?,?,?,?,?)')
-    .run(nm, em, wa, pl, og);
+  const info = db.prepare(
+    'INSERT INTO leads (nome, email, whatsapp, plano, origem, plataforma, pedidos_mes, usa_rastreio) VALUES (?,?,?,?,?,?,?,?)')
+    .run(nm, em, wa, pl, og, qp, qq, qr);
   return { id: info.lastInsertRowid, novo: true };
 }
 // Lista os leads mais recentes, marcando quem já conectou a loja (casa pelo e-mail
@@ -664,12 +673,23 @@ function salvarLead(nome, email, whatsapp, plano, origem) {
 function listarLeads(limite) {
   // Some quem foi TRAVADO no atendimento: travar é dizer "isso não é lead, é contato
   // pessoal/fornecedor". Fica escondido, não apagado — destravou, volta a aparecer.
-  return db.prepare(`SELECT id, nome, email, whatsapp, plano, store_id, origem, criado_em
+  // Some também a FILA DE ESPERA (quem não tem loja Nuvemshop): essa lista é pra
+  // lead qualificado — a fila tem seção própria (listarFilaEspera).
+  return db.prepare(`SELECT id, nome, email, whatsapp, plano, store_id, origem, criado_em,
+                            plataforma, pedidos_mes, usa_rastreio
                      FROM leads
-                     WHERE telefone IS NULL OR telefone = '' OR telefone NOT IN (
-                       SELECT telefone FROM atend_estado WHERE travado = 1
-                     )
+                     WHERE COALESCE(origem,'') <> 'fila_espera'
+                       AND (telefone IS NULL OR telefone = '' OR telefone NOT IN (
+                         SELECT telefone FROM atend_estado WHERE travado = 1
+                       ))
                      ORDER BY datetime(criado_em) DESC LIMIT ?`).all(Number(limite) || 100);
+}
+// Quem chegou pela landing mas NÃO tem loja Nuvemshop. Fica guardado (pode virar cliente
+// quando/se abrirmos pra outra plataforma), mas fora da lista de leads qualificados.
+function listarFilaEspera(limite) {
+  return db.prepare(`SELECT id, nome, email, whatsapp, plataforma, pedidos_mes, usa_rastreio, criado_em
+                     FROM leads WHERE origem = 'fila_espera'
+                     ORDER BY datetime(criado_em) DESC LIMIT ?`).all(Number(limite) || 200);
 }
 // Casa o lead com a loja quando ela conecta o OAuth. O e-mail do formulário nem sempre
 // é o mesmo cadastrado na Nuvemshop, então tenta os dois. Só marca lead ainda solto
@@ -706,13 +726,17 @@ function removerLoja(storeId) {
   try { leadsSoltos = db.prepare('UPDATE leads SET store_id = NULL WHERE store_id = ?').run(sid).changes; } catch (e) {}
   return { ok: true, removidos, leadsSoltos };
 }
+// Conta só LEAD QUALIFICADO (fila de espera fica de fora, senão infla o funil com
+// quem nem pode usar o produto). `fila` devolve o tamanho da fila à parte.
 function contarLeads() {
   const n = (sql) => { try { return db.prepare(sql).get().n || 0; } catch (e) { return 0; } };
+  const Q = "COALESCE(origem,'') <> 'fila_espera'";
   return {
-    total: n('SELECT COUNT(*) n FROM leads'),
-    hoje:  n("SELECT COUNT(*) n FROM leads WHERE criado_em >= date('now')"),
-    d7:    n("SELECT COUNT(*) n FROM leads WHERE criado_em >= datetime('now','-7 days')"),
-    d30:   n("SELECT COUNT(*) n FROM leads WHERE criado_em >= datetime('now','-30 days')")
+    total: n(`SELECT COUNT(*) n FROM leads WHERE ${Q}`),
+    hoje:  n(`SELECT COUNT(*) n FROM leads WHERE ${Q} AND criado_em >= date('now')`),
+    d7:    n(`SELECT COUNT(*) n FROM leads WHERE ${Q} AND criado_em >= datetime('now','-7 days')`),
+    d30:   n(`SELECT COUNT(*) n FROM leads WHERE ${Q} AND criado_em >= datetime('now','-30 days')`),
+    fila:  n("SELECT COUNT(*) n FROM leads WHERE origem = 'fila_espera'")
   };
 }
 
@@ -1059,6 +1083,11 @@ function migrar() {
   // Lead que chega pelo WhatsApp não tem e-mail — só telefone. Coluna própria pra permitir
   // gravar o contato mesmo assim (o dedupe do salvarLead exige e-mail).
   try { db.exec("ALTER TABLE leads ADD COLUMN telefone TEXT"); } catch(e) {}
+  // Qualificação do wizard da landing: só quem tem loja Nuvemshop passa pro cadastro.
+  // Quem usa outra plataforma cai na fila de espera (origem = 'fila_espera').
+  try { db.exec("ALTER TABLE leads ADD COLUMN plataforma TEXT"); } catch(e) {}
+  try { db.exec("ALTER TABLE leads ADD COLUMN pedidos_mes TEXT"); } catch(e) {}
+  try { db.exec("ALTER TABLE leads ADD COLUMN usa_rastreio TEXT"); } catch(e) {}
 
   // ── Atendimento por IA no WhatsApp comercial ──────────────────────────────
   // Histórico da conversa (o que alimenta o contexto da IA).
@@ -2141,7 +2170,7 @@ module.exports = {
   jaNotificadoPorTelefone, listarNotificadosRecentes,
   registrarClienteAtivo, jaClienteAtivo,
   getAdminStats, getLojistaStats, registrarVisita, getGestaoStats,
-  salvarLead, listarLeads, contarLeads, vincularLeadALoja, deletarLead, removerLoja,
+  salvarLead, listarLeads, listarFilaEspera, contarLeads, vincularLeadALoja, deletarLead, removerLoja,
   atendGetConfig, atendSetConfig, atendSalvarMensagem, atendHistorico, atendEstado,
   atendHistoricoPainel, atendApagarHistorico,
   atendPausar, atendRetomar, atendRegistrarContato, atendConversas, salvarLeadWhatsApp,

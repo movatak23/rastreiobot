@@ -783,12 +783,74 @@ src="https://www.facebook.com/tr?id=2038947806731470&ev=PageView&noscript=1"
     abrirCadastro('trial');
   }
 
+  // ── WIZARD DE QUALIFICAÇÃO ────────────────────────────────────────────────
+  // O LoggZap só funciona com Nuvemshop. Antes o cadastro era a primeira tela e
+  // entrava lead de qualquer plataforma (todos desqualificados). Agora a plataforma
+  // é a PRIMEIRA pergunta: quem não é Nuvemshop não chega no cadastro nem na instalação
+  // — vai pra fila de espera.
+  var wzDados = { plataforma: '', pedidos_mes: '', usa_rastreio: '' };
+
+  function wzIr(n) {
+    ['wz-1', 'wz-2', 'wz-3', 'wz-4', 'wz-bloq'].forEach(function (id) {
+      var el = document.getElementById(id);
+      if (el) el.style.display = (id === 'wz-' + n) ? 'block' : 'none';
+    });
+    var prog = document.getElementById('wz-prog');
+    if (prog) prog.style.display = 'block';
+    var txt = document.getElementById('wz-prog-txt');
+    var bar = document.getElementById('wz-bar-fill');
+    if (txt) txt.textContent = 'Passo ' + n + ' de 4';
+    if (bar) bar.style.width = (n * 25) + '%';
+    if (n === 4) setTimeout(function () { var e = document.getElementById('cad-nome'); if (e) e.focus(); }, 60);
+  }
+
+  function wzPlataforma(valor, rotulo) {
+    wzDados.plataforma = valor;
+    if (valor === 'nuvemshop') { wzIr(2); return; }
+    wzBloquear(rotulo);
+  }
+  function wzPedidos(valor)  { wzDados.pedidos_mes = valor;  wzIr(3); }
+  function wzRastreio(valor) { wzDados.usa_rastreio = valor; wzIr(4); }
+
+  // Tela de bloqueio: não vira lead nem instala — só entra na fila de espera.
+  function wzBloquear(rotulo) {
+    var p = document.getElementById('wz-bloq-plat');
+    if (p) p.textContent = rotulo || 'essa plataforma';
+    ['wz-1', 'wz-2', 'wz-3', 'wz-4'].forEach(function (id) {
+      var el = document.getElementById(id); if (el) el.style.display = 'none';
+    });
+    var b = document.getElementById('wz-bloq'); if (b) b.style.display = 'block';
+    var prog = document.getElementById('wz-prog'); if (prog) prog.style.display = 'none';
+  }
+
+  async function enviarListaEspera() {
+    var email = (document.getElementById('fe-email').value || '').trim();
+    var erro = document.getElementById('fe-erro');
+    var btn = document.getElementById('fe-btn');
+    erro.style.display = 'none';
+    if (!email || !email.includes('@')) { erro.textContent = 'Informe um e-mail válido.'; erro.style.display = 'block'; return; }
+    btn.textContent = 'Enviando...'; btn.disabled = true;
+    try {
+      await fetch('https://cliente.loggzap.com.br/lista-espera', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ email: email, plataforma: wzDados.plataforma, pedidos_mes: wzDados.pedidos_mes, usa_rastreio: wzDados.usa_rastreio })
+      });
+    } catch (e) { /* não trava o usuário por falha de rede */ }
+    document.getElementById('wz-bloq').innerHTML =
+      '<div style="font-size:44px;margin-bottom:14px;text-align:center">✅</div>' +
+      '<h2 class="wz-h" style="text-align:center">Anotado!</h2>' +
+      '<p class="wz-p" style="text-align:center">Assim que o LoggZap abrir para a sua plataforma, você é avisado nesse e-mail.</p>' +
+      '<button onclick="fecharModal()" style="width:100%;background:transparent;border:1px solid rgba(255,255,255,0.1);color:#8b93a8;border-radius:10px;padding:12px;font-size:14px;cursor:pointer;font-family:inherit">Fechar</button>';
+  }
+
   function abrirCadastro(plano) {
     planoSelecionado = plano;
     const nomes = { trial: 'Trial — 7 dias grátis', basic: 'Plano Essencial — R$97/mês', premium: 'Plano Pro — R$147/mês' };
     document.getElementById('modal-plano-badge').textContent = nomes[plano] || plano;
+    wzDados = { plataforma: '', pedidos_mes: '', usa_rastreio: '' };
+    wzIr(1);
     document.getElementById('modal-cadastro').style.display = 'flex';
-    document.getElementById('cad-nome').focus();
   }
 
   function fecharModal() {
@@ -855,9 +917,16 @@ src="https://www.facebook.com/tr?id=2038947806731470&ev=PageView&noscript=1"
       const r = await fetch('https://cliente.loggzap.com.br/cadastro', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ nome, email, whatsapp, plano: planoSelecionado, event_id: eventId, fbp: fbp, fbc: fbc })
+        body: JSON.stringify({ nome, email, whatsapp, plano: planoSelecionado, event_id: eventId, fbp: fbp, fbc: fbc,
+          plataforma: wzDados.plataforma, pedidos_mes: wzDados.pedidos_mes, usa_rastreio: wzDados.usa_rastreio })
       });
       const d = await r.json();
+      // Rede de segurança: se o servidor decidir que não é Nuvemshop, não promete instalação.
+      if (d.success && d.fila_espera) {
+        wzBloquear('essa plataforma');
+        btn.textContent = 'Criar conta e instalar →'; btn.disabled = false;
+        return;
+      }
       if (d.success) {
         // Só Lead. O Contact duplicado aqui sujava o evento e atrapalhava a otimização da campanha.
         if (window.fbq) { fbq('track', 'Lead', { content_name: 'Cadastro LoggZap', plano: planoSelecionado }, { eventID: eventId }); }
@@ -891,13 +960,90 @@ src="https://www.facebook.com/tr?id=2038947806731470&ev=PageView&noscript=1"
 
 </script>
 
-<!-- MODAL CADASTRO -->
+<!-- MODAL CADASTRO (wizard de qualificação) -->
+<style>
+  .wz-op{display:block;width:100%;text-align:left;background:#11151e;border:1px solid rgba(255,255,255,0.08);border-radius:10px;padding:14px 16px;color:#eef0f8;font-size:15px;font-weight:600;cursor:pointer;font-family:inherit;transition:border-color .15s,background .15s}
+  .wz-op:hover{border-color:#00d084;background:#151b26}
+  .wz-op .wz-sub{display:block;font-size:12px;font-weight:400;color:#8b93a8;margin-top:3px}
+  .wz-ops{display:flex;flex-direction:column;gap:9px}
+  .wz-bar{height:4px;background:rgba(255,255,255,0.08);border-radius:100px;overflow:hidden;margin-top:8px}
+  .wz-bar i{display:block;height:100%;background:#00d084;border-radius:100px;transition:width .25s ease}
+  .wz-volta{background:transparent;border:none;color:#8b93a8;font-size:13px;cursor:pointer;font-family:inherit;padding:0;margin-top:16px}
+  .wz-volta:hover{color:#eef0f8}
+  .wz-h{font-family:'Poppins',sans-serif;font-size:21px;font-weight:800;margin-bottom:8px;line-height:1.3}
+  .wz-p{font-size:14px;color:#8b93a8;margin-bottom:22px;line-height:1.6}
+</style>
 <div id="modal-cadastro" style="display:none;position:fixed;inset:0;z-index:200;align-items:center;justify-content:center;background:rgba(0,0,0,0.75);backdrop-filter:blur(8px)">
-  <div style="background:#0c0f16;border:1px solid rgba(255,255,255,0.1);border-radius:16px;padding:40px 36px;max-width:440px;width:calc(100% - 48px);position:relative">
+  <div style="background:#0c0f16;border:1px solid rgba(255,255,255,0.1);border-radius:16px;padding:40px 36px;max-width:440px;width:calc(100% - 48px);position:relative;max-height:90vh;overflow-y:auto">
     <button onclick="fecharModal()" style="position:absolute;top:16px;right:16px;background:transparent;border:none;color:#8b93a8;font-size:20px;cursor:pointer">✕</button>
     <div id="modal-plano-badge" style="display:inline-block;background:rgba(0,208,132,0.1);border:1px solid rgba(0,208,132,0.25);padding:4px 14px;border-radius:100px;font-size:12px;font-weight:700;color:#00d084;margin-bottom:20px;text-transform:uppercase;letter-spacing:1px"></div>
-    <h2 style="font-family:'Poppins',sans-serif;font-size:22px;font-weight:800;margin-bottom:8px">Criar sua conta</h2>
-    <p style="font-size:14px;color:#8b93a8;margin-bottom:28px;line-height:1.6">Preencha os dados abaixo. Você receberá a extensão e o manual de instalação no seu email.</p>
+
+    <div id="wz-prog" style="margin-bottom:22px">
+      <div id="wz-prog-txt" style="font-size:11px;font-weight:700;color:#8b93a8;text-transform:uppercase;letter-spacing:1px">Passo 1 de 4</div>
+      <div class="wz-bar"><i id="wz-bar-fill" style="width:25%"></i></div>
+    </div>
+
+    <!-- PASSO 1 — plataforma (a pergunta que qualifica) -->
+    <div id="wz-1">
+      <h2 class="wz-h">Onde fica a sua loja?</h2>
+      <p class="wz-p">O LoggZap se conecta direto à sua loja para puxar os pedidos — por isso a gente pergunta antes.</p>
+      <div class="wz-ops">
+        <button class="wz-op" onclick="wzPlataforma('nuvemshop','Nuvemshop')" style="border-color:rgba(0,208,132,0.35)">🟢 Nuvemshop <span class="wz-sub">É com ela que o LoggZap funciona hoje</span></button>
+        <button class="wz-op" onclick="wzPlataforma('shopify','Shopify')">Shopify</button>
+        <button class="wz-op" onclick="wzPlataforma('loja_integrada','Loja Integrada')">Loja Integrada</button>
+        <button class="wz-op" onclick="wzPlataforma('tray','Tray')">Tray</button>
+        <button class="wz-op" onclick="wzPlataforma('woocommerce','WooCommerce')">WooCommerce</button>
+        <button class="wz-op" onclick="wzPlataforma('marketplace','Mercado Livre / Shopee')">Mercado Livre / Shopee</button>
+        <button class="wz-op" onclick="wzPlataforma('outra','outra plataforma')">Outra plataforma</button>
+        <button class="wz-op" onclick="wzPlataforma('sem_loja','sua futura loja')">Ainda não tenho loja</button>
+      </div>
+    </div>
+
+    <!-- PASSO 2 — volume -->
+    <div id="wz-2" style="display:none">
+      <h2 class="wz-h">Quantos pedidos você faz por mês?</h2>
+      <p class="wz-p">É o que define o plano certo pra você — e o tamanho do trabalho que a automação tira das suas costas.</p>
+      <div class="wz-ops">
+        <button class="wz-op" onclick="wzPedidos('ate_30')">Até 30 pedidos</button>
+        <button class="wz-op" onclick="wzPedidos('31_100')">31 a 100 pedidos</button>
+        <button class="wz-op" onclick="wzPedidos('101_300')">101 a 300 pedidos</button>
+        <button class="wz-op" onclick="wzPedidos('301_1000')">301 a 1.000 pedidos</button>
+        <button class="wz-op" onclick="wzPedidos('mais_1000')">Mais de 1.000 pedidos</button>
+      </div>
+      <button class="wz-volta" onclick="wzIr(1)">← Voltar</button>
+    </div>
+
+    <!-- PASSO 3 — dor atual -->
+    <div id="wz-3" style="display:none">
+      <h2 class="wz-h">Como seu cliente fica sabendo da entrega hoje?</h2>
+      <p class="wz-p">Assim eu já sei o que o LoggZap vai mudar no seu dia a dia.</p>
+      <div class="wz-ops">
+        <button class="wz-op" onclick="wzRastreio('nao_aviso')">Não aviso <span class="wz-sub">Ele descobre sozinho — ou não descobre</span></button>
+        <button class="wz-op" onclick="wzRastreio('manual')">Mando na mão pelo WhatsApp <span class="wz-sub">Um por um, todo dia</span></button>
+        <button class="wz-op" onclick="wzRastreio('outra_ferramenta')">Uso outra ferramenta</button>
+        <button class="wz-op" onclick="wzRastreio('cliente_pergunta')">Só quando ele pergunta <span class="wz-sub">"Cadê meu pedido?"</span></button>
+      </div>
+      <button class="wz-volta" onclick="wzIr(2)">← Voltar</button>
+    </div>
+
+    <!-- BLOQUEIO — não é Nuvemshop: vira fila de espera, não vira lead -->
+    <div id="wz-bloq" style="display:none">
+      <div style="font-size:44px;margin-bottom:14px">🚧</div>
+      <h2 class="wz-h">Ainda não atendemos <span id="wz-bloq-plat">essa plataforma</span></h2>
+      <p class="wz-p">Hoje o LoggZap funciona <b style="color:#eef0f8">só com lojas Nuvemshop</b> — é lá que ele puxa os pedidos e o rastreio automaticamente. Prefiro te dizer isso agora a te fazer perder tempo instalando algo que não vai conectar.</p>
+      <p class="wz-p" style="margin-bottom:16px">Deixe seu e-mail que eu te aviso assim que abrirmos para a sua plataforma:</p>
+      <div style="display:flex;flex-direction:column;gap:12px">
+        <input id="fe-email" type="email" placeholder="seu@email.com" style="width:100%;background:#11151e;border:1px solid rgba(255,255,255,0.08);border-radius:8px;padding:12px 16px;color:#eef0f8;font-size:15px;outline:none;font-family:inherit" onfocus="this.style.borderColor='#00d084'" onblur="this.style.borderColor='rgba(255,255,255,0.08)'">
+        <div id="fe-erro" style="display:none;background:rgba(255,71,87,0.1);border:1px solid rgba(255,71,87,0.3);border-radius:8px;padding:10px 14px;font-size:13px;color:#ff4757"></div>
+        <button id="fe-btn" onclick="enviarListaEspera()" style="background:#00d084;color:#000;border:none;border-radius:10px;padding:14px;font-size:15px;font-weight:700;cursor:pointer;font-family:inherit">Quero ser avisado</button>
+        <button onclick="fecharModal()" style="background:transparent;border:1px solid rgba(255,255,255,0.1);color:#8b93a8;border-radius:10px;padding:11px;font-size:13px;cursor:pointer;font-family:inherit">Agora não</button>
+      </div>
+    </div>
+
+    <!-- PASSO 4 — contato (só quem passou na qualificação chega aqui) -->
+    <div id="wz-4" style="display:none">
+    <h2 class="wz-h">Boa — o LoggZap funciona na sua loja</h2>
+    <p class="wz-p">Falta só onde te mandar o acesso. Seus 7 dias grátis começam na instalação.</p>
     <div style="display:flex;flex-direction:column;gap:14px">
       <div>
         <label style="font-size:12px;font-weight:600;color:#8b93a8;display:block;margin-bottom:6px;text-transform:uppercase;letter-spacing:0.5px">Nome completo</label>
@@ -914,6 +1060,8 @@ src="https://www.facebook.com/tr?id=2038947806731470&ev=PageView&noscript=1"
       <div id="cad-erro" style="display:none;background:rgba(255,71,87,0.1);border:1px solid rgba(255,71,87,0.3);border-radius:8px;padding:10px 14px;font-size:13px;color:#ff4757"></div>
       <button id="cad-btn" onclick="enviarCadastro()" style="background:#00d084;color:#000;border:none;border-radius:10px;padding:14px;font-size:16px;font-weight:700;cursor:pointer;transition:opacity .2s;font-family:inherit;margin-top:4px">Criar conta e instalar →</button>
       <p style="font-size:12px;color:#424a61;text-align:center">Ao continuar você concorda com os <a href="https://cliente.loggzap.com.br/termos" target="_blank" rel="noopener" style="color:#00d084">Termos de Uso</a> e a <a href="https://cliente.loggzap.com.br/privacidade" target="_blank" rel="noopener" style="color:#00d084">Política de Privacidade</a></p>
+    </div>
+    <button class="wz-volta" onclick="wzIr(3)">← Voltar</button>
     </div>
   </div>
 </div>

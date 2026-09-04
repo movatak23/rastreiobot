@@ -495,6 +495,12 @@ app.get('/admin-loggzap/api/leads', auth, (req, res) => {
   catch (e) { res.status(500).json({ error: e.message }); }
 });
 
+// Fila de espera: quem o wizard barrou por não ter loja Nuvemshop.
+app.get('/admin-loggzap/api/fila-espera', auth, (req, res) => {
+  try { res.json({ success: true, fila: db.listarFilaEspera(req.query.limite || 200) }); }
+  catch (e) { res.status(500).json({ error: e.message }); }
+});
+
 // Apaga um cadastro da landing (teste, duplicado, spam). Não mexe na loja nem na licença.
 app.delete('/admin-loggzap/api/leads/:id', auth, (req, res) => {
   try {
@@ -6085,14 +6091,50 @@ app.get('/licenca/status/:storeId', auth, (req, res) => {
 
 
 // ── Cadastro de novo usuário ──────────────────────────────────────────────────
+// Lista de espera: quem chegou pela landing mas NÃO vende pela Nuvemshop. Não cria conta,
+// não manda e-mail de instalação e não entra na lista de leads — só fica guardado pra
+// quando (e se) o LoggZap abrir pra outra plataforma.
+app.post('/lista-espera', (req, res) => {
+  const email = String(req.body.email || '').trim();
+  if (!email || !email.includes('@')) return res.status(400).json({ error: 'Informe um e-mail válido.' });
+  const qualif = {
+    plataforma:   String(req.body.plataforma   || '').trim().toLowerCase(),
+    pedidos_mes:  String(req.body.pedidos_mes  || '').trim(),
+    usa_rastreio: String(req.body.usa_rastreio || '').trim()
+  };
+  try {
+    db.salvarLead(String(req.body.nome || '').trim(), email, String(req.body.whatsapp || '').trim(),
+                  '', 'fila_espera', qualif);
+    return res.json({ success: true });
+  } catch (e) {
+    console.error('[ListaEspera] Falha ao gravar:', e.message);
+    return res.status(500).json({ error: 'Não consegui salvar. Tente de novo.' });
+  }
+});
+
 app.post('/cadastro', async (req, res) => {
   const { nome, email, whatsapp, plano } = req.body;
   if (!nome || !email) return res.status(400).json({ error: 'Nome e email são obrigatórios.' });
 
+  // Respostas do wizard de qualificação da landing.
+  const qualif = {
+    plataforma:   String(req.body.plataforma   || '').trim().toLowerCase(),
+    pedidos_mes:  String(req.body.pedidos_mes  || '').trim(),
+    usa_rastreio: String(req.body.usa_rastreio || '').trim()
+  };
+  // Trava do servidor: o wizard já barra no navegador, mas um POST direto não pode furar.
+  // Só bloqueia quando a plataforma VEIO e não é Nuvemshop — página antiga em cache
+  // (sem o campo) segue funcionando como antes.
+  if (qualif.plataforma && qualif.plataforma !== 'nuvemshop') {
+    try { db.salvarLead(nome, email, whatsapp, plano, 'fila_espera', qualif); }
+    catch (e) { console.error('[Cadastro] Falha ao gravar fila de espera:', e.message); }
+    return res.json({ success: true, fila_espera: true });
+  }
+
   // Grava o lead ANTES de tentar o e-mail: se o Resend falhar, o cadastro não se perde.
   // (Antes daqui o /cadastro não gravava nada e o lead só existia nos e-mails.)
   let leadSalvo = false;
-  try { db.salvarLead(nome, email, whatsapp, plano, 'landing'); leadSalvo = true; }
+  try { db.salvarLead(nome, email, whatsapp, plano, 'landing', qualif); leadSalvo = true; }
   catch (e) { console.error('[Cadastro] Falha ao gravar lead:', e.message); }
 
   // Lead server-side (CAPI) — espelha o pixel do navegador (dedup pelo event_id). Não bloqueia o fluxo.
